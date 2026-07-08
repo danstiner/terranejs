@@ -5,7 +5,7 @@ they land; P3 items are deferred until proven needed (simplicity first).
 
 ## P1 — correctness
 
-- [ ] **emin from the coarse grid can break solids** (app.js exportSTLs ~524).
+- [x] **emin from the coarse grid can break solids** (app.js exportSTLs ~524).
   Analytic per-mode emin patches (inlay fmin, inset offset, nothing for
   water/bump) don't bound fine-grid terrain that dips below the coarse min
   (water-insert shorelines are the worst case). Fix: stamp the trail onto the

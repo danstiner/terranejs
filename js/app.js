@@ -39,6 +39,10 @@ const GROOVE_MM = 0.8;
 const PROUD_MM = 0.6;
 const PATH_CLEAR_MM = 0.15;
 
+// minimum printed base wall: ≥3 layers at any common layer height (0.1–0.3 mm).
+// tilejs can't read the slicer's layer height, so this is a fixed floor.
+const MIN_WALL_MM = 1.0;
+
 const PLA_DENSITY = 1.24; // g/cm³
 // fraction of the solid envelope actually deposited: walls + 3% infill.
 // Calibrated to a real slice (Rainier tile: 849 cm³ solid -> 145 g at 3%/0.15mm).
@@ -518,17 +522,20 @@ async function exportSTLs() {
     // trail sampled at the FINE pitch (elevations off the coarse grid): the
     // per-tile rasterization needs sample spacing ≤ halfW to stay gap-free
     const trail = trailContext(s, gridC, gwC, ghC, f, Math.max(dx, dy));
-    // shared z-frame: every tile meshes against the same minimum, else tiles
-    // would step at seams. Fine-grid valleys can dip slightly below the coarse
-    // min — those pixels get a hair less base than spec, solids stay closed.
-    let emin = gridRange(gridC).min;
-    if (trail && s.pathMode === "inlay") {
-      let fmin = Infinity;
-      for (const v of trail.fRel) fmin = Math.min(fmin, v);
-      emin = Math.min(emin, trail.emin0 + (fmin - GROOVE_MM) / k); // groove floor can be lowest
-    } else if (trail && s.pathMode === "inset") {
-      emin -= s.pathHmm / k; // conservative: the inset may cut below the terrain min
+    // shared z-frame min: bake the trail onto the coarse context grid exactly as
+    // the tiles will, then take its true minimum. This captures the inlay groove
+    // floor / inset cut / bump in every mode — no per-mode analytic patches, and
+    // no case (water-insert shoreline) left unbounded. Fine-tile vertices that
+    // dip below this coarse min are floored per-tile (Step 4).
+    let stampedC = gridC;
+    if (trail) {
+      const dxC = f.widthMm / (gwC - 1), dyC = f.heightMm / (ghC - 1);
+      const { mask: pmC, sIdx: siC } = rasterizePath(trail.pts, gwC, ghC, dxC, dyC, trail.halfW);
+      ({ grid: stampedC } = stampTrail(s, gridC, trail, pmC, siC));
     }
+    const emin = gridRange(stampedC).min;
+    // deepest vertex we allow before the printed wall would fall under MIN_WALL_MM
+    const floorGrid = emin + (Math.min(s.base, MIN_WALL_MM) - s.base) / k;
 
     // padded tile window: erosion (water ~0.4 mm, trail clearance) must see real
     // neighbors past the seam, or inserts/ribbons get nibbled at tile edges
@@ -537,7 +544,7 @@ async function exportSTLs() {
     const wantPath = trail && s.pathMode === "inlay";
 
     const files = [];
-    let bytes = 0, n = 0, nw = 0, np = 0, pathCellTotal = 0, ti = 0;
+    let bytes = 0, n = 0, nw = 0, np = 0, pathCellTotal = 0, ti = 0, nFloored = 0;
     const nTiles = f.nx * f.ny;
     for (const [ry, [r0, r1]] of rows.entries()) {
       for (const [cx, [c0, c1]] of cols.entries()) {
@@ -603,6 +610,17 @@ async function exportSTLs() {
             const rings = Math.round(PATH_CLEAR_MM / dx);
             pathCells = erodeMask(cellOcean(pm, gwT, ghT), cw, ghT - 1, rings);
             for (let i = 0; i < pathCells.length; i++) pathCells[i] &= mask[i];
+          }
+        }
+
+        // z-floor: the fine tile grid meshes at a finer pitch than the coarse grid
+        // emin came from, so a narrow deep feature between coarse samples can read
+        // below emin. Floor the covered span (all the mesh builders read) so the
+        // printed wall stays ≥ min(base, MIN_WALL_MM); tally lifts for the note.
+        for (let r = span.r0; r <= span.r1; r++) {
+          for (let c = span.c0; c <= span.c1; c++) {
+            const i = r * gwT + c;
+            if (grid[i] < floorGrid) { grid[i] = floorGrid; nFloored++; }
           }
         }
 
@@ -694,10 +712,13 @@ async function exportSTLs() {
     const trailNote = wantPath && pathCellTotal === 0
       ? " — trail ribbon skipped: track is outside the region (or too narrow to print)"
       : "";
+    const floorNote = nFloored
+      ? ` — floored ${nFloored} deep sample${nFloored === 1 ? "" : "s"} to keep a ≥1 mm base`
+      : "";
     if (files.length === 1) {
       download(new Blob([files[0].bytes], { type: "model/stl" }), files[0].name);
       $("progress").textContent =
-        `exported ${files[0].name} — ${(bytes / 1e6).toFixed(1)} MB (z${z}, ≤${maxErr} mm)` + trailNote;
+        `exported ${files[0].name} — ${(bytes / 1e6).toFixed(1)} MB (z${z}, ≤${maxErr} mm)` + trailNote + floorNote;
     } else {
       $("progress").textContent = "zipping…";
       await new Promise((r) => setTimeout(r, 0));
@@ -705,7 +726,7 @@ async function exportSTLs() {
       download(new Blob([zip], { type: "application/zip" }), "tilejs_export.zip");
       $("progress").textContent =
         `exported ${n} tile${n === 1 ? "" : "s"}${water} → tilejs_export.zip ` +
-        `(${(zip.length / 1e6).toFixed(1)} MB zip, ${(bytes / 1e6).toFixed(0)} MB raw)` + trailNote;
+        `(${(zip.length / 1e6).toFixed(1)} MB zip, ${(bytes / 1e6).toFixed(0)} MB raw)` + trailNote + floorNote;
     }
   } catch (err) {
     $("progress").innerHTML = `<span class="warn">export failed: ${err.message}</span>`;
