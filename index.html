@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>tilejs — terrain print tiler</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+  <link rel="stylesheet"
+        href="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.18.3/dist/leaflet-geoman.css">
+  <link rel="stylesheet" href="style.css">
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.185.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <!-- left column: brand + preset, then map, then controls -->
+  <div id="left">
+    <header id="brand">
+      <h1>tilejs</h1>
+      <p class="sub">Tiled, wall-hangable terrain prints.</p>
+      <label for="preset">Region preset</label>
+      <select id="preset"><option value="">— choose —</option></select>
+    </header>
+
+    <div id="map"></div>
+
+    <aside id="panel">
+      <section>
+        <div class="row"><strong>Region</strong>
+          <button id="clear" type="button">Clear</button></div>
+        <div id="readout" class="readout">No region selected.</div>
+        <p class="hint">Draw a polygon / rectangle with the map's top-left
+          tools, then drag its vertices to refine.</p>
+        <div class="row">
+          <input id="gpxFile" type="file" accept=".gpx" multiple hidden>
+          <button id="gpxImport" type="button">Import GPX trail…</button>
+          <span id="gpxMsg" class="hint"></span>
+        </div>
+        <div id="gpxList"></div>
+      </section>
+
+      <section id="settings" hidden>
+        <h2>Print settings</h2>
+
+        <label for="scale">Map scale</label>
+        <div class="row">
+          <span>1&nbsp;:&nbsp;<input id="scale" type="number" min="500" step="1000"></span>
+          <button id="scaleAuto" type="button" title="Scale so the piece fills one bed">fit bed</button>
+        </div>
+        <p class="hint">Smaller number = bigger print, more tiles, finer detail.</p>
+
+        <label for="exag">Vertical exaggeration: <span id="exagVal">1.0</span>&times;</label>
+        <input id="exag" type="range" min="0.5" max="4" step="0.1" value="1">
+
+        <label for="base">Base thickness: <span id="baseVal">3.0</span>&nbsp;mm</label>
+        <input id="base" type="range" min="1" max="8" step="0.5" value="3">
+
+        <label for="waterDrop">Ocean drop: <span id="waterDropVal">3.0</span>&nbsp;mm</label>
+        <input id="waterDrop" type="range" min="0" max="10" step="0.5" value="3">
+        <div id="waterOpts" hidden>
+          <label class="row"><span>Separate water insert</span>
+            <input id="waterSeparate" type="checkbox"></label>
+          <p class="hint">Recesses open ocean (sea-level, edge-connected) so it
+            reads as water; inland basins stay land. Insert = a blue piece over
+            the real ocean floor, topping out at sea level (needs ≥1&nbsp;mm
+            drop); it prints flat face down, then flips into the recess.</p>
+        </div>
+
+        <div id="trailOpts" hidden>
+          <label>Trail (GPX)</label>
+          <label for="pathMode">Render as</label>
+          <select id="pathMode">
+            <option value="bump">Raised bump</option>
+            <option value="inset">Inset groove</option>
+            <option value="inlay">Slot-in ribbon (separate print)</option>
+          </select>
+          <label for="pathW">Trail width: <span id="pathWVal">1.6</span>&nbsp;mm</label>
+          <input id="pathW" type="range" min="0.8" max="3" step="0.2" value="1.6">
+          <div id="pathHRow">
+            <label for="pathH"><span id="pathHName">Bump height</span>:
+              <span id="pathHVal">0.6</span>&nbsp;mm</label>
+            <input id="pathH" type="range" min="0.2" max="1.5" step="0.1" value="0.6">
+          </div>
+          <p class="hint" id="inlayHint" hidden>Ribbon prints flat and flexes into the
+            groove; sharp relief along the route is embossed on its top, standing
+            ~0.6&nbsp;mm proud of the terrain.</p>
+        </div>
+
+        <details>
+          <summary>Advanced</summary>
+          <label>Bed cap W &times; H (mm)</label>
+          <div class="row">
+            <input id="capW" type="number" min="50" step="5" value="250" class="num">
+            <input id="capH" type="number" min="50" step="5" value="250" class="num">
+          </div>
+        </details>
+      </section>
+    </aside>
+  </div>
+
+  <!-- right column: 3D preview, then a results footer (stats + status + export) -->
+  <div id="right">
+    <div id="preview"></div>
+    <div id="results">
+      <div id="fit" class="readout"></div>
+      <div id="resultbar">
+        <span id="progress" class="hint"></span>
+        <button id="export" type="button" class="primary">Export STLs</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.18.3/dist/leaflet-geoman.min.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
