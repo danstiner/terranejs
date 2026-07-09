@@ -157,6 +157,67 @@ export function buildSolid(grid, gw, gh, span, mask, geom) {
   return out;
 }
 
+// Watertight constant-thickness shell over a cell-mask footprint, hugging the
+// terrain: the underside follows the terrain relief (grid − emin)·k and the top
+// is exactly hMm above it, so the piece self-registers on the printed terrain
+// (its underside is the terrain's negative) and never pinches to zero. Same
+// top + boundary-skirt + mirrored-face topology as buildSolid — only the "low"
+// surface sits at the relief instead of a flat z=0. `geom` omits `base`: the
+// shell self-bases at its own relief, so the piece is compact (min-z ≈ 0).
+export function buildTrailShell(grid, gw, gh, span, mask, geom, hMm) {
+  const { dx, dy, mmPerM, emin, exag } = geom;
+  const { r0, r1, c0, c1 } = span;
+  const cw = gw - 1;
+  const k = mmPerM * exag;
+
+  const topTris = [];
+  for (let r = r0; r < r1; r++) {
+    for (let c = c0; c < c1; c++) {
+      if (!mask[r * cw + c]) continue;
+      const A = r * gw + c, B = r * gw + c + 1, C = (r + 1) * gw + c, D = (r + 1) * gw + c + 1;
+      topTris.push(A, C, B, B, C, D); // wind for +Z (outward top)
+    }
+  }
+
+  const N = gw * gh;
+  const seen = new Set();
+  for (let i = 0; i < topTris.length; i += 3) {
+    const a = topTris[i], b = topTris[i + 1], c = topTris[i + 2];
+    seen.add(a * N + b); seen.add(b * N + c); seen.add(c * N + a);
+  }
+  const boundary = [];
+  for (let i = 0; i < topTris.length; i += 3) {
+    const t = [topTris[i], topTris[i + 1], topTris[i + 2]];
+    for (let e = 0; e < 3; e++) {
+      const u = t[e], v = t[(e + 1) % 3];
+      if (!seen.has(v * N + u)) boundary.push(u, v);
+    }
+  }
+
+  const nTop = topTris.length / 3;
+  const out = new Float32Array((nTop + nTop + boundary.length) * 9);
+  let p = 0;
+  // low = underside (relief); high = top (relief + hMm)
+  const put = (id, low) => {
+    const row = (id / gw) | 0, col = id % gw;
+    out[p++] = (col - c0) * dx;
+    out[p++] = (r1 - row) * dy;
+    const relief = (grid[id] - emin) * k;
+    out[p++] = low ? relief : relief + hMm;
+  };
+  const tri = (a, b, c, low) => { put(a, low); put(b, low); put(c, low); };
+  for (let i = 0; i < topTris.length; i += 3) {
+    tri(topTris[i], topTris[i + 1], topTris[i + 2], false); // top (+Z): relief + h
+    tri(topTris[i], topTris[i + 2], topTris[i + 1], true);  // underside mirror (−Z): relief
+  }
+  for (let i = 0; i < boundary.length; i += 2) {
+    const u = boundary[i], v = boundary[i + 1];
+    put(v, false); put(u, false); put(u, true);
+    put(v, false); put(u, true); put(v, true);
+  }
+  return out;
+}
+
 // Watertight solid from an arbitrary top-surface triangle soup in world mm
 // (topTris: flat [ax,ay,az, bx,by,bz, cx,cy,cz, …]). Vertices are deduped by
 // quantized XY (the top is single-valued in z), triangles re-wound +Z, then the
