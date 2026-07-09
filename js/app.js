@@ -6,7 +6,7 @@ import { pickZoom, tileRangeForBBox } from "./tilemath.js";
 import { fetchMosaic } from "./terrain.js";
 import { resampleBilinear, gridRange } from "./resample.js";
 import { cellMask } from "./polyclip.js";
-import { buildPreviewSolid, buildSolid, buildSolidTIN, buildSolidFromMesh } from "./mesh.js";
+import { buildPreviewSolid, buildSolid, buildSolidTIN, buildSolidFromMesh, buildTrailShell } from "./mesh.js";
 import { decimate } from "./decimate.js";
 import { clipTriangleToPolygon } from "./clip.js";
 import { oceanMask, oceanMaskSeeded, cellOcean, erodeMask, recessedGrid,
@@ -105,6 +105,7 @@ function trailContext(s, grid, gw, gh, f, ds) {
 // Stamp the trail onto a grid from its rasterization; inlay also yields the
 // ribbon top heightfield (mm) for the separately printed path piece.
 function stampTrail(s, grid, ctx, mask, sIdx) {
+  if (s.pathMode === "overlay") return { grid, ribbon: null }; // terrain untouched; the cord is a separate per-tile piece
   if (s.pathMode === "inlay") {
     return {
       grid: stampInlay(grid, mask, sIdx, ctx.fRel, GROOVE_MM, ctx.emin0, ctx.k),
@@ -579,6 +580,7 @@ async function exportSTLs() {
     const pad = Math.max(3, Math.ceil(WATER_CLEAR_MM / dx) + 1);
     const wantWater = s.waterDrop >= 1 && s.waterSeparate;
     const wantPath = trail && s.pathMode === "inlay";
+    const wantOverlay = trail && s.pathMode === "overlay";
 
     // deflate-as-we-go: each STL is compressed into a zip entry the moment it is
     // built and its raw bytes released, so peak heap is ~sum(deflated) + one raw
@@ -594,7 +596,7 @@ async function exportSTLs() {
       }
       entries.push({ name, data, crc: crc32(buf), size: buf.length, method });
     };
-    let bytes = 0, n = 0, nw = 0, np = 0, ti = 0, nFloored = 0;
+    let bytes = 0, n = 0, nw = 0, np = 0, nt = 0, ti = 0, nFloored = 0;
     const nTiles = f.nx * f.ny;
     for (const [ry, [r0, r1]] of rows.entries()) {
       for (const [cx, [c0, c1]] of cols.entries()) {
@@ -641,7 +643,7 @@ async function exportSTLs() {
 
         // trail: same global context, rasterized in this window's local frame so
         // the groove floor and ribbon heights are seam-continuous by construction
-        let ribbon = null, pathCells = null;
+        let ribbon = null, pathCells = null, overlayCells = null;
         if (trail) {
           const offX = pc0 * dx, offY = (ghF - 1 - pr1) * dy;
           const ptsT = new Float32Array(trail.pts.length);
@@ -654,11 +656,20 @@ async function exportSTLs() {
           const ds = Math.max(dx, dy);
           const ribbonHalfW = Math.max(trail.halfW - PATH_CLEAR_MM, 1.6 * ds);
           const grooveHalfW = Math.max(trail.halfW, ribbonHalfW + PATH_CLEAR_MM);
-          const { mask: pm, sIdx, inner } = rasterizePath(ptsT, gwT, ghT, dx, dy, grooveHalfW, ribbonHalfW);
+          // overlay bands at the true trail width (0.6·ds floor for line continuity,
+          // matching the preview); inlay/bump/inset keep the groove-fit width
+          const bandHalfW = wantOverlay ? Math.max(trail.halfW, 0.6 * ds) : grooveHalfW;
+          const innerHalfW = wantPath ? ribbonHalfW : 0;
+          const { mask: pm, sIdx, inner } = rasterizePath(ptsT, gwT, ghT, dx, dy, bandHalfW, innerHalfW);
           ({ grid, ribbon } = stampTrail(s, grid, trail, pm, sIdx));
           if (wantPath) {
             pathCells = cellOcean(inner, gwT, ghT); // clearance already applied
             for (let i = 0; i < pathCells.length; i++) pathCells[i] &= mask[i];
+          }
+          if (wantOverlay) {
+            // cord footprint = the trail band (pathWmm-wide) ∩ region
+            overlayCells = cellOcean(pm, gwT, ghT);
+            for (let i = 0; i < overlayCells.length; i++) overlayCells[i] &= mask[i];
           }
         }
 
@@ -745,15 +756,32 @@ async function exportSTLs() {
             await addFile(`path_r${ry}_c${cx}.stl`, pbuf);
           }
         }
+
+        // trail overlay for this tile: a conforming constant-thickness cord that
+        // sits on the unmodified terrain — underside = terrain relief, top =
+        // +pathHmm. Self-registers by its molded underside; prints with supports.
+        if (wantOverlay && overlayCells) {
+          const tc = countIn(overlayCells, span, cw);
+          if (tc > 0) {
+            const tsolid = buildTrailShell(grid, gwT, ghT, span, overlayCells,
+              { dx, dy, mmPerM, emin, exag: s.exag }, s.pathHmm);
+            const tbuf = new Uint8Array(encodeBinarySTL(tsolid));
+            bytes += tbuf.length;
+            nt++;
+            await addFile(`trail_r${ry}_c${cx}.stl`, tbuf);
+          }
+        }
       }
     }
 
     if (!entries.length) { $("progress").textContent = "nothing to export (region empty?)"; return; }
     const water = (nw ? ` + ${nw} water insert${nw === 1 ? "" : "s"}` : "") +
-      (np ? ` + ${np} trail ribbon${np === 1 ? "" : "s"}` : "");
-    const trailNote = wantPath && np === 0
-      ? " — trail ribbon skipped: track is outside the region (or too narrow to print)"
-      : "";
+      (np ? ` + ${np} trail ribbon${np === 1 ? "" : "s"}` : "") +
+      (nt ? ` + ${nt} trail piece${nt === 1 ? "" : "s"}` : "");
+    const trailNote =
+      wantPath && np === 0 ? " — trail ribbon skipped: track is outside the region (or too narrow to print)" :
+      wantOverlay && nt === 0 ? " — trail piece skipped: track is outside the region (or too narrow to print)" :
+      "";
     const floorNote = nFloored
       ? ` — floored ${nFloored} deep sample${nFloored === 1 ? "" : "s"} to keep a ≥1 mm base`
       : "";
