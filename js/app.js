@@ -380,9 +380,13 @@ async function loadPreview() {
     });
     if (token !== loadToken) return; // a newer load supersedes this one
     const grid = resampleBilinear(mosaic, f.bbox, gw, gh);
-    const mask = cellMask(store.get().polygon, f.bbox, gw, gh);
+    // use the fetch-start snapshot, not post-await store state: a Clear mid-fetch
+    // makes store.polygon null (cellMask throws), and a polygon edit would stamp
+    // this now-stale grid as fresh. The token guard above already dropped any
+    // superseded load, so s/f are the inputs this grid was actually fetched for.
+    const mask = cellMask(s.polygon, f.bbox, gw, gh);
     pv = { grid, gw, gh, f, mask };
-    pvKey = keyOf(store.get());
+    pvKey = keyOf(s);
     $("progress").textContent = upsampled
       ? `z${z} — note: sampling finer than the data supports (interpolated)`
       : `z${z} — ${(mosaic.width / 256) * (mosaic.height / 256)} tiles loaded`;

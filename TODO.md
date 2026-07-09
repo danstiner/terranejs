@@ -21,7 +21,7 @@ they land; P3 items are deferred until proven needed (simplicity first).
   erosion rounds to 0 at coarse pitch (interference fit) and erases the
   minimal chain at fine pitch (groove ships without ribbon). Fix: geometric
   inner footprint in rasterizePath: ribbon halfW = max(halfW − 0.15, 1.6·ds).
-- [ ] **loadPreview commits hybrid state** (app.js ~369). cellMask/pvKey read
+- [x] **loadPreview commits hybrid state** (app.js ~369). cellMask/pvKey read
   store.get() after the await; Clear during fetch throws, polygon edits stamp
   stale grids as fresh. Fix: use the s/f snapshot captured at function start.
 - [x] **Preview trail band ≠ export width** (app.js trailContext ~77). The
