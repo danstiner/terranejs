@@ -169,12 +169,18 @@ $("gpxFile").addEventListener("change", async (e) => {
   const files = [...e.target.files];
   e.target.value = ""; // so re-picking the same file fires change again
   if (!files.length) return;
-  const added = [];
+  // per-file: one unreadable/empty GPX must not abort the whole import
+  const added = [], failed = [];
   for (const file of files) {
-    const segs = parseGPX(await file.text());
-    if (segs.length) added.push({ name: file.name, segs });
+    try {
+      const segs = parseGPX(await file.text());
+      if (segs.length) added.push({ name: file.name, segs });
+      else failed.push(`${file.name} (no track points)`);
+    } catch (err) {
+      failed.push(`${file.name} (${err.message})`);
+    }
   }
-  $("gpxMsg").textContent = added.length ? "" : "no track points found";
+  $("gpxMsg").textContent = failed.length ? `skipped: ${failed.join(", ")}` : "";
   if (!added.length) return;
   const st = store.get();
   // additive: imports accumulate; re-importing a filename replaces that file

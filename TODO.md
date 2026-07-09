@@ -35,7 +35,7 @@ they land; P3 items are deferred until proven needed (simplicity first).
 - [ ] **waterDrop slider desync** (app.js ~234). Clamped store value isn't
   written back while the slider has focus. Fix: drop the activeElement guard
   for the range input so the thumb snaps.
-- [ ] **GPX import dies silently on one bad file** (app.js ~170). Per-file
+- [x] **GPX import dies silently on one bad file** (app.js ~170). Per-file
   try/catch; report failures in gpxMsg, import the rest.
 - [ ] **Partial boundary bake can kill the app** (presets.js ~12 +
   fetch_boundaries.py). b(name) → undefined → bboxToPolygon throws at load.
