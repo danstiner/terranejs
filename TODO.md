@@ -11,7 +11,7 @@ they land; P3 items are deferred until proven needed (simplicity first).
   (water-insert shorelines are the worst case). Fix: stamp the trail onto the
   coarse context grid and take gridRange().min, plus a per-tile clamp
   `elev ≥ emin + (0.2 − base)/k` so print z stays ≥ 0.2 mm in every mode.
-- [ ] **GPX multi-route merge** (gpx.js ~16). Files without `<trkseg>` weld all
+- [x] **GPX multi-route merge** (gpx.js ~16). Files without `<trkseg>` weld all
   points into one segment — two `<rte>` routes get a phantom connecting leg.
   Fix: trkseg blocks → else per-`<trk>` → else per-`<rte>` → else whole text.
 - [ ] **GPX attribute regex too narrow** (gpx.js ~7). Rejects exponent

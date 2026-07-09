@@ -10,11 +10,19 @@ const ATTR = (attrs, name) => {
 
 // text -> [[[lat,lon],…], …], one array per segment; segments under 2 points dropped
 export function parseGPX(text) {
+  // one segment per block; try the most specific container first so distinct
+  // tracks/routes never weld into one segment with a phantom connecting leg
   let blocks = text.match(/<trkseg[\s\S]*?<\/trkseg>/g);
   let tag = "trkpt";
   if (!blocks) {
-    blocks = /<(trkpt|rtept)\b/.test(text) ? [text] : [];
-    tag = /<trkpt\b/.test(text) ? "trkpt" : "rtept";
+    const trks = text.match(/<trk\b[\s\S]*?<\/trk>/g);
+    const rtes = text.match(/<rte\b[\s\S]*?<\/rte>/g);
+    if (trks) { blocks = trks; tag = "trkpt"; }
+    else if (rtes) { blocks = rtes; tag = "rtept"; }
+    else {
+      blocks = /<(trkpt|rtept)\b/.test(text) ? [text] : [];
+      tag = /<trkpt\b/.test(text) ? "trkpt" : "rtept";
+    }
   }
   const segs = [];
   for (const block of blocks) {

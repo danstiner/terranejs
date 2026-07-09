@@ -33,6 +33,25 @@ test("parseGPX: route fallback and empty input", () => {
     "single-point segment dropped");
 });
 
+test("parseGPX: two routes become two segments (no phantom bridge)", () => {
+  const gpx = `<gpx>` +
+    `<rte><rtept lat="10" lon="20"/><rtept lat="11" lon="21"/></rte>` +
+    `<rte><rtept lat="30" lon="40"/><rtept lat="31" lon="41"/></rte>` +
+    `</gpx>`;
+  const segs = parseGPX(gpx);
+  assert.equal(segs.length, 2, "one segment per route");
+  assert.deepEqual(segs[0], [[10, 20], [11, 21]]);
+  assert.deepEqual(segs[1], [[30, 40], [31, 41]]);
+});
+
+test("parseGPX: trackless multi-trk yields one segment per trk", () => {
+  const gpx = `<gpx>` +
+    `<trk><trkpt lat="1" lon="2"/><trkpt lat="3" lon="4"/></trk>` +
+    `<trk><trkpt lat="5" lon="6"/><trkpt lat="7" lon="8"/></trk>` +
+    `</gpx>`;
+  assert.equal(parseGPX(gpx).length, 2);
+});
+
 test("trackBbox pads the extent", () => {
   const [s, w, n, e] = trackBbox([[[10, 20], [11, 22]]], 0.1);
   assert.ok(s < 10 && n > 11 && w < 20 && e > 22);
