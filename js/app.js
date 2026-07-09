@@ -543,7 +543,20 @@ async function exportSTLs() {
     const wantWater = s.waterDrop >= 1 && s.waterSeparate;
     const wantPath = trail && s.pathMode === "inlay";
 
-    const files = [];
+    // deflate-as-we-go: each STL is compressed into a zip entry the moment it is
+    // built and its raw bytes released, so peak heap is ~sum(deflated) + one raw
+    // buffer — not the full raw total. `firstRaw` is kept only until a 2nd file
+    // arrives, so a single-file export can still download the bare STL.
+    const entries = [];
+    let firstRaw = null;
+    const addFile = async (name, buf) => {
+      firstRaw = entries.length === 0 ? { name, bytes: buf } : null;
+      let data = buf, method = 0;
+      if (typeof CompressionStream !== "undefined") {
+        try { data = await deflateRaw(buf); method = 8; } catch { data = buf; method = 0; }
+      }
+      entries.push({ name, data, crc: crc32(buf), size: buf.length, method });
+    };
     let bytes = 0, n = 0, nw = 0, np = 0, pathCellTotal = 0, ti = 0, nFloored = 0;
     const nTiles = f.nx * f.ny;
     for (const [ry, [r0, r1]] of rows.entries()) {
@@ -651,7 +664,7 @@ async function exportSTLs() {
         const buf = new Uint8Array(encodeBinarySTL(solid));
         bytes += buf.length;
         n++;
-        files.push({ name: `tile_r${ry}_c${cx}.stl`, bytes: buf });
+        await addFile(`tile_r${ry}_c${cx}.stl`, buf);
         await new Promise((r) => setTimeout(r, 0));
 
         // water insert for this tile: printed top follows the ocean floor
@@ -682,7 +695,7 @@ async function exportSTLs() {
             const wbuf = new Uint8Array(encodeBinarySTL(wsolid));
             bytes += wbuf.length;
             nw++;
-            files.push({ name: `water_r${ry}_c${cx}.stl`, bytes: wbuf });
+            await addFile(`water_r${ry}_c${cx}.stl`, wbuf);
           }
         }
 
@@ -700,13 +713,13 @@ async function exportSTLs() {
             const pbuf = new Uint8Array(encodeBinarySTL(psolid));
             bytes += pbuf.length;
             np++;
-            files.push({ name: `path_r${ry}_c${cx}.stl`, bytes: pbuf });
+            await addFile(`path_r${ry}_c${cx}.stl`, pbuf);
           }
         }
       }
     }
 
-    if (!files.length) { $("progress").textContent = "nothing to export (region empty?)"; return; }
+    if (!entries.length) { $("progress").textContent = "nothing to export (region empty?)"; return; }
     const water = (nw ? ` + ${nw} water insert${nw === 1 ? "" : "s"}` : "") +
       (np ? ` + ${np} trail ribbon${np === 1 ? "" : "s"}` : "");
     const trailNote = wantPath && pathCellTotal === 0
@@ -715,14 +728,14 @@ async function exportSTLs() {
     const floorNote = nFloored
       ? ` — floored ${nFloored} deep sample${nFloored === 1 ? "" : "s"} to keep a ≥1 mm base`
       : "";
-    if (files.length === 1) {
-      download(new Blob([files[0].bytes], { type: "model/stl" }), files[0].name);
+    if (entries.length === 1) {
+      download(new Blob([firstRaw.bytes], { type: "model/stl" }), firstRaw.name);
       $("progress").textContent =
-        `exported ${files[0].name} — ${(bytes / 1e6).toFixed(1)} MB (z${z}, ≤${maxErr} mm)` + trailNote + floorNote;
+        `exported ${firstRaw.name} — ${(bytes / 1e6).toFixed(1)} MB (z${z}, ≤${maxErr} mm)` + trailNote + floorNote;
     } else {
       $("progress").textContent = "zipping…";
       await new Promise((r) => setTimeout(r, 0));
-      const zip = await zipFiles(files);
+      const zip = buildZip(entries); // entries are already deflated
       download(new Blob([zip], { type: "application/zip" }), "tilejs_export.zip");
       $("progress").textContent =
         `exported ${n} tile${n === 1 ? "" : "s"}${water} → tilejs_export.zip ` +
@@ -739,21 +752,6 @@ async function exportSTLs() {
 async function deflateRaw(bytes) {
   const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream("deflate-raw"));
   return new Uint8Array(await new Response(stream).arrayBuffer());
-}
-
-// bundle [{name, bytes}] into one .zip (deflated when CompressionStream exists,
-// stored otherwise) so a multi-file export is a single download
-async function zipFiles(files) {
-  const canDeflate = typeof CompressionStream !== "undefined";
-  const entries = [];
-  for (const f of files) {
-    let data = f.bytes, method = 0;
-    if (canDeflate) {
-      try { data = await deflateRaw(f.bytes); method = 8; } catch { data = f.bytes; method = 0; }
-    }
-    entries.push({ name: f.name, data, crc: crc32(f.bytes), size: f.bytes.length, method });
-  }
-  return buildZip(entries);
 }
 
 function download(blob, name) {

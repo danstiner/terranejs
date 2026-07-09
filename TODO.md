@@ -49,7 +49,7 @@ they land; P3 items are deferred until proven needed (simplicity first).
 
 ## P2 — efficiency / memory
 
-- [ ] **Incremental zip** (app.js exportSTLs ~539). files[] holds ~700MB of
+- [x] **Incremental zip** (app.js exportSTLs ~539). files[] holds ~700MB of
   raw STLs until the end; deflate each file as produced and drop raw bytes
   (keep raw only while a single file could be downloaded bare). ~3× lower
   peak heap; delete zipFiles.
