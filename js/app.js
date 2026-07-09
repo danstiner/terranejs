@@ -28,7 +28,7 @@ const store = createStore({
   waterDrop: 3, // ocean recess depth (mm); 0 = off
   waterSeparate: false, // print water as a separate insert
   tracks: [], // imported GPX files: [{ name, segs: [[[lat,lon],…],…] }]
-  pathMode: "bump", // bump | inset | inlay
+  pathMode: "overlay", // overlay | bump | inset | inlay
   pathWmm: 1.6, // trail width on the print
   pathHmm: 0.6, // bump height / inset depth
 });
@@ -326,7 +326,10 @@ function renderSettings(s, baked) {
     if ($("pathW") !== document.activeElement) $("pathW").value = s.pathWmm;
     $("pathHRow").hidden = s.pathMode === "inlay";
     $("inlayHint").hidden = s.pathMode !== "inlay";
-    $("pathHName").textContent = s.pathMode === "inset" ? "Inset depth" : "Bump height";
+    $("overlayHint").hidden = s.pathMode !== "overlay";
+    $("pathHName").textContent =
+      s.pathMode === "inset" ? "Inset depth" :
+      s.pathMode === "overlay" ? "Trail height" : "Bump height";
     $("pathHVal").textContent = s.pathHmm.toFixed(1);
     if ($("pathH") !== document.activeElement) $("pathH").value = s.pathHmm;
   }

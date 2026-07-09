@@ -76,6 +76,7 @@
           <label>Trail (GPX)</label>
           <label for="pathMode">Render as</label>
           <select id="pathMode">
+            <option value="overlay">Overlay (separate piece)</option>
             <option value="bump">Raised bump</option>
             <option value="inset">Inset groove</option>
             <option value="inlay">Slot-in ribbon (separate print)</option>
@@ -90,6 +91,10 @@
           <p class="hint" id="inlayHint" hidden>Ribbon prints flat and flexes into the
             groove; sharp relief along the route is embossed on its top, standing
             ~0.6&nbsp;mm proud of the terrain.</p>
+          <p class="hint" id="overlayHint" hidden>Prints as a separate cord that
+            sits on the terrain surface, its underside molded to the terrain so it
+            self-locates. The terrain model is left unmodified; steep sections
+            need slicer supports under the cord.</p>
         </div>
 
         <details>
