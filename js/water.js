@@ -3,24 +3,14 @@
 // open sea is flooded but interior sub-sea-level basins (e.g. Death Valley's dry
 // Badwater, −86 m) stay land. Pure — node-testable.
 
-// Per-vertex ocean mask via BFS from the frame edge through `≤ levelM` vertices.
+// Per-vertex ocean mask: open sea is everything ≤ levelM 4-connected to the frame
+// edge. Thin wrapper over oceanMaskSeeded with every frame vertex seeded (the
+// seed's own level check keeps above-level edges out), so there is one BFS body.
 export function oceanMask(elev, gw, gh, levelM = 0) {
-  const mask = new Uint8Array(gw * gh);
-  const stack = [];
-  const push = (i) => {
-    if (!mask[i] && elev[i] <= levelM) { mask[i] = 1; stack.push(i); }
-  };
-  for (let c = 0; c < gw; c++) { push(c); push((gh - 1) * gw + c); } // N & S edges
-  for (let r = 0; r < gh; r++) { push(r * gw); push(r * gw + gw - 1); } // W & E edges
-  while (stack.length) {
-    const i = stack.pop();
-    const r = (i / gw) | 0, c = i % gw;
-    if (c > 0) push(i - 1);
-    if (c < gw - 1) push(i + 1);
-    if (r > 0) push(i - gw);
-    if (r < gh - 1) push(i + gw);
-  }
-  return mask;
+  const seeds = new Uint8Array(gw * gh);
+  for (let c = 0; c < gw; c++) { seeds[c] = 1; seeds[(gh - 1) * gw + c] = 1; } // N & S
+  for (let r = 0; r < gh; r++) { seeds[r * gw] = 1; seeds[r * gw + gw - 1] = 1; } // W & E
+  return oceanMaskSeeded(elev, gw, gh, seeds, levelM);
 }
 
 // Cell ocean mask (size (gw-1)*(gh-1)): a cell is ocean iff all 4 corners are.

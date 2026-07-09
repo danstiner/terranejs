@@ -2,6 +2,7 @@
 // to route points (<rtept>) for files without a track. Regex-based rather than
 // DOMParser — tracker-written GPX is regular, and this runs identically in the
 // browser and under node tests.
+import { bboxOf } from "./fit.js";
 
 // value grammar: optional sign, optional exponent; lat/lon compiled once
 const NUM = String.raw`[+-]?[0-9]*\.?[0-9]+(?:[eE][+-]?[0-9]+)?`;
@@ -41,15 +42,7 @@ export function parseGPX(text) {
 
 // bbox [S,W,N,E] of all segments, padded by `pad` (fraction of each span)
 export function trackBbox(segments, pad = 0.1) {
-  let s = Infinity, w = Infinity, n = -Infinity, e = -Infinity;
-  for (const seg of segments) {
-    for (const [lat, lon] of seg) {
-      if (lat < s) s = lat;
-      if (lat > n) n = lat;
-      if (lon < w) w = lon;
-      if (lon > e) e = lon;
-    }
-  }
+  const [s, w, n, e] = bboxOf(segments.flat());
   const dLat = Math.max(1e-4, (n - s) * pad), dLon = Math.max(1e-4, (e - w) * pad);
   return [s - dLat, w - dLon, n + dLat, e + dLon];
 }

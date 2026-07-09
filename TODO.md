@@ -59,7 +59,7 @@ they land; P3 items are deferred until proven needed (simplicity first).
 
 ## P3 — cleanup / deferred (add when proven needed)
 
-- [ ] Quick wins batch: oceanMask as a wrapper over oceanMaskSeeded with
+- [x] Quick wins batch: oceanMask as a wrapper over oceanMaskSeeded with
   frame-edge seeds (delete duplicate BFS; drop unused levelM); trackBbox via
   bboxOf(segments.flat()); shared WATER_CLEAR_MM = 0.4 (pad + insert erode);
   hoist per-tile seed column map (ccMap); one countIn() for the three span

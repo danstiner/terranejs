@@ -25,6 +25,26 @@ test("oceanMask floods open sea from the edge", () => {
   }
 });
 
+test("oceanMask: wrapper matches a reference frame-edge flood", () => {
+  // reference: the pre-refactor standalone frame flood
+  const ref = (elev, gw, gh, levelM = 0) => {
+    const mask = new Uint8Array(gw * gh), stack = [];
+    const push = (i) => { if (!mask[i] && elev[i] <= levelM) { mask[i] = 1; stack.push(i); } };
+    for (let c = 0; c < gw; c++) { push(c); push((gh - 1) * gw + c); }
+    for (let r = 0; r < gh; r++) { push(r * gw); push(r * gw + gw - 1); }
+    while (stack.length) {
+      const i = stack.pop(), r = (i / gw) | 0, c = i % gw;
+      if (c > 0) push(i - 1); if (c < gw - 1) push(i + 1);
+      if (r > 0) push(i - gw); if (r < gh - 1) push(i + gw);
+    }
+    return mask;
+  };
+  const { e, gw, gh } = coastalGrid();
+  assert.deepEqual([...oceanMask(e, gw, gh, 0)], [...ref(e, gw, gh, 0)]);
+  const g = new Float32Array(9).fill(5); g[0] = 3;
+  assert.deepEqual([...oceanMask(g, 3, 3, 4)], [...ref(g, 3, 3, 4)], "level-raising path too");
+});
+
 test("oceanMask leaves an interior sub-sea basin as land (Badwater)", () => {
   const { e, gw, gh } = coastalGrid();
   const m = oceanMask(e, gw, gh, 0);

@@ -42,6 +42,7 @@ const PATH_CLEAR_MM = 0.15;
 // minimum printed base wall: ≥3 layers at any common layer height (0.1–0.3 mm).
 // tilejs can't read the slicer's layer height, so this is a fixed floor.
 const MIN_WALL_MM = 1.0;
+const WATER_CLEAR_MM = 0.4; // shore-edge clearance: tile pad + insert erode radius
 
 const PLA_DENSITY = 1.24; // g/cm³
 // fraction of the solid envelope actually deposited: walls + 3% infill.
@@ -52,6 +53,14 @@ const $ = (id) => document.getElementById(id);
 const extentOf = (poly) => {
   const { realW, realH } = bboxExtentMeters(bboxOf(poly));
   return [realW, realH];
+};
+
+// count set cells inside a tile span, cw = cells per row
+const countIn = (cells, sp, cw) => {
+  let m = 0;
+  for (let r = sp.r0; r < sp.r1; r++)
+    for (let c = sp.c0; c < sp.c1; c++) m += cells[r * cw + c];
+  return m;
 };
 
 // Ocean bake on any grid, given its ocean vertex mask. Plain mode flattens
@@ -564,7 +573,7 @@ async function exportSTLs() {
 
     // padded tile window: erosion (water ~0.4 mm, trail clearance) must see real
     // neighbors past the seam, or inserts/ribbons get nibbled at tile edges
-    const pad = Math.max(3, Math.ceil(0.4 / dx) + 1);
+    const pad = Math.max(3, Math.ceil(WATER_CLEAR_MM / dx) + 1);
     const wantWater = s.waterDrop >= 1 && s.waterSeparate;
     const wantPath = trail && s.pathMode === "inlay";
 
@@ -582,7 +591,7 @@ async function exportSTLs() {
       }
       entries.push({ name, data, crc: crc32(buf), size: buf.length, method });
     };
-    let bytes = 0, n = 0, nw = 0, np = 0, pathCellTotal = 0, ti = 0, nFloored = 0;
+    let bytes = 0, n = 0, nw = 0, np = 0, ti = 0, nFloored = 0;
     const nTiles = f.nx * f.ny;
     for (const [ry, [r0, r1]] of rows.entries()) {
       for (const [cx, [c0, c1]] of cols.entries()) {
@@ -596,10 +605,8 @@ async function exportSTLs() {
 
         // region mask first — skip fetching tiles entirely outside the polygon
         const mask = cellMask(s.polygon, tb, gwT, ghT);
-        let covered = 0, total = 0;
-        for (let r = span.r0; r < span.r1; r++) {
-          for (let c = span.c0; c < span.c1; c++) { total++; covered += mask[r * cw + c]; }
-        }
+        const total = (span.r1 - span.r0) * (span.c1 - span.c0);
+        const covered = countIn(mask, span, cw);
         if (covered === 0) continue;
 
         const range = tileRangeForBBox(tb, z);
@@ -619,12 +626,11 @@ async function exportSTLs() {
         let oMaskT = null;
         if (s.waterDrop > 0) {
           const seeds = new Uint8Array(gwT * ghT);
+          const ccMap = new Int32Array(gwT); // coarse column per tile column (row-invariant)
+          for (let c = 0; c < gwT; c++) ccMap[c] = Math.round(((pc0 + c) / (gwF - 1)) * (gwC - 1));
           for (let r = 0; r < ghT; r++) {
             const rc = Math.round(((pr0 + r) / (ghF - 1)) * (ghC - 1));
-            for (let c = 0; c < gwT; c++) {
-              const cc = Math.round(((pc0 + c) / (gwF - 1)) * (gwC - 1));
-              seeds[r * gwT + c] = oMaskC[rc * gwC + cc];
-            }
+            for (let c = 0; c < gwT; c++) seeds[r * gwT + c] = oMaskC[rc * gwC + ccMap[c]];
           }
           oMaskT = oceanMaskSeeded(rawT, gwT, ghT, seeds);
         }
@@ -699,12 +705,9 @@ async function exportSTLs() {
         // prints flat face down, flips north-south into the recess, so its
         // depth grid and cell mask are built row-mirrored within the window
         if (wantWater && oMaskT) {
-          const rings = Math.max(1, Math.ceil(0.4 / dx)); // ~0.4 mm side clearance
+          const rings = Math.max(1, Math.ceil(WATER_CLEAR_MM / dx)); // shore clearance
           const oceanCells = erodeMask(cellOcean(oMaskT, gwT, ghT), cw, ghT - 1, rings);
-          let oc = 0;
-          for (let r = span.r0; r < span.r1; r++) {
-            for (let c = span.c0; c < span.c1; c++) oc += oceanCells[r * cw + c];
-          }
+          const oc = countIn(oceanCells, span, cw);
           if (oc > 0) {
             const depthFlip = new Float32Array(gwT * ghT);
             for (let r = 0; r < ghT; r++) {
@@ -729,11 +732,7 @@ async function exportSTLs() {
         // trail ribbon for this tile: prints flat (bottom = mating face at z=0),
         // top carries the residual relief; flexes into the groove as-printed
         if (wantPath && pathCells) {
-          let pc = 0;
-          for (let r = span.r0; r < span.r1; r++) {
-            for (let c = span.c0; c < span.c1; c++) pc += pathCells[r * cw + c];
-          }
-          pathCellTotal += pc;
+          const pc = countIn(pathCells, span, cw);
           if (pc > 0) {
             const psolid = buildSolid(ribbon, gwT, ghT, span, pathCells,
               { dx, dy, mmPerM: 1, emin: 0, exag: 1, base: 0 });
@@ -749,7 +748,7 @@ async function exportSTLs() {
     if (!entries.length) { $("progress").textContent = "nothing to export (region empty?)"; return; }
     const water = (nw ? ` + ${nw} water insert${nw === 1 ? "" : "s"}` : "") +
       (np ? ` + ${np} trail ribbon${np === 1 ? "" : "s"}` : "");
-    const trailNote = wantPath && pathCellTotal === 0
+    const trailNote = wantPath && np === 0
       ? " — trail ribbon skipped: track is outside the region (or too narrow to print)"
       : "";
     const floorNote = nFloored
