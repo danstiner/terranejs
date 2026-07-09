@@ -59,7 +59,11 @@ const extentOf = (poly) => {
 // lowered by the drop (exag-corrected so the print-z drop is exactly waterDrop).
 function bakeWater(s, rawGrid, oMask, k) {
   if (!oMask) return rawGrid;
-  return s.waterSeparate
+  // insert mode keeps ocean-floor relief (lowered by the drop) and needs a real
+  // ≥1 mm drop — the insert's shore-edge thickness. Every other case is a flat
+  // recess, so no state combination yields a bathymetry recess with no insert.
+  const insertMode = s.waterSeparate && s.waterDrop >= 1;
+  return insertMode
     ? offsetGrid(rawGrid, oMask, s.waterDrop / k)
     : recessedGrid(rawGrid, oMask, -s.waterDrop / k);
 }
