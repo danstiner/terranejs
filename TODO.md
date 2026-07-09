@@ -14,7 +14,7 @@ they land; P3 items are deferred until proven needed (simplicity first).
 - [x] **GPX multi-route merge** (gpx.js ~16). Files without `<trkseg>` weld all
   points into one segment — two `<rte>` routes get a phantom connecting leg.
   Fix: trkseg blocks → else per-`<trk>` → else per-`<rte>` → else whole text.
-- [ ] **GPX attribute regex too narrow** (gpx.js ~7). Rejects exponent
+- [x] **GPX attribute regex too narrow** (gpx.js ~7). Rejects exponent
   notation, '+' signs, whitespace around '=', namespace-prefixed tags; also
   compiles 2 RegExps per point. Fix: precompiled widened patterns.
 - [ ] **Ribbon clearance heuristic fails both ways** (app.js ~603). Cell

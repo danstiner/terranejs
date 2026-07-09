@@ -33,6 +33,17 @@ test("parseGPX: route fallback and empty input", () => {
     "single-point segment dropped");
 });
 
+test("parseGPX: exponent/sign/whitespace coords and namespaced tags", () => {
+  const gpx = `<gpx><trkseg>` +
+    `<gpx:trkpt lat = "1.0e1" lon="-2.0E1"/>` +
+    `<gpx:trkpt lat='+11' lon = '-21'/>` +
+    `</trkseg></gpx>`;
+  const segs = parseGPX(gpx);
+  assert.equal(segs.length, 1);
+  assert.deepEqual(segs[0][0], [10, -20]);
+  assert.deepEqual(segs[0][1], [11, -21]);
+});
+
 test("parseGPX: two routes become two segments (no phantom bridge)", () => {
   const gpx = `<gpx>` +
     `<rte><rtept lat="10" lon="20"/><rtept lat="11" lon="21"/></rte>` +

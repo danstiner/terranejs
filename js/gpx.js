@@ -3,10 +3,11 @@
 // DOMParser — tracker-written GPX is regular, and this runs identically in the
 // browser and under node tests.
 
-const ATTR = (attrs, name) => {
-  const m = new RegExp(`\\b${name}=["'](-?[\\d.]+)["']`).exec(attrs);
-  return m ? Number(m[1]) : NaN;
-};
+// value grammar: optional sign, optional exponent; lat/lon compiled once
+const NUM = String.raw`[+-]?[0-9]*\.?[0-9]+(?:[eE][+-]?[0-9]+)?`;
+const LAT = new RegExp(String.raw`\blat\s*=\s*["'](` + NUM + `)["']`);
+const LON = new RegExp(String.raw`\blon\s*=\s*["'](` + NUM + `)["']`);
+const attr = (attrs, re) => { const m = re.exec(attrs); return m ? Number(m[1]) : NaN; };
 
 // text -> [[[lat,lon],…], …], one array per segment; segments under 2 points dropped
 export function parseGPX(text) {
@@ -27,10 +28,10 @@ export function parseGPX(text) {
   const segs = [];
   for (const block of blocks) {
     const pts = [];
-    const re = new RegExp(`<${tag}\\b([^>]*)`, "g");
+    const re = new RegExp(String.raw`<(?:\w+:)?` + tag + String.raw`\b([^>]*)`, "g");
     let m;
     while ((m = re.exec(block))) {
-      const lat = ATTR(m[1], "lat"), lon = ATTR(m[1], "lon");
+      const lat = attr(m[1], LAT), lon = attr(m[1], LON);
       if (Number.isFinite(lat) && Number.isFinite(lon)) pts.push([lat, lon]);
     }
     if (pts.length >= 2) segs.push(pts);
