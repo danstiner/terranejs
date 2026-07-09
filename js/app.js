@@ -141,6 +141,12 @@ const map = initMap({
 const preset = $("preset");
 const groups = new Map();
 for (const p of PRESETS) {
+  // a preset with neither a resolved boundary nor a bbox can't build a polygon
+  // (bboxToPolygon(undefined) throws) — skip it so a partial bake can't kill load
+  if (!p.boundary && !p.bbox) {
+    console.warn(`preset "${p.name}" has no boundary or bbox — skipping (unbaked region?)`);
+    continue;
+  }
   if (!groups.has(p.group)) {
     const g = document.createElement("optgroup");
     g.label = p.group;

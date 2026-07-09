@@ -122,12 +122,14 @@ def main():
         print(f"  already baked, skipping: {len(skipped)}")
     jobs = [(k, s) for k, s in jobs if k not in out]
 
+    failed = []
     for key, selector in jobs:
         try:
             els = overpass(selector)
             poly = largest_ring(els)
             if poly is None:
                 print(f"  !! {key}: no polygon assembled", file=sys.stderr)
+                failed.append(key)
                 continue
             s = simplify_to(poly)
             ring = ring_latlon(s)
@@ -137,6 +139,7 @@ def main():
                   f"{b[1]:.2f},{b[0]:.2f},{b[3]:.2f},{b[2]:.2f}")
         except Exception as e:
             print(f"  !! {key}: {e}", file=sys.stderr)
+            failed.append(key)
         time.sleep(3)  # be polite to Overpass
 
     body = ",\n".join(
@@ -147,6 +150,9 @@ def main():
         "// Real region outlines (OSM, simplified) as [[lat, lon], …] rings.\n"
         f"export const BOUNDARIES = {{\n{body}\n}};\n")
     print(f"\nwrote {DST} ({len(out)} regions)")
+    if failed:
+        print(f"  {len(failed)} job(s) failed: {', '.join(failed)}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
