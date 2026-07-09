@@ -300,7 +300,7 @@ function renderSettings(s, baked) {
   $("exagVal").textContent = s.exag.toFixed(1);
   $("baseVal").textContent = s.base.toFixed(1);
   $("waterDropVal").textContent = s.waterDrop.toFixed(1);
-  if ($("waterDrop") !== document.activeElement) $("waterDrop").value = s.waterDrop;
+  $("waterDrop").value = s.waterDrop; // range thumb must snap to a clamped value, even while dragging
   $("waterOpts").hidden = s.waterDrop <= 0;
   $("waterSeparate").checked = s.waterSeparate;
 

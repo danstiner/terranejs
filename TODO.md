@@ -32,7 +32,7 @@ they land; P3 items are deferred until proven needed (simplicity first).
   waterSeparate alone while insert emission needs waterDrop ≥ 1 → sub-1mm
   drop + separate = recess with no insert. Fix: one insertMode predicate
   (waterSeparate && waterDrop ≥ 1) drives both.
-- [ ] **waterDrop slider desync** (app.js ~234). Clamped store value isn't
+- [x] **waterDrop slider desync** (app.js ~234). Clamped store value isn't
   written back while the slider has focus. Fix: drop the activeElement guard
   for the range input so the thumb snaps.
 - [x] **GPX import dies silently on one bad file** (app.js ~170). Per-file
