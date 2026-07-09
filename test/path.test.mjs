@@ -56,6 +56,37 @@ test("rasterizePath: off-grid track marks nothing", () => {
   assert.ok(mask.every((v) => v === 0));
 });
 
+test("rasterizePath: inner mask is inset from the groove and a strict subset", () => {
+  const gw = 51, gh = 51, dx = 2, dy = 2;
+  const { pts } = samplePath([[[0.5, 0], [0.5, 1]]], BBOX, W_MM, H_MM, 2);
+  const { mask, inner } = rasterizePath(pts, gw, gh, dx, dy, 6, 4); // 6 mm groove, 4 mm ribbon
+  let mCount = 0, iCount = 0;
+  for (let i = 0; i < mask.length; i++) {
+    mCount += mask[i]; iCount += inner[i];
+    if (inner[i]) assert.equal(mask[i], 1, "inner vertex is also a groove vertex");
+  }
+  assert.ok(iCount > 0 && iCount < mCount, `inner (${iCount}) strictly inside groove (${mCount})`);
+});
+
+test("rasterizePath: sub-2-cell trail keeps a >=2-cell ribbon chain", () => {
+  // pathW 0.8 mm at 0.3 mm pitch: post-hoc erosion used to erase the ribbon
+  const dx = 0.3, dy = 0.3, gw = 41, gh = 41;
+  const W = (gw - 1) * dx, H = (gh - 1) * dy;
+  const { pts } = samplePath([[[0.5, 0.1], [0.5, 0.9]]], [0, 0, 1, 1], W, H, dx);
+  const halfW = 0.4;
+  const ribbonHalfW = Math.max(halfW - 0.15, 1.6 * dx);
+  const grooveHalfW = Math.max(halfW, ribbonHalfW + 0.15);
+  const { inner } = rasterizePath(pts, gw, gh, dx, dy, grooveHalfW, ribbonHalfW);
+  const cells = cellOcean(inner, gw, gh);
+  const cw = gw - 1;
+  let widest = 0;
+  for (let r = 0; r < gh - 1; r++) {
+    let w = 0; for (let c = 0; c < cw; c++) w += cells[r * cw + c];
+    widest = Math.max(widest, w);
+  }
+  assert.ok(widest >= 2, `ribbon chain is >=2 cells wide (got ${widest})`);
+});
+
 test("profileAlong: bilinear matches an analytic ramp", () => {
   const gw = 11, gh = 11, dx = 10, dy = 10;
   const grid = new Float32Array(gw * gh);

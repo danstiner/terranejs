@@ -34,14 +34,17 @@ export function samplePath(segments, [s, w, n, e], widthMm, heightMm, ds) {
   return { pts: Float32Array.from(pts), segStarts: Int32Array.from(segStarts) };
 }
 
-// Vertex mask + nearest-sample index within halfW of any sample point.
-// Disc-stamp per sample (ds ≤ halfW keeps coverage continuous); each vertex
-// keeps its closest sample so profile lookups are consistent along the trail.
-export function rasterizePath(pts, gw, gh, dx, dy, halfW) {
+// Vertex mask + nearest-sample index within halfW of any sample point, plus an
+// optional `inner` mask within halfWInner (the ribbon footprint, inset from the
+// groove). Disc-stamp per sample (ds ≤ halfW keeps coverage continuous); each
+// vertex keeps its closest sample so profile lookups are consistent along the
+// trail. The scan window uses halfW ≥ halfWInner, so `inner` is fully covered.
+export function rasterizePath(pts, gw, gh, dx, dy, halfW, halfWInner = 0) {
   const mask = new Uint8Array(gw * gh);
+  const inner = new Uint8Array(gw * gh);
   const sIdx = new Int32Array(gw * gh).fill(-1);
   const best = new Float32Array(gw * gh).fill(Infinity);
-  const r2 = halfW * halfW;
+  const r2 = halfW * halfW, ri2 = halfWInner * halfWInner;
   for (let j = 0; j < pts.length / 2; j++) {
     const px = pts[2 * j], py = pts[2 * j + 1];
     const c0 = Math.max(0, Math.ceil((px - halfW) / dx));
@@ -53,11 +56,14 @@ export function rasterizePath(pts, gw, gh, dx, dy, halfW) {
       for (let c = c0; c <= c1; c++) {
         const d2 = (c * dx - px) ** 2 + (vy - py) ** 2;
         const i = r * gw + c;
-        if (d2 <= r2 && d2 < best[i]) { best[i] = d2; mask[i] = 1; sIdx[i] = j; }
+        if (d2 <= r2) {
+          if (d2 < best[i]) { best[i] = d2; mask[i] = 1; sIdx[i] = j; }
+          if (d2 <= ri2) inner[i] = 1;
+        }
       }
     }
   }
-  return { mask, sIdx };
+  return { mask, sIdx, inner };
 }
 
 // Terrain value (grid units) at each sample, bilinear, edge-clamped.

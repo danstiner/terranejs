@@ -17,7 +17,7 @@ they land; P3 items are deferred until proven needed (simplicity first).
 - [x] **GPX attribute regex too narrow** (gpx.js ~7). Rejects exponent
   notation, '+' signs, whitespace around '=', namespace-prefixed tags; also
   compiles 2 RegExps per point. Fix: precompiled widened patterns.
-- [ ] **Ribbon clearance heuristic fails both ways** (app.js ~603). Cell
+- [x] **Ribbon clearance heuristic fails both ways** (app.js ~603). Cell
   erosion rounds to 0 at coarse pitch (interference fit) and erases the
   minimal chain at fine pitch (groove ships without ribbon). Fix: geometric
   inner footprint in rasterizePath: ribbon halfW = max(halfW − 0.15, 1.6·ds).

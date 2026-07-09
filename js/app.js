@@ -624,13 +624,15 @@ async function exportSTLs() {
             ptsT[i] = trail.pts[i] - offX;
             ptsT[i + 1] = trail.pts[i + 1] - offY;
           }
-          const { mask: pm, sIdx } = rasterizePath(ptsT, gwT, ghT, dx, dy, trail.halfW);
+          // ribbon footprint = groove inset by exactly PATH_CLEAR_MM, never below
+          // a ~2-cell chain; the groove widens so the ribbon always fits inside it
+          const ds = Math.max(dx, dy);
+          const ribbonHalfW = Math.max(trail.halfW - PATH_CLEAR_MM, 1.6 * ds);
+          const grooveHalfW = Math.max(trail.halfW, ribbonHalfW + PATH_CLEAR_MM);
+          const { mask: pm, sIdx, inner } = rasterizePath(ptsT, gwT, ghT, dx, dy, grooveHalfW, ribbonHalfW);
           ({ grid, ribbon } = stampTrail(s, grid, trail, pm, sIdx));
           if (wantPath) {
-            // rings may round to 0 on coarse lattices, where cell quantization
-            // already leaves clearance — a forced ring would erode ~5× 0.15 mm
-            const rings = Math.round(PATH_CLEAR_MM / dx);
-            pathCells = erodeMask(cellOcean(pm, gwT, ghT), cw, ghT - 1, rings);
+            pathCells = cellOcean(inner, gwT, ghT); // clearance already applied
             for (let i = 0; i < pathCells.length; i++) pathCells[i] &= mask[i];
           }
         }
