@@ -24,7 +24,7 @@ they land; P3 items are deferred until proven needed (simplicity first).
 - [ ] **loadPreview commits hybrid state** (app.js ~369). cellMask/pvKey read
   store.get() after the await; Clear during fetch throws, polygon edits stamp
   stale grids as fresh. Fix: use the s/f snapshot captured at function start.
-- [ ] **Preview trail band ≠ export width** (app.js trailContext ~77). The
+- [x] **Preview trail band ≠ export width** (app.js trailContext ~77). The
   3.2·ds width floor scales with each grid's pitch → preview band up to ~3×
   wider than the exported groove on large prints. Fix: floor per call site
   (preview visibility 0.6·ds; ribbon chain floor in the clearance fix).

@@ -68,17 +68,17 @@ function bakeWater(s, rawGrid, oMask, k) {
 // inlay mode, the terrain profile at those samples plus the smoothed mating
 // curve. Computed ONCE per surface so the groove floor is identical wherever
 // it is stamped — per-tile export stamping must not re-derive it or the floor
-// would step at print-tile seams. `grid` supplies elevations; `ds` sets the
-// sample spacing (and the rasterization width floor: a sub-pitch band would
-// rasterize to disconnected crumbs; ≥3.2·pitch keeps the ribbon's cell chain
-// ≥2 cells wide and connected).
+// would step at print-tile seams. `grid` supplies elevations; `ds` sets only the
+// sample spacing. The rasterization width floors live at the call sites (preview
+// visibility; ribbon chain in the clearance fix), so halfW is the true print
+// width and the preview band matches the exported groove.
 function trailContext(s, grid, gw, gh, f, ds) {
   const segs = s.tracks.flatMap((t) => t.segs);
   if (!segs.length) return null;
   const { pts, segStarts } = samplePath(segs, f.bbox, f.widthMm, f.heightMm, ds);
   if (pts.length < 4) return null;
   const k = (1000 / f.scale) * s.exag;
-  const ctx = { pts, halfW: Math.max(s.pathWmm, 3.2 * ds) / 2, k };
+  const ctx = { pts, halfW: s.pathWmm / 2, k };
   if (s.pathMode === "inlay") {
     const dx = f.widthMm / (gw - 1), dy = f.heightMm / (gh - 1);
     ctx.emin0 = gridRange(grid).min;
@@ -113,7 +113,9 @@ function bakedSurface(s, rawGrid, gw, gh, f) {
   const ctx = trailContext(s, grid, gw, gh, f, Math.max(dx, dy));
   let pathMask = null, ribbon = null;
   if (ctx) {
-    const { mask, sIdx } = rasterizePath(ctx.pts, gw, gh, dx, dy, ctx.halfW);
+    // floor the preview groove only for line continuity at 1–2 vertices
+    const { mask, sIdx } = rasterizePath(ctx.pts, gw, gh, dx, dy,
+      Math.max(ctx.halfW, 0.6 * Math.max(dx, dy)));
     ({ grid, ribbon } = stampTrail(s, grid, ctx, mask, sIdx));
     pathMask = mask;
   }
