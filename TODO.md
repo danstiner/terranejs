@@ -53,7 +53,7 @@ they land; P3 items are deferred until proven needed (simplicity first).
   raw STLs until the end; deflate each file as produced and drop raw bytes
   (keep raw only while a single file could be downloaded bare). ~3× lower
   peak heap; delete zipFiles.
-- [ ] **Double bake per store change** (app.js ~325/~392). estimateMassG and
+- [x] **Double bake per store change** (app.js ~325/~392). estimateMassG and
   rebuildTiles each run bakedSurface per input event. Compute once in the
   subscriber and share; also stops the preview's unused ribbon allocation.
 

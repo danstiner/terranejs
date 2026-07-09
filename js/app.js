@@ -263,9 +263,11 @@ function scheduleReload() {
 store.subscribe((s) => {
   renderRegion(s);
   renderTracks(s);
-  renderSettings(s);
+  // one bake per event, shared by the mass estimate and the tile rebuild
+  const baked = pv && pvKey === keyOf(s) ? bakedSurface(s, pv.grid, pv.gw, pv.gh, pv.f) : null;
+  renderSettings(s, baked);
   if (pvKey === null || keyOf(s) !== pvKey) scheduleReload();
-  else if (pv) rebuildTiles();
+  else if (pv) rebuildTiles(baked);
 });
 
 function renderRegion(s) {
@@ -278,7 +280,7 @@ function renderRegion(s) {
     `bbox S,W,N,E:\n  ${[bs, bw, bn, be].map((x) => x.toFixed(4)).join(", ")}`;
 }
 
-function renderSettings(s) {
+function renderSettings(s, baked) {
   const box = $("settings");
   if (!s.polygon || s.polygon.length < 3 || !s.scale) { box.hidden = true; return; }
   box.hidden = false;
@@ -305,7 +307,7 @@ function renderSettings(s) {
   const f = fit({ polygon: s.polygon, scale: s.scale, capW: s.capW, capH: s.capH });
   const nT = f.nx * f.ny;
   const warn = nT > 16 ? ' <span class="warn">(a lot!)</span>' : "";
-  const m = estimateMassG(s);
+  const m = estimateMassG(s, baked);
   const massLine = m
     ? `~${m.total.toFixed(0)} g @3% infill (~${m.perTile.toFixed(0)} g/tile)`
     : "— loading…";
@@ -323,10 +325,10 @@ function renderSettings(s) {
 // PLA mass from the loaded terrain: solid volume (base + relief per cell) times
 // density times the shell+infill factor. Uses the cached preview grid, so it's
 // only available once terrain is loaded and still matches the current settings.
-function estimateMassG(s) {
-  if (!pv || pvKey !== keyOf(s)) return null;
+function estimateMassG(s, baked) {
+  if (!pv || !baked || pvKey !== keyOf(s)) return null;
   const { gw, gh, f, mask } = pv;
-  const { grid, min } = bakedSurface(s, pv.grid, gw, gh, f);
+  const { grid, min } = baked;
   const mmPerM = 1000 / f.scale;
   const cellArea = (f.widthMm / (gw - 1)) * (f.heightMm / (gh - 1));
   const cw = gw - 1;
@@ -381,19 +383,20 @@ async function loadPreview() {
       preview = mod.initPreview($("preview"));
     }
     preview.resize();
-    rebuildTiles();
-    renderSettings(store.get()); // refresh readout so the material estimate appears
+    const baked = bakedSurface(store.get(), grid, gw, gh, f);
+    rebuildTiles(baked);
+    renderSettings(store.get(), baked); // refresh readout so the material estimate appears
   } catch (err) {
     if (token === loadToken) $("progress").innerHTML = `<span class="warn">load failed: ${err.message}</span>`;
   }
 }
 
 // rebuild exploded tile meshes from the cached grid (cheap; no network)
-function rebuildTiles() {
-  if (!pv || !preview) return;
+function rebuildTiles(baked) {
+  if (!pv || !preview || !baked) return;
   const s = store.get();
   const { gw, gh, f, mask } = pv;
-  const { grid, oMask, pathMask, min, max } = bakedSurface(s, pv.grid, gw, gh, f);
+  const { grid, oMask, pathMask, min, max } = baked;
   const erange = Math.max(1e-6, max - min);
   const mmPerM = 1000 / f.scale;
   const dx = f.widthMm / (gw - 1);
