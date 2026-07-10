@@ -200,3 +200,31 @@ test("water insert: flipped piece registers with the offset terrain", () => {
     }
   }
 });
+
+// --- bathymetry-valid zoom regression (Puget Sound bug) --------------------
+
+test("water view: flood must run on bathymetry data, not the geometry grid", () => {
+  const gw = 12, gh = 6;
+  // geometry grid as z11 serves it over Puget Sound: land-DEM junk, +1 m water
+  const junk = new Float32Array(gw * gh).fill(1);
+  // water view as z10 serves it: a −50 m channel connected to the west edge
+  const water = new Float32Array(gw * gh).fill(20);
+  for (let c = 0; c < 9; c++) water[2 * gw + c] = -50;
+  const seeds = new Uint8Array(gw * gh);
+  seeds[2 * gw + 0] = 1; // coarse mask found ocean at the west edge
+  const onJunk = oceanMaskSeeded(junk, gw, gh, seeds);
+  const onWater = oceanMaskSeeded(water, gw, gh, seeds);
+  assert.equal(onJunk.reduce((a, b) => a + b, 0), 0, "junk grid: flood finds nothing (the bug)");
+  for (let c = 0; c < 9; c++) assert.equal(onWater[2 * gw + c], 1, "water view: channel continuous");
+  assert.equal(onWater.reduce((a, b) => a + b, 0), 9, "only the channel floods");
+});
+
+test("water view: unseeded interior basin stays dry (Badwater)", () => {
+  const gw = 8, gh = 8;
+  const water = new Float32Array(gw * gh).fill(20);
+  water[3 * gw + 3] = -86; // interior sub-sea basin, not seed-connected
+  const seeds = new Uint8Array(gw * gh);
+  seeds[0] = 1; // an edge seed on +20 m land: dies at the level check
+  const m = oceanMaskSeeded(water, gw, gh, seeds);
+  assert.equal(m.reduce((a, b) => a + b, 0), 0);
+});

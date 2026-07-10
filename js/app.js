@@ -45,6 +45,11 @@ const PATH_CLEAR_MM = 0.15;
 const MIN_WALL_MM = 1.0;
 const WATER_CLEAR_MM = 0.4; // shore-edge clearance: tile pad + insert erode radius
 
+// terrarium carries real bathymetry only at low zooms (probed 2026-07: Puget
+// Sound min −248 m at z10; +0.5–2 m land-DEM junk at z11). Water classification
+// and insert depths must never read finer than this.
+const WATER_ZOOM_MAX = 10;
+
 const PLA_DENSITY = 1.24; // g/cm³
 // fraction of the solid envelope actually deposited: walls + 3% infill.
 // Calibrated to a real slice (Rainier tile: 849 cm³ solid -> 145 g at 3%/0.15mm).
@@ -562,7 +567,17 @@ async function exportSTLs() {
       onProgress: (d, t) => { $("progress").textContent = `context pass: fetching ${d}/${t}…`; },
     });
     const rawC = resampleBilinear(mosaicC, f.bbox, gwC, ghC);
-    const oMaskC = s.waterDrop > 0 ? oceanMask(rawC, gwC, ghC, 0) : null;
+    // water reads from a coarser mosaic when zC is finer than bathymetry-valid;
+    // reuse mosaicC (no extra fetch) when it's already coarse enough
+    const zW = Math.min(zC, WATER_ZOOM_MAX);
+    let mosaicWater = mosaicC;
+    if (s.waterDrop > 0 && zW !== zC) {
+      $("progress").textContent = `water pass (z${zW})…`;
+      mosaicWater = await fetchMosaic(f.bbox, zW, {});
+    }
+    const rawWC = mosaicWater === mosaicC ? rawC
+      : resampleBilinear(mosaicWater, f.bbox, gwC, ghC);
+    const oMaskC = s.waterDrop > 0 ? oceanMask(rawWC, gwC, ghC, 0) : null;
     const gridC = bakeWater(s, rawC, oMaskC, k);
     // trail sampled at the FINE pitch (elevations off the coarse grid): the
     // per-tile rasterization needs sample spacing ≤ halfW to stay gap-free
@@ -633,10 +648,12 @@ async function exportSTLs() {
         $("progress").textContent = `${label}: meshing…`;
         await new Promise((r) => setTimeout(r, 0)); // let the message paint
 
-        // ocean: flood this window from coarse-mask seeds (edge-connectivity is
-        // global; flooding from the window frame would misclassify basins)
-        let oMaskT = null;
+        // ocean: flood the bathymetry view of this window from coarse-mask
+        // seeds (edge-connectivity is global; the geometry grid has no valid
+        // water signal at z>WATER_ZOOM_MAX)
+        let oMaskT = null, waterT = null;
         if (s.waterDrop > 0) {
+          waterT = resampleBilinear(mosaicWater, tb, gwT, ghT);
           const seeds = new Uint8Array(gwT * ghT);
           const ccMap = new Int32Array(gwT); // coarse column per tile column (row-invariant)
           for (let c = 0; c < gwT; c++) ccMap[c] = Math.round(((pc0 + c) / (gwF - 1)) * (gwC - 1));
@@ -644,7 +661,7 @@ async function exportSTLs() {
             const rc = Math.round(((pr0 + r) / (ghF - 1)) * (ghC - 1));
             for (let c = 0; c < gwT; c++) seeds[r * gwT + c] = oMaskC[rc * gwC + ccMap[c]];
           }
-          oMaskT = oceanMaskSeeded(rawT, gwT, ghT, seeds);
+          oMaskT = oceanMaskSeeded(waterT, gwT, ghT, seeds);
         }
         let grid = bakeWater(s, rawT, oMaskT, k);
 
@@ -739,7 +756,7 @@ async function exportSTLs() {
             const depthFlip = new Float32Array(gwT * ghT);
             for (let r = 0; r < ghT; r++) {
               for (let c = 0; c < gwT; c++) {
-                depthFlip[(ghT - 1 - r) * gwT + c] = Math.max(0, -rawT[r * gwT + c]);
+                depthFlip[(ghT - 1 - r) * gwT + c] = Math.max(0, -waterT[r * gwT + c]);
               }
             }
             const oceanCellsFlip = new Uint8Array(cw * (ghT - 1));
