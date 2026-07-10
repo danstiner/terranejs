@@ -8,7 +8,7 @@ import { resampleBilinear, gridRange } from "./resample.js";
 import { cellMask } from "./polyclip.js";
 import { buildPreviewSolid, buildSolid, buildSolidTIN, buildSolidFromMesh, buildTrailShell } from "./mesh.js";
 import { decimate } from "./decimate.js";
-import { clipTriangleToPolygon } from "./clip.js";
+import { clipTriangleToPolygon, footprintClassifier } from "./clip.js";
 import { oceanMask, oceanMaskSeeded, cellOcean, erodeMask, recessedGrid,
   offsetGrid } from "./water.js";
 import { parseGPX, trackBbox } from "./gpx.js";
@@ -469,7 +469,7 @@ const EXPORT_ERR_MM = 0.05; // TIN vertical error tolerance (fine)
 // watertight solid with a smooth polygon-following boundary. Returns null on any
 // failure (degenerate clip / non-closing solid) so the caller falls back to the
 // uniform stair-clip and export never breaks.
-function clipTileSolid(grid, gw, gh, span, polygon, geom) {
+function clipTileSolid(grid, gw, gh, span, polygon, geom, subMask) {
   const { r0, r1, c0, c1 } = span;
   const { dx, dy, mmPerM, emin, exag, base, bbox: [s, w, n, e], widthMm, heightMm, maxErr } = geom;
   try {
@@ -488,10 +488,16 @@ function clipTileSolid(grid, gw, gh, span, polygon, geom) {
       r1 * dy - ((n - lat) / (n - s)) * heightMm,
     ]);
 
+    const classify = footprintClassifier(subMask, gwt - 1, ght - 1);
     const top = [];
     for (let i = 0; i < triangles.length; i += 3) {
       const a = triangles[i], b = triangles[i + 1], c = triangles[i + 2];
+      const xs = [coords[2 * a], coords[2 * b], coords[2 * c]];
+      const ys = [coords[2 * a + 1], coords[2 * b + 1], coords[2 * c + 1]];
+      const cls = classify(Math.min(...xs), Math.min(...ys), Math.max(...xs) - 1, Math.max(...ys) - 1);
+      if (cls === "out") continue;
       const tri = [[vx(a), vy(a), vz(a)], [vx(b), vy(b), vz(b)], [vx(c), vy(c), vz(c)]];
+      if (cls === "in") { top.push(...tri[0], ...tri[1], ...tri[2]); continue; }
       for (const v of clipTriangleToPolygon(tri, poly)) top.push(v);
     }
     if (!top.length) return null;
@@ -705,7 +711,13 @@ async function exportSTLs() {
           // self-consistent in any frame whose bbox/dims match the grid.
           const geom = { dx, dy, mmPerM, emin, exag: s.exag, base: s.base,
             bbox: tb, widthMm: (gwT - 1) * dx, heightMm: (ghT - 1) * dy, maxErr };
-          solid = clipTileSolid(grid, gwT, ghT, span, s.polygon, geom)
+          // span-local cell mask for the clip prefilter
+          const gwt = span.c1 - span.c0 + 1, ght = span.r1 - span.r0 + 1;
+          const subMask = new Uint8Array((gwt - 1) * (ght - 1));
+          for (let r = 0; r < ght - 1; r++)
+            for (let c = 0; c < gwt - 1; c++)
+              subMask[r * (gwt - 1) + c] = mask[(span.r0 + r) * cw + (span.c0 + c)];
+          solid = clipTileSolid(grid, gwT, ghT, span, s.polygon, geom, subMask)
             || buildSolid(grid, gwT, ghT, span, mask,
               { dx, dy, mmPerM, emin, exag: s.exag, base: s.base });
         }

@@ -139,3 +139,58 @@ export function clipTriangleToPolygon(tri, polygon) {
   }
   return out;
 }
+
+// Fast footprint classification for TIN facets. Build once per cell mask, then
+// classify a facet's grid-cell bbox as fully 'in', fully 'out', or 'band'
+// (near the footprint boundary → needs the full polygon clip). Band = cells
+// with a mixed 3×3 neighborhood, dilated by one more cell, so a polygon edge
+// can nick a cell without flipping its center and still stay inside the band.
+export function footprintClassifier(mask, cw, ch) {
+  const at = (m, r, c) => (r < 0 || c < 0 || r >= ch || c >= cw ? 0 : m[r * cw + c]);
+  const mixed = new Uint8Array(cw * ch);
+  for (let r = 0; r < ch; r++) {
+    for (let c = 0; c < cw; c++) {
+      const v = at(mask, r, c);
+      let m = 0;
+      for (let dr = -1; dr <= 1 && !m; dr++)
+        for (let dc = -1; dc <= 1; dc++)
+          if (at(mask, r + dr, c + dc) !== v) { m = 1; break; }
+      mixed[r * cw + c] = m;
+    }
+  }
+  const band = new Uint8Array(cw * ch);
+  for (let r = 0; r < ch; r++) {
+    for (let c = 0; c < cw; c++) {
+      let b = 0;
+      for (let dr = -1; dr <= 1 && !b; dr++)
+        for (let dc = -1; dc <= 1; dc++)
+          if (at(mixed, r + dr, c + dc)) { b = 1; break; }
+      band[r * cw + c] = b;
+    }
+  }
+  const satOf = (m) => {
+    const S = new Int32Array((cw + 1) * (ch + 1));
+    for (let r = 0; r < ch; r++) {
+      let row = 0;
+      for (let c = 0; c < cw; c++) {
+        row += m[r * cw + c];
+        S[(r + 1) * (cw + 1) + (c + 1)] = S[r * (cw + 1) + (c + 1)] + row;
+      }
+    }
+    return S;
+  };
+  const S = satOf(mask), B = satOf(band);
+  const q = (T, r0, c0, r1, c1) =>
+    T[(r1 + 1) * (cw + 1) + (c1 + 1)] - T[r0 * (cw + 1) + (c1 + 1)] -
+    T[(r1 + 1) * (cw + 1) + c0] + T[r0 * (cw + 1) + c0];
+  // args are CELL ranges (inclusive); facet bbox in grid verts maps to cells
+  // [minX .. maxX−1] × [minY .. maxY−1]
+  return (c0, r0, c1, r1) => {
+    c0 = Math.max(0, c0); r0 = Math.max(0, r0);
+    c1 = Math.min(cw - 1, c1); r1 = Math.min(ch - 1, r1);
+    if (r1 < r0 || c1 < c0) return "out";
+    if (q(B, r0, c0, r1, c1) > 0) return "band";
+    const k = q(S, r0, c0, r1, c1);
+    return k === (r1 - r0 + 1) * (c1 - c0 + 1) ? "in" : k === 0 ? "out" : "band";
+  };
+}

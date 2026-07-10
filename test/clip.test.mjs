@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { clipTriangleToPolygon, pointInPolygon } from "../js/clip.js";
+import { clipTriangleToPolygon, pointInPolygon, footprintClassifier } from "../js/clip.js";
 import { buildSolidFromMesh } from "../js/mesh.js";
 import { decimate } from "../js/decimate.js";
 import { checkWatertight, signedVolume } from "../js/validate.js";
@@ -122,4 +122,39 @@ test("real export path: decimate -> clip -> solid is watertight and stays sparse
   assert.ok(w.closed, `not watertight: ${w.unmatched} unmatched edges`);
   assert.ok(signedVolume(solid) > 0, "positive volume");
   assert.ok(solid.indices.length / 3 < gridTris, "clipped solid far smaller than a full-grid solid");
+});
+
+test("footprintClassifier: 'in'/'out' verdicts are exact vs real clipping", () => {
+  const gw = 25, gh = 25;
+  const zt = new Float32Array(gw * gh);
+  for (let r = 0; r < gh; r++)
+    for (let c = 0; c < gw; c++) zt[r * gw + c] = Math.sin(r * 0.7) * Math.cos(c * 0.5);
+  const { coords, triangles } = decimate(zt, gw, gh, 0.05);
+  const poly = [[3, 3], [21, 5], [19, 20], [10, 22], [2, 15]]; // pentagon, grid units
+  // cell mask from polygon (cell centers), matching app.js cellMask semantics
+  const cw = gw - 1, ch = gh - 1;
+  const mask = new Uint8Array(cw * ch);
+  const pip = (x, y) => { // ray cast
+    let ins = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const [xi, yi] = poly[i], [xj, yj] = poly[j];
+      if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) ins = !ins;
+    }
+    return ins;
+  };
+  for (let r = 0; r < ch; r++)
+    for (let c = 0; c < cw; c++) mask[r * cw + c] = pip(c + 0.5, r + 0.5) ? 1 : 0;
+  const classify = footprintClassifier(mask, cw, ch);
+  let nIn = 0, nOut = 0, nBand = 0;
+  for (let i = 0; i < triangles.length; i += 3) {
+    const xs = [coords[2 * triangles[i]], coords[2 * triangles[i + 1]], coords[2 * triangles[i + 2]]];
+    const ys = [coords[2 * triangles[i] + 1], coords[2 * triangles[i + 1] + 1], coords[2 * triangles[i + 2] + 1]];
+    const tri = xs.map((x, k) => [x, ys[k], 0]);
+    const cls = classify(Math.min(...xs), Math.min(...ys), Math.max(...xs) - 1, Math.max(...ys) - 1);
+    const clipped = clipTriangleToPolygon(tri, poly);
+    if (cls === "in") { nIn++; assert.equal(clipped.length, 9, "'in' facet must survive whole"); }
+    else if (cls === "out") { nOut++; assert.equal(clipped.length, 0, "'out' facet must vanish"); }
+    else nBand++;
+  }
+  assert.ok(nIn > 0 && nOut > 0 && nBand > 0, `degenerate split ${nIn}/${nOut}/${nBand}`);
 });
