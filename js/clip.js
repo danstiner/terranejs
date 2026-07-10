@@ -80,7 +80,7 @@ function clipPolyByTriangle(poly, triXY) {
 }
 
 // simple-polygon ear clipping -> index triples
-function earclip(ring) {
+export function earclip(ring) {
   const n = ring.length;
   if (n < 3) return [];
   let idx = [...Array(n).keys()];
