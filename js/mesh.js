@@ -106,20 +106,34 @@ import { earclip } from "./clip.js";
 // ---------------------------------------------------------------------------
 
 // directed boundary edges (u→v) of a +Z-wound triangulation; interior is left
-// of travel, so outer loops walk CCW and hole loops walk CW
+// of travel, so outer loops walk CCW and hole loops walk CW. Reverse-edge
+// lookup binary-searches a sorted Float64Array of u*N+v keys (exact below
+// 2^53) — V8 Sets cap at 2^24 entries, under a full 2048² tile's ~16.8M
+// directed edges.
 function boundaryEdges(topTris, N) {
-  const seen = new Set();
-  for (let i = 0; i < topTris.length; i += 3) {
+  const E = topTris.length; // one directed edge per index slot
+  const sorted = new Float64Array(E);
+  for (let i = 0; i < E; i += 3) {
     const a = topTris[i], b = topTris[i + 1], c = topTris[i + 2];
-    seen.add(a * N + b); seen.add(b * N + c); seen.add(c * N + a);
+    sorted[i] = a * N + b; sorted[i + 1] = b * N + c; sorted[i + 2] = c * N + a;
   }
-  const boundary = [];
-  for (let i = 0; i < topTris.length; i += 3) {
-    const t = [topTris[i], topTris[i + 1], topTris[i + 2]];
-    for (let e = 0; e < 3; e++) {
-      const u = t[e], v = t[(e + 1) % 3];
-      if (!seen.has(v * N + u)) boundary.push(u, v);
+  sorted.sort();
+  const has = (k) => {
+    let lo = 0, hi = E - 1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (sorted[mid] < k) lo = mid + 1;
+      else if (sorted[mid] > k) hi = mid - 1;
+      else return true;
     }
+    return false;
+  };
+  const boundary = []; // rim-scale, plain array is fine
+  for (let i = 0; i < E; i += 3) {
+    const a = topTris[i], b = topTris[i + 1], c = topTris[i + 2];
+    if (!has(b * N + a)) boundary.push(a, b);
+    if (!has(c * N + b)) boundary.push(b, c);
+    if (!has(a * N + c)) boundary.push(c, a);
   }
   return boundary;
 }
@@ -154,26 +168,26 @@ function stitchLoops(boundary) {
 // rim with its collinear runs lands here; anything else ear-clips. Returns
 // { extra: [cx,cy]|null, tris: [i,j,k,…] } with indices into `loop` and −1 for
 // the centroid vertex, or null when neither triangulation covers the ring.
-function baseTriangles(loop, px, py) {
-  const n = loop.length;
+function baseTriangles(loop, xy) {
+  const ring = loop.map(xy); // one xy() per rim vertex; doubles as earclip input
+  const n = ring.length;
   let cx = 0, cy = 0, area2 = 0;
   for (let i = 0, j = n - 1; i < n; j = i++) {
-    cx += px(loop[i]); cy += py(loop[i]);
-    area2 += px(loop[j]) * py(loop[i]) - px(loop[i]) * py(loop[j]);
+    cx += ring[i][0]; cy += ring[i][1];
+    area2 += ring[j][0] * ring[i][1] - ring[i][0] * ring[j][1];
   }
   cx /= n; cy /= n;
   if (area2 <= 0) return null; // not a CCW outer loop
   const fan = [];
   let ok = true;
   for (let i = 0, j = n - 1; i < n; j = i++) {
-    const ax = px(loop[j]), ay = py(loop[j]);
-    const t2 = (px(loop[i]) - ax) * (cy - ay) - (py(loop[i]) - ay) * (cx - ax);
+    const ax = ring[j][0], ay = ring[j][1];
+    const t2 = (ring[i][0] - ax) * (cy - ay) - (ring[i][1] - ay) * (cx - ax);
     if (t2 <= 1e-9) { ok = false; break; } // centroid not strictly left of edge
     fan.push(j, -1, i); // (a, centroid, b): −Z wound for a CCW ring
   }
   if (ok) return { extra: [cx, cy], tris: fan };
   // ear clip; verify coverage (earclip can bail on pathological rings)
-  const ring = loop.map((id) => [px(id), py(id)]);
   const ears = earclip(ring);
   let covered = 0;
   const tris = [];
@@ -188,83 +202,116 @@ function baseTriangles(loop, px, py) {
 }
 
 function assembleSolid(topTris, N, xy, zTop, zBot, bottomMode) {
-  const positions = [];
-  const topIdx = new Map(), botIdx = new Map();
-  const vTop = (id) => {
-    let i = topIdx.get(id);
-    if (i === undefined) {
-      const [x, y] = xy(id);
-      i = positions.length / 3;
-      positions.push(x, y, zTop(id));
-      topIdx.set(id, i);
-    }
-    return i;
-  };
-  const vBot = (id) => {
-    let i = botIdx.get(id);
-    if (i === undefined) {
-      const [x, y] = xy(id);
-      i = positions.length / 3;
-      positions.push(x, y, zBot(id));
-      botIdx.set(id, i);
-    }
-    return i;
-  };
-  const indices = [];
-  for (let i = 0; i < topTris.length; i += 3) {
-    indices.push(vTop(topTris[i]), vTop(topTris[i + 1]), vTop(topTris[i + 2]));
-  }
   const boundary = boundaryEdges(topTris, N);
-  for (let i = 0; i < boundary.length; i += 2) {
-    const u = boundary[i], v = boundary[i + 1];
-    indices.push(vTop(v), vTop(u), vBot(u), vTop(v), vBot(u), vBot(v));
-  }
+
+  // decide the bottom before allocating so buffer sizes are exact
   let mirrored = bottomMode === "mirror";
+  let bases = null;
   if (!mirrored) {
     const loops = stitchLoops(boundary);
-    const bases = [];
-    let ok = loops !== null;
-    if (ok) {
+    if (loops) {
+      bases = [];
       for (const loop of loops) {
-        const bt = baseTriangles(loop, (id) => xy(id)[0], (id) => xy(id)[1]);
-        if (!bt) { ok = false; break; } // hole loop (CW) or uncoverable ring
+        const bt = baseTriangles(loop, xy);
+        if (!bt) { bases = null; break; } // hole loop (CW) or uncoverable ring
         bases.push({ loop, bt });
       }
     }
-    if (ok) {
-      for (const { loop, bt } of bases) {
-        let extraIdx = -1;
-        if (bt.extra) {
-          extraIdx = positions.length / 3;
-          positions.push(bt.extra[0], bt.extra[1], 0);
-        }
-        for (let i = 0; i < bt.tris.length; i++) {
-          const t = bt.tris[i];
-          indices.push(t === -1 ? extraIdx : vBot(loop[t]));
-        }
-      }
-    } else {
-      mirrored = true; // holes / degenerate rims: correct, just bigger
+    if (!bases) mirrored = true; // holes / degenerate rims: correct, just bigger
+  }
+
+  // exact sizes: unique top ids via bitmap; bottom verts are the boundary loop
+  // vertices (one outgoing edge each once stitched) or every top id when
+  // mirrored; each fanned loop adds one centroid vertex
+  const used = new Uint8Array(N);
+  let nTopV = 0;
+  for (let i = 0; i < topTris.length; i++) {
+    if (!used[topTris[i]]) { used[topTris[i]] = 1; nTopV++; }
+  }
+  let nBotV = mirrored ? nTopV : boundary.length / 2;
+  let nBaseIdx = mirrored ? topTris.length : 0;
+  if (!mirrored) {
+    for (const { bt } of bases) {
+      if (bt.extra) nBotV++;
+      nBaseIdx += bt.tris.length;
     }
+  }
+  const positions = new Float32Array((nTopV + nBotV) * 3);
+  const indices = new Uint32Array(topTris.length + 3 * boundary.length + nBaseIdx);
+
+  // Int32Array id→vertex maps: O(triangle-count) paths must avoid Maps (V8's
+  // 2^24 cap) and their ~40 B/entry overhead
+  const topIdx = new Int32Array(N).fill(-1);
+  const botIdx = new Int32Array(N).fill(-1);
+  let nv = 0, ni = 0;
+  const vert = (idx, id, z) => {
+    let i = idx[id];
+    if (i < 0) {
+      const [x, y] = xy(id);
+      i = nv++;
+      positions[3 * i] = x; positions[3 * i + 1] = y; positions[3 * i + 2] = z(id);
+      idx[id] = i;
+    }
+    return i;
+  };
+  const vTop = (id) => vert(topIdx, id, zTop);
+  const vBot = (id) => vert(botIdx, id, zBot);
+
+  for (let i = 0; i < topTris.length; i += 3) {
+    indices[ni++] = vTop(topTris[i]);
+    indices[ni++] = vTop(topTris[i + 1]);
+    indices[ni++] = vTop(topTris[i + 2]);
+  }
+  for (let i = 0; i < boundary.length; i += 2) {
+    const u = boundary[i], v = boundary[i + 1];
+    const tu = vTop(u), tv = vTop(v), bu = vBot(u), bv = vBot(v);
+    indices[ni++] = tv; indices[ni++] = tu; indices[ni++] = bu;
+    indices[ni++] = tv; indices[ni++] = bu; indices[ni++] = bv;
   }
   if (mirrored) {
     for (let i = 0; i < topTris.length; i += 3) {
-      indices.push(vBot(topTris[i]), vBot(topTris[i + 2]), vBot(topTris[i + 1]));
+      indices[ni++] = vBot(topTris[i]);
+      indices[ni++] = vBot(topTris[i + 2]);
+      indices[ni++] = vBot(topTris[i + 1]);
+    }
+  } else {
+    for (const { loop, bt } of bases) {
+      let extraIdx = -1;
+      if (bt.extra) {
+        extraIdx = nv++;
+        positions[3 * extraIdx] = bt.extra[0];
+        positions[3 * extraIdx + 1] = bt.extra[1];
+        positions[3 * extraIdx + 2] = 0; // flat base plane
+      }
+      for (let i = 0; i < bt.tris.length; i++) {
+        const t = bt.tris[i];
+        indices[ni++] = t === -1 ? extraIdx : vBot(loop[t]);
+      }
     }
   }
-  return { positions: Float32Array.from(positions), indices: Uint32Array.from(indices) };
+  // sizes are computed exactly; subarray only guards a miscount from shipping
+  return {
+    positions: nv * 3 === positions.length ? positions : positions.subarray(0, nv * 3),
+    indices: ni === indices.length ? indices : indices.subarray(0, ni),
+  };
 }
 
-// grid-cell top triangulation over a cell mask (+Z wound), shared by builders
+// grid-cell top triangulation over a cell mask (+Z wound), shared by builders;
+// counted first so the millions-of-entries id list is one exact typed array
 function gridTopTris(gw, span, mask) {
   const { r0, r1, c0, c1 } = span;
   const cw = gw - 1;
-  const topTris = [];
+  let n = 0;
+  for (let r = r0; r < r1; r++)
+    for (let c = c0; c < c1; c++) if (mask[r * cw + c]) n++;
+  const topTris = new Uint32Array(6 * n);
+  let p = 0;
   for (let r = r0; r < r1; r++) {
     for (let c = c0; c < c1; c++) {
       if (!mask[r * cw + c]) continue;
       const A = r * gw + c, B = A + 1, C = A + gw, D = C + 1;
-      topTris.push(A, C, B, B, C, D);
+      topTris[p++] = A; topTris[p++] = C; topTris[p++] = B;
+      topTris[p++] = B; topTris[p++] = C; topTris[p++] = D;
     }
   }
   return topTris;
@@ -300,14 +347,14 @@ export function buildSolidTIN(zt, gw, gh, coords, triangles, dx, dy, base) {
   const gid = (vi) => coords[2 * vi + 1] * gw + coords[2 * vi];
   const wx = (id) => (id % gw) * dx;
   const wy = (id) => (gh - 1 - ((id / gw) | 0)) * dy;
-  const topTris = [];
+  const topTris = new Uint32Array(triangles.length);
   for (let i = 0; i < triangles.length; i += 3) {
     const A = gid(triangles[i]);
     let B = gid(triangles[i + 1]);
     let C = gid(triangles[i + 2]);
     const area = (wx(B) - wx(A)) * (wy(C) - wy(A)) - (wx(C) - wx(A)) * (wy(B) - wy(A));
     if (area < 0) { const t = B; B = C; C = t; }
-    topTris.push(A, B, C);
+    topTris[i] = A; topTris[i + 1] = B; topTris[i + 2] = C;
   }
   return assembleSolid(topTris, gw * gh,
     (id) => [wx(id), wy(id)],

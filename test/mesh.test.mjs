@@ -136,6 +136,22 @@ test("flat base: two-island mask closes with two loops", () => {
   assert.ok(Math.abs(volIdx(m) - (12 + 16) * 3) < 1e-3);
 });
 
+test("flat base: U-shaped rim (centroid in the notch) ear-clips flat", () => {
+  // 24×12 cells minus an 8×8 notch from the top middle. The rim's
+  // vertex-average centroid lands at (12, ~5.64) — inside the notch, outside
+  // the polygon — so the centroid fan must fail and earclip must cover the
+  // base. Mirror fallback would emit ≥ 2× top tris; flat earclip stays under.
+  const { grid, gw, gh } = flatGrid(25, 13);
+  const cw = gw - 1;
+  const mask = new Uint8Array(cw * (gh - 1)).fill(1);
+  for (let r = 0; r < 8; r++) for (let c = 8; c < 16; c++) mask[r * cw + c] = 0;
+  const m = buildSolidIdx(grid, gw, gh, { r0: 0, r1: gh - 1, c0: 0, c1: cw }, mask, GEOM);
+  assert.ok(wtIdx(m).closed, `unmatched ${wtIdx(m).unmatched}`);
+  const nTop = 2 * (24 * 12 - 64); // 448
+  assert.ok(m.indices.length / 3 < 2 * nTop, `tris ${m.indices.length / 3} (mirror ≥ ${2 * nTop})`);
+  assert.ok(Math.abs(volIdx(m) - (24 * 12 - 64) * 3) < 1e-3); // (base+z) × area
+});
+
 test("flat base: donut footprint falls back to mirror and stays closed", () => {
   const { grid, gw, gh } = flatGrid(9, 9);
   const mask = new Uint8Array(64).fill(1);

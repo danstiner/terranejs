@@ -13,21 +13,23 @@ export function signedVolume({ positions: P, indices: I }) {
   return vol;
 }
 
-// Closed-manifold check: every directed edge u→v must be matched by exactly one
-// v→u. Works on indices directly — no coordinate quantization. Key u*V+v stays
-// exact below 2^53 for V up to ~12M vertices (4096-grid tiles ≈ 12M).
+// Closed-manifold check: the multiset of directed edges u→v must equal the
+// multiset of their reverses v→u. Works on indices directly — no coordinate
+// quantization. Keys u*V+v stay exact below 2^53 (V up to ~94M vertices);
+// matching walks two sorted Float64Arrays rather than a Map, whose V8 cap of
+// 2^24 entries is under a large tile's directed-edge count (2048² ≈ 16.8M).
 export function checkWatertight({ positions: P, indices: I }) {
   const V = P.length / 3;
-  const count = new Map();
-  const bump = (u, v) => { const k = u * V + v; count.set(k, (count.get(k) || 0) + 1); };
-  for (let i = 0; i < I.length; i += 3) {
-    bump(I[i], I[i + 1]); bump(I[i + 1], I[i + 2]); bump(I[i + 2], I[i]);
+  const E = I.length; // one directed edge per index slot
+  const fwd = new Float64Array(E), rev = new Float64Array(E);
+  for (let i = 0; i < E; i += 3) {
+    const a = I[i], b = I[i + 1], c = I[i + 2];
+    fwd[i] = a * V + b; fwd[i + 1] = b * V + c; fwd[i + 2] = c * V + a;
+    rev[i] = b * V + a; rev[i + 1] = c * V + b; rev[i + 2] = a * V + c;
   }
+  fwd.sort(); rev.sort();
   let unmatched = 0;
-  for (const [k, n] of count) {
-    const u = Math.floor(k / V), v = k % V;
-    if (n !== (count.get(v * V + u) || 0)) unmatched++;
-  }
+  for (let i = 0; i < E; i++) if (fwd[i] !== rev[i]) unmatched++;
   return { closed: unmatched === 0, unmatched };
 }
 
