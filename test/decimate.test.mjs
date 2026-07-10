@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { decimate } from "../js/decimate.js";
 import { buildSolid, buildSolidTIN } from "../js/mesh.js";
-import { signedVolume, checkWatertight } from "../js/stl.js";
+import { signedVolume, checkWatertight } from "../js/validate.js";
 
 // synthetic print-mm relief: a Gaussian ridge on a gentle plane
 function reliefGrid(gw, gh) {
@@ -55,7 +55,7 @@ test("decimated volume matches the uniform mesh within the error budget", () => 
   const rel = Math.abs(signedVolume(dec) - signedVolume(uni)) / signedVolume(uni);
   assert.ok(rel < 0.02, `volumes differ ${(rel * 100).toFixed(2)}% (budget ~maxErr·area)`);
   // and the decimation actually saved triangles
-  assert.ok(dec.length < uni.length, "decimated solid has fewer triangles");
+  assert.ok(dec.indices.length < uni.indices.length, "decimated solid has fewer triangles");
 });
 
 test("smaller tolerance keeps more detail (more triangles)", () => {

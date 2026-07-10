@@ -92,138 +92,232 @@ export function buildPreviewSolid(grid, gridW, gridH, span, mask, geom) {
   return { positions, colors, triangles: nTris };
 }
 
-// Watertight export solid for one tile, in tile-local mm (origin at the tile's
-// SW corner, +Y = north). Top surface (stair-clipped to the mask) + skirt walls
-// down to z=0 along the footprint boundary + a mirrored base. Boundary edges are
-// found from the top triangle soup (a directed edge with no reverse twin), so
-// the skirt closes ANY footprint — full rectangle or clipped polygon — and the
-// result is a closed manifold. Returns a flat Float32Array (9 floats/triangle).
-export function buildSolid(grid, gw, gh, span, mask, geom) {
-  const { dx, dy, mmPerM, emin, exag, base } = geom;
+import { earclip } from "./clip.js";
+
+// ---------------------------------------------------------------------------
+// Indexed watertight solids. A solid is { positions: Float32Array, indices:
+// Uint32Array }, outward-wound. One assembler serves all builders: top surface
+// (+Z wound id triples) + boundary skirt + a bottom. bottomMode:
+//   'flat'   — bottom at z=0, triangulated per boundary loop (centroid fan for
+//              star-shaped loops, else ear clip); falls back to 'mirror' when
+//              loops don't stitch (holes, non-manifold rims).
+//   'mirror' — bottom mirrors the top triangulation at zBot(id) (trail shell's
+//              molded underside; also the flat-base fallback with zBot = 0).
+// ---------------------------------------------------------------------------
+
+// directed boundary edges (u→v) of a +Z-wound triangulation; interior is left
+// of travel, so outer loops walk CCW and hole loops walk CW
+function boundaryEdges(topTris, N) {
+  const seen = new Set();
+  for (let i = 0; i < topTris.length; i += 3) {
+    const a = topTris[i], b = topTris[i + 1], c = topTris[i + 2];
+    seen.add(a * N + b); seen.add(b * N + c); seen.add(c * N + a);
+  }
+  const boundary = [];
+  for (let i = 0; i < topTris.length; i += 3) {
+    const t = [topTris[i], topTris[i + 1], topTris[i + 2]];
+    for (let e = 0; e < 3; e++) {
+      const u = t[e], v = t[(e + 1) % 3];
+      if (!seen.has(v * N + u)) boundary.push(u, v);
+    }
+  }
+  return boundary;
+}
+
+// stitch directed edges into closed loops; null on any irregularity
+function stitchLoops(boundary) {
+  const next = new Map();
+  for (let i = 0; i < boundary.length; i += 2) {
+    if (next.has(boundary[i])) return null; // vertex with 2 outgoing: non-manifold rim
+    next.set(boundary[i], boundary[i + 1]);
+  }
+  const loops = [], visited = new Set();
+  for (const start of next.keys()) {
+    if (visited.has(start)) continue;
+    const loop = [];
+    let u = start;
+    do {
+      if (visited.has(u)) return null;
+      visited.add(u);
+      loop.push(u);
+      u = next.get(u);
+      if (u === undefined) return null;
+    } while (u !== start);
+    if (loop.length < 3) return null;
+    loops.push(loop);
+  }
+  return loops;
+}
+
+// triangulate one CCW loop at z=0, wound −Z. Star-shaped loops (every rim edge
+// sees the centroid) take an O(n) centroid fan — the full-coverage rectangle
+// rim with its collinear runs lands here; anything else ear-clips. Returns
+// { extra: [cx,cy]|null, tris: [i,j,k,…] } with indices into `loop` and −1 for
+// the centroid vertex, or null when neither triangulation covers the ring.
+function baseTriangles(loop, px, py) {
+  const n = loop.length;
+  let cx = 0, cy = 0, area2 = 0;
+  for (let i = 0, j = n - 1; i < n; j = i++) {
+    cx += px(loop[i]); cy += py(loop[i]);
+    area2 += px(loop[j]) * py(loop[i]) - px(loop[i]) * py(loop[j]);
+  }
+  cx /= n; cy /= n;
+  if (area2 <= 0) return null; // not a CCW outer loop
+  const fan = [];
+  let ok = true;
+  for (let i = 0, j = n - 1; i < n; j = i++) {
+    const ax = px(loop[j]), ay = py(loop[j]);
+    const t2 = (px(loop[i]) - ax) * (cy - ay) - (py(loop[i]) - ay) * (cx - ax);
+    if (t2 <= 1e-9) { ok = false; break; } // centroid not strictly left of edge
+    fan.push(j, -1, i); // (a, centroid, b): −Z wound for a CCW ring
+  }
+  if (ok) return { extra: [cx, cy], tris: fan };
+  // ear clip; verify coverage (earclip can bail on pathological rings)
+  const ring = loop.map((id) => [px(id), py(id)]);
+  const ears = earclip(ring);
+  let covered = 0;
+  const tris = [];
+  for (const [i, j, k] of ears) {
+    const a2 = (ring[j][0] - ring[i][0]) * (ring[k][1] - ring[i][1]) -
+      (ring[j][1] - ring[i][1]) * (ring[k][0] - ring[i][0]);
+    covered += Math.abs(a2);
+    tris.push(i, k, j); // earclip yields CCW (+Z); flip to −Z
+  }
+  if (Math.abs(covered - Math.abs(area2)) > 1e-6 * Math.max(1, Math.abs(area2))) return null;
+  return { extra: null, tris };
+}
+
+function assembleSolid(topTris, N, xy, zTop, zBot, bottomMode) {
+  const positions = [];
+  const topIdx = new Map(), botIdx = new Map();
+  const vTop = (id) => {
+    let i = topIdx.get(id);
+    if (i === undefined) {
+      const [x, y] = xy(id);
+      i = positions.length / 3;
+      positions.push(x, y, zTop(id));
+      topIdx.set(id, i);
+    }
+    return i;
+  };
+  const vBot = (id) => {
+    let i = botIdx.get(id);
+    if (i === undefined) {
+      const [x, y] = xy(id);
+      i = positions.length / 3;
+      positions.push(x, y, zBot(id));
+      botIdx.set(id, i);
+    }
+    return i;
+  };
+  const indices = [];
+  for (let i = 0; i < topTris.length; i += 3) {
+    indices.push(vTop(topTris[i]), vTop(topTris[i + 1]), vTop(topTris[i + 2]));
+  }
+  const boundary = boundaryEdges(topTris, N);
+  for (let i = 0; i < boundary.length; i += 2) {
+    const u = boundary[i], v = boundary[i + 1];
+    indices.push(vTop(v), vTop(u), vBot(u), vTop(v), vBot(u), vBot(v));
+  }
+  let mirrored = bottomMode === "mirror";
+  if (!mirrored) {
+    const loops = stitchLoops(boundary);
+    const bases = [];
+    let ok = loops !== null;
+    if (ok) {
+      for (const loop of loops) {
+        const bt = baseTriangles(loop, (id) => xy(id)[0], (id) => xy(id)[1]);
+        if (!bt) { ok = false; break; } // hole loop (CW) or uncoverable ring
+        bases.push({ loop, bt });
+      }
+    }
+    if (ok) {
+      for (const { loop, bt } of bases) {
+        let extraIdx = -1;
+        if (bt.extra) {
+          extraIdx = positions.length / 3;
+          positions.push(bt.extra[0], bt.extra[1], 0);
+        }
+        for (let i = 0; i < bt.tris.length; i++) {
+          const t = bt.tris[i];
+          indices.push(t === -1 ? extraIdx : vBot(loop[t]));
+        }
+      }
+    } else {
+      mirrored = true; // holes / degenerate rims: correct, just bigger
+    }
+  }
+  if (mirrored) {
+    for (let i = 0; i < topTris.length; i += 3) {
+      indices.push(vBot(topTris[i]), vBot(topTris[i + 2]), vBot(topTris[i + 1]));
+    }
+  }
+  return { positions: Float32Array.from(positions), indices: Uint32Array.from(indices) };
+}
+
+// grid-cell top triangulation over a cell mask (+Z wound), shared by builders
+function gridTopTris(gw, span, mask) {
   const { r0, r1, c0, c1 } = span;
   const cw = gw - 1;
-
-  // top triangles as vertex ids (id = row*gw + col); winding matches _top_tris
   const topTris = [];
   for (let r = r0; r < r1; r++) {
     for (let c = c0; c < c1; c++) {
       if (!mask[r * cw + c]) continue;
-      const A = r * gw + c, B = r * gw + c + 1, C = (r + 1) * gw + c, D = (r + 1) * gw + c + 1;
-      // wind for +Z (outward top) normals — everything else derives from this,
-      // so this orients the whole closed solid outward
+      const A = r * gw + c, B = A + 1, C = A + gw, D = C + 1;
       topTris.push(A, C, B, B, C, D);
     }
   }
-
-  // directed-edge set -> boundary edges are those without a reverse.
-  // key = u*N + v is collision-free since vertex ids are < N = gw*gh.
-  const N = gw * gh;
-  const seen = new Set();
-  for (let i = 0; i < topTris.length; i += 3) {
-    const a = topTris[i], b = topTris[i + 1], c = topTris[i + 2];
-    seen.add(a * N + b); seen.add(b * N + c); seen.add(c * N + a);
-  }
-  const boundary = [];
-  for (let i = 0; i < topTris.length; i += 3) {
-    const t = [topTris[i], topTris[i + 1], topTris[i + 2]];
-    for (let e = 0; e < 3; e++) {
-      const u = t[e], v = t[(e + 1) % 3];
-      if (!seen.has(v * N + u)) boundary.push(u, v);
-    }
-  }
-
-  const nTop = topTris.length / 3;
-  const nTris = nTop /*top*/ + nTop /*base*/ + boundary.length; // skirt = 2 per edge
-  const out = new Float32Array(nTris * 9);
-  let p = 0;
-  const put = (id, z0) => {
-    const row = (id / gw) | 0, col = id % gw;
-    out[p++] = (col - c0) * dx;
-    out[p++] = (r1 - row) * dy;
-    out[p++] = z0 ? 0 : base + (grid[id] - emin) * mmPerM * exag;
-  };
-  const tri = (a, b, c, z0) => { put(a, z0); put(b, z0); put(c, z0); };
-
-  for (let i = 0; i < topTris.length; i += 3) {
-    tri(topTris[i], topTris[i + 1], topTris[i + 2], false); // top (+Z)
-    tri(topTris[i], topTris[i + 2], topTris[i + 1], true);  // base mirror (−Z)
-  }
-  // skirt: top boundary edge u→v needs its reverse; wall = (v,u,u0),(v,u0,v0)
-  for (let i = 0; i < boundary.length; i += 2) {
-    const u = boundary[i], v = boundary[i + 1];
-    put(v, false); put(u, false); put(u, true);
-    put(v, false); put(u, true); put(v, true);
-  }
-  return out;
+  return topTris;
 }
 
-// Watertight constant-thickness shell over a cell-mask footprint, hugging the
-// terrain: the underside follows the terrain relief (grid − emin)·k and the top
-// is exactly hMm above it, so the piece self-registers on the printed terrain
-// (its underside is the terrain's negative) and never pinches to zero. Same
-// top + boundary-skirt + mirrored-face topology as buildSolid — only the "low"
-// surface sits at the relief instead of a flat z=0. `geom` omits `base`: the
-// shell self-bases at its own relief, so the piece is compact (min-z ≈ 0).
+// Watertight export solid for one tile, in tile-local mm (origin at the tile's
+// SW corner, +Y = north). Flat z=0 base.
+export function buildSolid(grid, gw, gh, span, mask, geom) {
+  const { dx, dy, mmPerM, emin, exag, base } = geom;
+  const { r1, c0 } = span;
+  return assembleSolid(gridTopTris(gw, span, mask), gw * gh,
+    (id) => [((id % gw) - c0) * dx, (r1 - ((id / gw) | 0)) * dy],
+    (id) => base + (grid[id] - emin) * mmPerM * exag,
+    () => 0, "flat");
+}
+
+// Constant-thickness terrain-hugging shell: underside = relief (mirror mode),
+// top = relief + hMm. Self-registers on the printed terrain.
 export function buildTrailShell(grid, gw, gh, span, mask, geom, hMm) {
   const { dx, dy, mmPerM, emin, exag } = geom;
-  const { r0, r1, c0, c1 } = span;
-  const cw = gw - 1;
+  const { r1, c0 } = span;
   const k = mmPerM * exag;
+  const relief = (id) => (grid[id] - emin) * k;
+  return assembleSolid(gridTopTris(gw, span, mask), gw * gh,
+    (id) => [((id % gw) - c0) * dx, (r1 - ((id / gw) | 0)) * dy],
+    (id) => relief(id) + hMm,
+    relief, "mirror");
+}
 
+// Watertight solid from a decimated TIN of one tile (standalone gw×gh grid; zt
+// holds print-mm relief; coords/triangles from decimate()). Flat z=0 base.
+export function buildSolidTIN(zt, gw, gh, coords, triangles, dx, dy, base) {
+  const gid = (vi) => coords[2 * vi + 1] * gw + coords[2 * vi];
+  const wx = (id) => (id % gw) * dx;
+  const wy = (id) => (gh - 1 - ((id / gw) | 0)) * dy;
   const topTris = [];
-  for (let r = r0; r < r1; r++) {
-    for (let c = c0; c < c1; c++) {
-      if (!mask[r * cw + c]) continue;
-      const A = r * gw + c, B = r * gw + c + 1, C = (r + 1) * gw + c, D = (r + 1) * gw + c + 1;
-      topTris.push(A, C, B, B, C, D); // wind for +Z (outward top)
-    }
+  for (let i = 0; i < triangles.length; i += 3) {
+    const A = gid(triangles[i]);
+    let B = gid(triangles[i + 1]);
+    let C = gid(triangles[i + 2]);
+    const area = (wx(B) - wx(A)) * (wy(C) - wy(A)) - (wx(C) - wx(A)) * (wy(B) - wy(A));
+    if (area < 0) { const t = B; B = C; C = t; }
+    topTris.push(A, B, C);
   }
-
-  const N = gw * gh;
-  const seen = new Set();
-  for (let i = 0; i < topTris.length; i += 3) {
-    const a = topTris[i], b = topTris[i + 1], c = topTris[i + 2];
-    seen.add(a * N + b); seen.add(b * N + c); seen.add(c * N + a);
-  }
-  const boundary = [];
-  for (let i = 0; i < topTris.length; i += 3) {
-    const t = [topTris[i], topTris[i + 1], topTris[i + 2]];
-    for (let e = 0; e < 3; e++) {
-      const u = t[e], v = t[(e + 1) % 3];
-      if (!seen.has(v * N + u)) boundary.push(u, v);
-    }
-  }
-
-  const nTop = topTris.length / 3;
-  const out = new Float32Array((nTop + nTop + boundary.length) * 9);
-  let p = 0;
-  // low = underside (relief); high = top (relief + hMm)
-  const put = (id, low) => {
-    const row = (id / gw) | 0, col = id % gw;
-    out[p++] = (col - c0) * dx;
-    out[p++] = (r1 - row) * dy;
-    const relief = (grid[id] - emin) * k;
-    out[p++] = low ? relief : relief + hMm;
-  };
-  const tri = (a, b, c, low) => { put(a, low); put(b, low); put(c, low); };
-  for (let i = 0; i < topTris.length; i += 3) {
-    tri(topTris[i], topTris[i + 1], topTris[i + 2], false); // top (+Z): relief + h
-    tri(topTris[i], topTris[i + 2], topTris[i + 1], true);  // underside mirror (−Z): relief
-  }
-  for (let i = 0; i < boundary.length; i += 2) {
-    const u = boundary[i], v = boundary[i + 1];
-    put(v, false); put(u, false); put(u, true);
-    put(v, false); put(u, true); put(v, true);
-  }
-  return out;
+  return assembleSolid(topTris, gw * gh,
+    (id) => [wx(id), wy(id)],
+    (id) => base + zt[id],
+    () => 0, "flat");
 }
 
 // Watertight solid from an arbitrary top-surface triangle soup in world mm
-// (topTris: flat [ax,ay,az, bx,by,bz, cx,cy,cz, …]). Vertices are deduped by
-// quantized XY (the top is single-valued in z), triangles re-wound +Z, then the
-// same top + boundary-skirt + mirrored-base construction as buildSolidTIN. Used
-// for polygon-clipped decimated tiles where clip vertices are off-grid. The
-// input z already encodes base+relief (the base slab is the mirror down to z=0).
+// (polygon-clipped decimated tiles; clip vertices are off-grid). Vertices are
+// welded by quantized XY (top is single-valued in z), re-wound +Z. Flat base.
 export function buildSolidFromMesh(topTris, eps = 1e-3) {
   const q = (v) => Math.round(v / eps);
   const idOf = new Map();
@@ -242,90 +336,11 @@ export function buildSolidFromMesh(topTris, eps = 1e-3) {
     if (a === b || b === c || a === c) continue;
     const area = (vx[b] - vx[a]) * (vy[c] - vy[a]) - (vy[b] - vy[a]) * (vx[c] - vx[a]);
     if (Math.abs(area) < eps * eps) continue;
-    if (area < 0) { const t = b; b = c; c = t; } // wind +Z
+    if (area < 0) { const t = b; b = c; c = t; }
     tris.push(a, b, c);
   }
-  const N = vx.length;
-  const seen = new Set();
-  for (let i = 0; i < tris.length; i += 3) {
-    const a = tris[i], b = tris[i + 1], c = tris[i + 2];
-    seen.add(a * N + b); seen.add(b * N + c); seen.add(c * N + a);
-  }
-  const boundary = [];
-  for (let i = 0; i < tris.length; i += 3) {
-    const t = [tris[i], tris[i + 1], tris[i + 2]];
-    for (let e = 0; e < 3; e++) {
-      const u = t[e], v = t[(e + 1) % 3];
-      if (!seen.has(v * N + u)) boundary.push(u, v);
-    }
-  }
-  const nTop = tris.length / 3;
-  const out = new Float32Array((nTop + nTop + boundary.length) * 9);
-  let p = 0;
-  const put = (id, z0) => { out[p++] = vx[id]; out[p++] = vy[id]; out[p++] = z0 ? 0 : vz[id]; };
-  for (let i = 0; i < tris.length; i += 3) {
-    put(tris[i], false); put(tris[i + 1], false); put(tris[i + 2], false);
-    put(tris[i], true); put(tris[i + 2], true); put(tris[i + 1], true);
-  }
-  for (let i = 0; i < boundary.length; i += 2) {
-    const u = boundary[i], v = boundary[i + 1];
-    put(v, false); put(u, false); put(u, true);
-    put(v, false); put(u, true); put(v, true);
-  }
-  return out;
-}
-
-// Watertight solid from a decimated TIN of one tile (a standalone gw×gh grid).
-// zt holds print-mm relief above the base at each grid point (id = gy*gw + gx);
-// coords/triangles come from decimate(). Vertices sit on grid points, so the
-// grid id doubles as a boundary-edge key. Returns a flat Float32Array.
-export function buildSolidTIN(zt, gw, gh, coords, triangles, dx, dy, base) {
-  const N = gw * gh;
-  const gid = (vi) => coords[2 * vi + 1] * gw + coords[2 * vi]; // gy*gw + gx
-  const wx = (id) => (id % gw) * dx;
-  const wy = (id) => (gh - 1 - ((id / gw) | 0)) * dy;
-
-  // top triangles as grid ids, each normalized to CCW / +Z winding
-  const topTris = [];
-  for (let i = 0; i < triangles.length; i += 3) {
-    const A = gid(triangles[i]);
-    let B = gid(triangles[i + 1]);
-    let C = gid(triangles[i + 2]);
-    const area = (wx(B) - wx(A)) * (wy(C) - wy(A)) - (wx(C) - wx(A)) * (wy(B) - wy(A));
-    if (area < 0) { const t = B; B = C; C = t; }
-    topTris.push(A, B, C);
-  }
-
-  const seen = new Set();
-  for (let i = 0; i < topTris.length; i += 3) {
-    const a = topTris[i], b = topTris[i + 1], c = topTris[i + 2];
-    seen.add(a * N + b); seen.add(b * N + c); seen.add(c * N + a);
-  }
-  const boundary = [];
-  for (let i = 0; i < topTris.length; i += 3) {
-    const t = [topTris[i], topTris[i + 1], topTris[i + 2]];
-    for (let e = 0; e < 3; e++) {
-      const u = t[e], v = t[(e + 1) % 3];
-      if (!seen.has(v * N + u)) boundary.push(u, v);
-    }
-  }
-
-  const nTop = topTris.length / 3;
-  const out = new Float32Array((nTop + nTop + boundary.length) * 9);
-  let p = 0;
-  const put = (id, z0) => {
-    out[p++] = wx(id);
-    out[p++] = wy(id);
-    out[p++] = z0 ? 0 : base + zt[id];
-  };
-  for (let i = 0; i < topTris.length; i += 3) {
-    put(topTris[i], false); put(topTris[i + 1], false); put(topTris[i + 2], false);
-    put(topTris[i], true); put(topTris[i + 2], true); put(topTris[i + 1], true);
-  }
-  for (let i = 0; i < boundary.length; i += 2) {
-    const u = boundary[i], v = boundary[i + 1];
-    put(v, false); put(u, false); put(u, true);
-    put(v, false); put(u, true); put(v, true);
-  }
-  return out;
+  return assembleSolid(tris, vx.length,
+    (id) => [vx[id], vy[id]],
+    (id) => vz[id],
+    () => 0, "flat");
 }

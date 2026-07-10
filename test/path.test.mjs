@@ -4,7 +4,7 @@ import { samplePath, rasterizePath, profileAlong, smoothProfile, stampOffset,
   stampInlay, ribbonGrid } from "../js/path.js";
 import { cellOcean } from "../js/water.js";
 import { buildSolid } from "../js/mesh.js";
-import { checkWatertight } from "../js/stl.js";
+import { checkWatertight } from "../js/validate.js";
 
 // 100×100 mm print over a unit bbox: lon/lat map linearly to x/y
 const BBOX = [0, 0, 1, 1], W_MM = 100, H_MM = 100;
@@ -182,9 +182,10 @@ test("inlay: ribbon solid is watertight, flat-bottomed, prints as-is", () => {
   const w = checkWatertight(solid);
   assert.ok(w.closed, `unmatched edges: ${w.unmatched}`);
   let zmin = Infinity, topMin = Infinity;
-  for (let i = 2; i < solid.length; i += 3) {
-    zmin = Math.min(zmin, solid[i]);
-    if (solid[i] > 0) topMin = Math.min(topMin, solid[i]);
+  const P = solid.positions;
+  for (let i = 2; i < P.length; i += 3) {
+    zmin = Math.min(zmin, P[i]);
+    if (P[i] > 0) topMin = Math.min(topMin, P[i]);
   }
   assert.equal(zmin, 0, "bottom on the bed");
   assert.ok(topMin >= GROOVE + PROUD - 1e-6, "no thin spots");

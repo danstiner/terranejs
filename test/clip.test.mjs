@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { clipTriangleToPolygon, pointInPolygon } from "../js/clip.js";
 import { buildSolidFromMesh } from "../js/mesh.js";
 import { decimate } from "../js/decimate.js";
-import { checkWatertight, signedVolume } from "../js/stl.js";
+import { checkWatertight, signedVolume } from "../js/validate.js";
 
 const SQUARE = [[0, 0], [10, 0], [10, 10], [0, 10]];
 const triArea = (f, o) =>
@@ -121,5 +121,5 @@ test("real export path: decimate -> clip -> solid is watertight and stays sparse
   const w = checkWatertight(solid);
   assert.ok(w.closed, `not watertight: ${w.unmatched} unmatched edges`);
   assert.ok(signedVolume(solid) > 0, "positive volume");
-  assert.ok(solid.length / 9 < gridTris, "clipped solid far smaller than a full-grid solid");
+  assert.ok(solid.indices.length / 3 < gridTris, "clipped solid far smaller than a full-grid solid");
 });

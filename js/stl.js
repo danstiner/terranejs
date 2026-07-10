@@ -40,20 +40,6 @@ export function parseSTL(buf) {
   return { count: n, tris };
 }
 
-// Signed volume via the divergence theorem: Σ v0·(v1×v2)/6. For a closed,
-// outward-wound mesh this is the enclosed volume (mm³) — independent of how
-// faces are triangulated, so it cross-checks meshes with different topology.
-export function signedVolume(tris) {
-  let vol = 0;
-  for (let i = 0; i < tris.length; i += 9) {
-    const ax = tris[i], ay = tris[i + 1], az = tris[i + 2];
-    const bx = tris[i + 3], by = tris[i + 4], bz = tris[i + 5];
-    const cx = tris[i + 6], cy = tris[i + 7], cz = tris[i + 8];
-    vol += (ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx)) / 6;
-  }
-  return vol;
-}
-
 // Closed-manifold check: quantize vertices, count directed edges. A closed,
 // consistently-wound surface has every directed edge u→v matched by exactly one
 // v→u. Returns { closed, unmatched }.

@@ -14,7 +14,8 @@ import { oceanMask, oceanMaskSeeded, cellOcean, erodeMask, recessedGrid,
 import { parseGPX, trackBbox } from "./gpx.js";
 import { samplePath, rasterizePath, profileAlong, smoothProfile, stampOffset,
   stampInlay, ribbonGrid } from "./path.js";
-import { encodeBinarySTL, checkWatertight } from "./stl.js";
+import { encodeBinarySTL } from "./stl.js";
+import { checkWatertight, toTriangleSoup } from "./validate.js";
 import { crc32, buildZip } from "./zip.js";
 
 const store = createStore({
@@ -708,7 +709,7 @@ async function exportSTLs() {
             || buildSolid(grid, gwT, ghT, span, mask,
               { dx, dy, mmPerM, emin, exag: s.exag, base: s.base });
         }
-        const buf = new Uint8Array(encodeBinarySTL(solid));
+        const buf = new Uint8Array(encodeBinarySTL(toTriangleSoup(solid)));
         bytes += buf.length;
         n++;
         await addFile(`tile_r${ry}_c${cx}.stl`, buf);
@@ -736,7 +737,7 @@ async function exportSTLs() {
             const wsolid = buildSolid(depthFlip, gwT, ghT,
               { r0: ghT - 1 - span.r1, r1: ghT - 1 - span.r0, c0: span.c0, c1: span.c1 },
               oceanCellsFlip, { dx, dy, mmPerM, emin: 0, exag: s.exag, base: s.waterDrop });
-            const wbuf = new Uint8Array(encodeBinarySTL(wsolid));
+            const wbuf = new Uint8Array(encodeBinarySTL(toTriangleSoup(wsolid)));
             bytes += wbuf.length;
             nw++;
             await addFile(`water_r${ry}_c${cx}.stl`, wbuf);
@@ -750,7 +751,7 @@ async function exportSTLs() {
           if (pc > 0) {
             const psolid = buildSolid(ribbon, gwT, ghT, span, pathCells,
               { dx, dy, mmPerM: 1, emin: 0, exag: 1, base: 0 });
-            const pbuf = new Uint8Array(encodeBinarySTL(psolid));
+            const pbuf = new Uint8Array(encodeBinarySTL(toTriangleSoup(psolid)));
             bytes += pbuf.length;
             np++;
             await addFile(`path_r${ry}_c${cx}.stl`, pbuf);
@@ -765,7 +766,7 @@ async function exportSTLs() {
           if (tc > 0) {
             const tsolid = buildTrailShell(grid, gwT, ghT, span, overlayCells,
               { dx, dy, mmPerM, emin, exag: s.exag }, s.pathHmm);
-            const tbuf = new Uint8Array(encodeBinarySTL(tsolid));
+            const tbuf = new Uint8Array(encodeBinarySTL(toTriangleSoup(tsolid)));
             bytes += tbuf.length;
             nt++;
             await addFile(`trail_r${ry}_c${cx}.stl`, tbuf);

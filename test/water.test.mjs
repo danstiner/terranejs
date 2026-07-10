@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { oceanMask, oceanMaskSeeded, cellOcean, erodeMask, recessedGrid,
   offsetGrid } from "../js/water.js";
 import { buildSolid } from "../js/mesh.js";
-import { checkWatertight } from "../js/stl.js";
+import { checkWatertight } from "../js/validate.js";
 
 // 5×5: left two columns below sea level (open sea, reaches the edge); one
 // interior sub-sea pit at (2,3) that is NOT edge-connected (Badwater case).
@@ -153,11 +153,12 @@ function insertFixture() {
   return { gw, gh, dx, dy, e, oMask, cells, solid };
 }
 
-// top-surface z by printed (x,y), extracted from the triangle soup
+// top-surface z by printed (x,y), extracted from the indexed mesh's vertices
 function topZ(solid) {
+  const P = solid.positions;
   const z = new Map();
-  for (let i = 0; i < solid.length; i += 3) {
-    if (solid[i + 2] > 0) z.set(`${solid[i]}_${solid[i + 1]}`, solid[i + 2]);
+  for (let i = 0; i < P.length; i += 3) {
+    if (P[i + 2] > 0) z.set(`${P[i]}_${P[i + 1]}`, P[i + 2]);
   }
   return z;
 }
