@@ -125,9 +125,9 @@ function stampTrail(s, grid, ctx, mask, sIdx) {
 // Surface elevation grid with the water and trail features baked in, plus the
 // masks the preview colors by. Used by the preview and mass estimate; the
 // export streams the same steps per print tile.
-function bakedSurface(s, rawGrid, gw, gh, f) {
+function bakedSurface(s, rawGrid, gw, gh, f, waterGrid = rawGrid) {
   const k = (1000 / f.scale) * s.exag; // print mm per grid unit
-  const oMask = s.waterDrop > 0 ? oceanMask(rawGrid, gw, gh, 0) : null; // sea level = 0
+  const oMask = s.waterDrop > 0 ? oceanMask(waterGrid, gw, gh, 0) : null; // sea level = 0, bathymetry-valid data
   let grid = bakeWater(s, rawGrid, oMask, k);
   const dx = f.widthMm / (gw - 1), dy = f.heightMm / (gh - 1);
   const ctx = trailContext(s, grid, gw, gh, f, Math.max(dx, dy));
@@ -298,7 +298,7 @@ store.subscribe((s) => {
   renderRegion(s);
   renderTracks(s);
   // one bake per event, shared by the mass estimate and the tile rebuild
-  const baked = pv && pvKey === keyOf(s) ? bakedSurface(s, pv.grid, pv.gw, pv.gh, pv.f) : null;
+  const baked = pv && pvKey === keyOf(s) ? bakedSurface(s, pv.grid, pv.gw, pv.gh, pv.f, pv.waterGrid) : null;
   renderSettings(s, baked);
   if (pvKey === null || keyOf(s) !== pvKey) scheduleReload();
   else if (pv) rebuildTiles(baked);
@@ -401,6 +401,7 @@ async function loadPreview() {
 
   const cLat = (f.bbox[0] + f.bbox[2]) / 2;
   const { z, upsampled } = pickZoom(f.realW / gw, cLat);
+  const zW = Math.min(z, WATER_ZOOM_MAX);
 
   $("progress").textContent = "fetching elevation…";
   try {
@@ -409,12 +410,21 @@ async function loadPreview() {
     });
     if (token !== loadToken) return; // a newer load supersedes this one
     const grid = resampleBilinear(mosaic, f.bbox, gw, gh);
+    // small coastal regions preview at z>WATER_ZOOM_MAX, where bathymetry is
+    // land-DEM junk; fetch the coarse mosaic unconditionally so raising
+    // waterDrop later doesn't need a reload (it's 1-4 tiles for these regions)
+    let waterGrid = grid;
+    if (zW !== z) {
+      const mosaicW = await fetchMosaic(f.bbox, zW, {});
+      if (token !== loadToken) return; // a newer load supersedes this one
+      waterGrid = resampleBilinear(mosaicW, f.bbox, gw, gh);
+    }
     // use the fetch-start snapshot, not post-await store state: a Clear mid-fetch
     // makes store.polygon null (cellMask throws), and a polygon edit would stamp
     // this now-stale grid as fresh. The token guard above already dropped any
     // superseded load, so s/f are the inputs this grid was actually fetched for.
     const mask = cellMask(s.polygon, f.bbox, gw, gh);
-    pv = { grid, gw, gh, f, mask };
+    pv = { grid, waterGrid, gw, gh, f, mask };
     pvKey = keyOf(s);
     $("progress").textContent = upsampled
       ? `z${z} — note: sampling finer than the data supports (interpolated)`
@@ -424,7 +434,7 @@ async function loadPreview() {
       preview = mod.initPreview($("preview"));
     }
     preview.resize();
-    const baked = bakedSurface(store.get(), grid, gw, gh, f);
+    const baked = bakedSurface(store.get(), grid, gw, gh, f, waterGrid);
     rebuildTiles(baked);
     renderSettings(store.get(), baked); // refresh readout so the material estimate appears
   } catch (err) {
