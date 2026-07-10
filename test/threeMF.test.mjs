@@ -53,3 +53,50 @@ test("3MF: valid container, objects, transforms", async () => {
   assert.match(xml, /<item objectid="1" transform="1 0 0 0 1 0 0 0 1 0.000 0.000 0"\/>/);
   assert.match(xml, /<item objectid="2" transform="1 0 0 0 1 0 0 0 1 5.000 -20.500 0"\/>/);
 });
+
+test("3MF: meshes past the CHUNK flush boundary stream intact", async () => {
+  // 5000 vertices forces mid-object flushes; geometry validity is irrelevant —
+  // only counts and CRC matter
+  const n = 5000;
+  const positions = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    positions[3 * i] = i; positions[3 * i + 1] = i % 7; positions[3 * i + 2] = i % 3;
+  }
+  const nTri = n - 2;
+  const indices = new Uint32Array(nTri * 3);
+  for (let t = 0; t < nTri; t++) {
+    indices[3 * t] = 0; indices[3 * t + 1] = t + 1; indices[3 * t + 2] = t + 2;
+  }
+  const w = new ThreeMFWriter();
+  await w.addObject("big", { positions, indices }, 0, 0);
+  const zip = readZip(await w.finish());
+  const model = zip["3D/3dmodel.model"];
+  assert.equal(crc32(model.data), model.crc, "crc matches inflated bytes");
+  const xml = new TextDecoder().decode(model.data);
+  assert.equal((xml.match(/<vertex /g) || []).length, n);
+  assert.equal((xml.match(/<triangle /g) || []).length, nTri);
+});
+
+test("3MF: finish() is single-shot in both stream and fallback paths", async () => {
+  const w = new ThreeMFWriter();
+  await w.addObject("a", quad(), 0, 0);
+  await w.finish();
+  await assert.rejects(() => w.finish(), /finish\(\) already called/);
+  await assert.rejects(() => w.addObject("b", quad(), 0, 0), /finish\(\) already called/);
+  // fallback path: without the guard, a second finish() silently appended a
+  // duplicate footer to the stored entry
+  const CS = globalThis.CompressionStream;
+  globalThis.CompressionStream = undefined;
+  try {
+    const f = new ThreeMFWriter();
+    await f.addObject("a", quad(), 0, 0);
+    const zip = readZip(await f.finish());
+    const model = zip["3D/3dmodel.model"];
+    assert.equal(model.method, 0, "stored when CompressionStream missing");
+    assert.equal(crc32(model.data), model.crc, "crc matches stored bytes");
+    await assert.rejects(() => f.finish(), /finish\(\) already called/);
+    await assert.rejects(() => f.addObject("b", quad(), 0, 0), /finish\(\) already called/);
+  } finally {
+    globalThis.CompressionStream = CS;
+  }
+});

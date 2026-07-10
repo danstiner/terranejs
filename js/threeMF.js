@@ -15,6 +15,9 @@ const MODEL_HEAD = `<?xml version="1.0" encoding="UTF-8"?>
 
 const CHUNK = 4096; // XML fragments per flush (~200 KB of text)
 
+const escapeXml = (s) =>
+  String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+
 export class ThreeMFWriter {
   constructor() {
     this.items = [];
@@ -22,6 +25,7 @@ export class ThreeMFWriter {
     this.crc = 0;
     this.rawSize = 0;
     this.chunks = [];
+    this.finished = false;
     this.enc = new TextEncoder();
     this.method = typeof CompressionStream !== "undefined" ? 8 : 0;
     if (this.method === 8) {
@@ -36,6 +40,10 @@ export class ThreeMFWriter {
           this.chunks.push(value);
         }
       })();
+      // pre-attach a no-op handler so a mid-export deflate error doesn't fire
+      // an unhandled-rejection report; finish()'s `await this.pump` still
+      // surfaces the real error
+      this.pump.catch(() => {});
     }
     this.head = this._push(MODEL_HEAD);
   }
@@ -48,13 +56,16 @@ export class ThreeMFWriter {
     else this.chunks.push(bytes);
   }
 
-  // mesh: { positions, indices }; (tx, ty): build-plate placement in mm
+  // mesh: { positions, indices }; (tx, ty): build-plate placement in mm.
+  // Not reentrant: callers must await each addObject before the next call —
+  // concurrent calls interleave XML fragments in the deflate stream.
   async addObject(name, mesh, tx, ty) {
+    if (this.finished) throw new Error("finish() already called");
     await this.head;
     const id = ++this.count;
     this.items.push(`<item objectid="${id}" transform="1 0 0 0 1 0 0 0 1 ${tx.toFixed(3)} ${ty.toFixed(3)} 0"/>`);
     const { positions: P, indices: I } = mesh;
-    let buf = [`<object id="${id}" name="${name}" type="model"><mesh><vertices>`];
+    let buf = [`<object id="${id}" name="${escapeXml(name)}" type="model"><mesh><vertices>`];
     for (let v = 0; v < P.length; v += 3) {
       buf.push(`<vertex x="${P[v].toFixed(3)}" y="${P[v + 1].toFixed(3)}" z="${P[v + 2].toFixed(3)}"/>`);
       if (buf.length >= CHUNK) { await this._push(buf.join("")); buf = []; }
@@ -69,6 +80,8 @@ export class ThreeMFWriter {
   }
 
   async finish() {
+    if (this.finished) throw new Error("finish() already called");
+    this.finished = true;
     await this._push(`</resources><build>${this.items.join("")}</build></model>`);
     if (this.writer) { await this.writer.close(); await this.pump; }
     let len = 0;
