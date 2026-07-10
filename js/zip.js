@@ -13,8 +13,8 @@ const TABLE = (() => {
   return t;
 })();
 
-export function crc32(bytes) {
-  let c = 0xffffffff;
+export function crc32(bytes, seed = 0) {
+  let c = seed ^ 0xffffffff;
   for (let i = 0; i < bytes.length; i++) c = TABLE[(c ^ bytes[i]) & 0xff] ^ (c >>> 8);
   return (c ^ 0xffffffff) >>> 0;
 }

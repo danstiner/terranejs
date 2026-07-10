@@ -10,6 +10,13 @@ test("crc32 matches the standard check vector", () => {
   assert.equal(crc32(new Uint8Array(0)), 0);
 });
 
+test("crc32 chains across chunks", () => {
+  const enc = new TextEncoder();
+  const whole = crc32(enc.encode("123456789"));
+  const chained = crc32(enc.encode("6789"), crc32(enc.encode("12345")));
+  assert.equal(chained, whole);
+});
+
 test("buildZip: valid store-only container structure", () => {
   const enc = new TextEncoder();
   const data = enc.encode("hello tilejs");
