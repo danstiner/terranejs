@@ -32,6 +32,7 @@ const store = createStore({
   pathMode: "overlay", // overlay | bump | inset | inlay
   pathWmm: 1.6, // trail width on the print
   pathHmm: 0.6, // bump height / inset depth
+  exportErr: 0.01, // TIN decimation tolerance (mm)
 });
 
 // inlay-ribbon geometry: mating groove depth, how far the seated ribbon stands
@@ -49,6 +50,19 @@ const WATER_CLEAR_MM = 0.4; // shore-edge clearance: tile pad + insert erode rad
 // Sound min −248 m at z10; +0.5–2 m land-DEM junk at z11). Water classification
 // and insert depths must never read finer than this.
 const WATER_ZOOM_MAX = 10;
+
+// TIN decimation tolerance steps: log-spaced (each ~3× finer in area, ~√3× denser
+// in sample rate) so perceived facet size drops smoothly with each dial click.
+// Grid dimensions double from 2048→4096 at the finest 2 steps where per-tile
+// decimation time becomes the binding cost. Facet-size expectations measured on
+// King County; Task 9 recalibrates if needed.
+const DETAIL_STEPS = [
+  { err: 0.1, dim: 2048, hint: "≈1 mm facets" },
+  { err: 0.03, dim: 2048, hint: "≈0.5 mm facets" },
+  { err: 0.01, dim: 2048, hint: "≈0.25 mm facets" },
+  { err: 0.003, dim: 4096, hint: "≈0.16 mm facets" },
+  { err: 0.001, dim: 4096, hint: "≈0.12 mm facets" },
+];
 
 const PLA_DENSITY = 1.24; // g/cm³
 // fraction of the solid envelope actually deposited: walls + 3% infill.
@@ -264,6 +278,7 @@ $("scaleAuto").addEventListener("click", () => {
 });
 $("exag").addEventListener("input", (e) => store.set({ exag: Number(e.target.value) }));
 $("base").addEventListener("input", (e) => store.set({ base: Number(e.target.value) }));
+$("detail").addEventListener("input", (e) => store.set({ exportErr: DETAIL_STEPS[Number(e.target.value)].err }));
 $("capW").addEventListener("input", (e) => store.set({ capW: Number(e.target.value) || 250 }));
 $("capH").addEventListener("input", (e) => store.set({ capH: Number(e.target.value) || 250 }));
 // insert mode needs ≥1 mm of drop — that drop is the insert's shore-edge thickness
@@ -321,6 +336,9 @@ function renderSettings(s, baked) {
   if ($("scale") !== document.activeElement) $("scale").value = Math.round(s.scale);
   $("exagVal").textContent = s.exag.toFixed(1);
   $("baseVal").textContent = s.base.toFixed(1);
+  const di = DETAIL_STEPS.findIndex((d) => d.err === s.exportErr);
+  $("detail").value = di;
+  $("detailVal").textContent = `${DETAIL_STEPS[di].err} mm err, ${DETAIL_STEPS[di].hint}`;
   $("waterDropVal").textContent = s.waterDrop.toFixed(1);
   $("waterDrop").value = s.waterDrop; // range thumb must snap to a clamped value, even while dragging
   $("waterOpts").hidden = s.waterDrop <= 0;
@@ -473,10 +491,8 @@ function rebuildTiles(baked) {
 // Fetches high-detail terrain, resamples to an anisotropic grid, and per tile
 // either decimates (fully-covered tiles -> adaptive TIN, tiny files) or falls
 // back to the uniform stair-clip solid (polygon-clipped edge tiles).
-const EXPORT_TILE_DIM = 2048; // per-tile grid cap (decimation time / memory bound)
 const EXPORT_COARSE_DIM = 1200; // whole-region context grid (ocean seeds, trail, z-frame)
-const EXPORT_MAX_TILES = 120; // terrarium-fetch guard (context pass and each tile)
-const EXPORT_ERR_MM = 0.05; // TIN vertical error tolerance (fine)
+const EXPORT_MAX_TILES = 300; // z12 over a county-size region ≈ 270 terrarium tiles
 
 // Adaptive-decimated + polygon-clipped solid for one edge tile. Decimates the
 // tile's rectangular grid, maps the region ring into the tile-local mm frame
@@ -529,7 +545,8 @@ async function exportSTLs() {
   const f = fit({ polygon: s.polygon, scale: s.scale, capW: s.capW, capH: s.capH });
   const [latS, lonW, latN, lonE] = f.bbox;
   const cLat = (latS + latN) / 2;
-  const maxErr = EXPORT_ERR_MM;
+  const maxErr = s.exportErr;
+  const tileDim = maxErr <= 0.003 ? 4096 : 2048; // finest steps need the finer pitch
   const btn = $("export");
   btn.disabled = true;
   try {
@@ -543,9 +560,9 @@ async function exportSTLs() {
     let rows = splits(f.ny, ghF), cols = splits(f.nx, gwF);
     const spanMax = (sp) => Math.max(...sp.map(([a, b]) => b - a + 1));
     const maxSpan = Math.max(spanMax(rows), spanMax(cols));
-    if (maxSpan > EXPORT_TILE_DIM) {
-      gwF = Math.max(2, Math.round((gwF * EXPORT_TILE_DIM) / maxSpan));
-      ghF = Math.max(2, Math.round((ghF * EXPORT_TILE_DIM) / maxSpan));
+    if (maxSpan > tileDim) {
+      gwF = Math.max(2, Math.round((gwF * tileDim) / maxSpan));
+      ghF = Math.max(2, Math.round((ghF * tileDim) / maxSpan));
       rows = splits(f.ny, ghF);
       cols = splits(f.nx, gwF);
     }
