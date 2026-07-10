@@ -85,8 +85,8 @@ export function suggestScale(realW, realH, targetLongMm = 240) {
 // posting used only to clamp mesh detail (terrarium ~10 m US / ~30 m global);
 // pre-fetch it's an estimate (default optimistic 10 m).
 // Isotropic mesh sample pitch on the print (mm). Both axes equal so the piece
-// can be printed in either orientation; the 0.05 mm decimation error is the real
-// detail knob (see EXPORT_ERR_MM in app.js).
+// can be printed in either orientation; the export detail tolerance is the real
+// detail knob (see DETAIL_STEPS in app.js).
 export const PITCH_MM = 0.1;
 
 export function fit({ polygon, scale, capW = 250, capH = 250,

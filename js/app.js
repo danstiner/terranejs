@@ -336,7 +336,7 @@ function renderSettings(s, baked) {
   if ($("scale") !== document.activeElement) $("scale").value = Math.round(s.scale);
   $("exagVal").textContent = s.exag.toFixed(1);
   $("baseVal").textContent = s.base.toFixed(1);
-  const di = DETAIL_STEPS.findIndex((d) => d.err === s.exportErr);
+  const di = Math.max(0, DETAIL_STEPS.findIndex((d) => d.err === s.exportErr));
   $("detail").value = di;
   $("detailVal").textContent = `${DETAIL_STEPS[di].err} mm err, ${DETAIL_STEPS[di].hint}`;
   $("waterDropVal").textContent = s.waterDrop.toFixed(1);
@@ -553,7 +553,7 @@ async function exportSTLs() {
     // fine virtual lattice at the fit pitch (data-posting floor included). It is
     // never materialized whole: each print tile fetches and meshes only its own
     // padded window, so memory stays flat however large the print is. If a tile
-    // span would exceed EXPORT_TILE_DIM, the whole lattice scales down together
+    // span would exceed tileDim, the whole lattice scales down together
     // (per-tile decimation time is the binding cost, not total print size).
     let gwF = Math.round(f.widthMm / f.pitchMm) + 1;
     let ghF = Math.round(f.heightMm / f.pitchMm) + 1;
