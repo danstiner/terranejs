@@ -90,7 +90,14 @@ terrain-export-fidelity-design.md` § Measured (implementation).
 - [ ] smoothProfile ping-pong buffers (per-iteration typed-array allocs).
 - [ ] Shared bakeWindow() so the preview is literally the one-window case of
   the export pipeline (prevents preview/export bake drift).
-- [ ] mesh.js: dedupe the 4× boundary-edge extraction + skirt emission
-  (pre-existing, ~50 lines).
-- [ ] Zip naming by region+scale (king-county-wa_1-70500.zip) and tiles/,
-  water/, path/ folders inside the archive (floated 2026-07-06, unconfirmed).
+- [x] mesh.js: dedupe the 4× boundary-edge extraction + skirt emission —
+  shipped 2026-07-10 (export-fidelity Task 2): the four export builders share
+  one assembleSolid. Residual: buildPreviewSolid keeps its own inline copy.
+- [ ] ~~Zip naming by region+scale and tiles/, water/, path/ folders~~ —
+  superseded 2026-07-10: export is now a single placed .3mf project.
+- [ ] Finest detail step (0.001/4096) on polygon-clipped tiles: clipTileSolid's
+  plain-array top accumulator + buildSolidFromMesh's string-keyed weld Map are
+  unmeasured at ~11M tris (est. 1.5–2.5 GB transient; possible tab OOM, and the
+  caught-error fallback re-meshes the FULL window, which is heavier). Fix if a
+  real export hits it: typed chunked accumulator + sort-based welding, and/or a
+  UI warning on the finest step for clipped regions (final review 2026-07-10).

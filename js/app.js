@@ -290,11 +290,11 @@ $("waterSeparate").addEventListener("change", (e) => store.set({
   waterSeparate: e.target.checked,
   waterDrop: e.target.checked ? Math.max(1, store.get().waterDrop) : store.get().waterDrop,
 }));
-$("export").addEventListener("click", exportSTLs);
+$("export").addEventListener("click", export3MF);
 
 // --- preview state ---------------------------------------------------------
 let preview = null; // three.js view, lazily created
-let pv = null; // { grid, gw, gh, f } cached mosaic+resample; survives exag/base
+let pv = null; // { grid, waterGrid, gw, gh, f, mask } cached mosaic+resample; survives exag/base
 let pvKey = null; // fit-affecting inputs; changing them invalidates pv
 
 const keyOf = (s) => JSON.stringify([s.polygon, s.scale, s.capW, s.capH]);
@@ -539,14 +539,15 @@ function clipTileSolid(grid, gw, gh, span, polygon, geom, subMask) {
   }
 }
 
-async function exportSTLs() {
+async function export3MF() {
   const s = store.get();
   if (!s.polygon || !s.scale) { $("progress").textContent = "pick a region first"; return; }
   const f = fit({ polygon: s.polygon, scale: s.scale, capW: s.capW, capH: s.capH });
   const [latS, lonW, latN, lonE] = f.bbox;
   const cLat = (latS + latN) / 2;
   const maxErr = s.exportErr;
-  const tileDim = maxErr <= 0.003 ? 4096 : 2048; // finest steps need the finer pitch
+  // grid cap from the matched ladder step — one source of truth with the UI
+  const tileDim = (DETAIL_STEPS.find((d) => d.err === maxErr) || DETAIL_STEPS[2]).dim;
   const btn = $("export");
   btn.disabled = true;
   try {

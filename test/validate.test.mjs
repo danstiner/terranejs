@@ -39,6 +39,23 @@ test("checkWatertight: cube closed; open after dropping a face", () => {
   assert.ok(checkWatertight(open).unmatched > 0);
 });
 
+test("checkWatertight: T-junction (midpoint on a shared edge) is not closed", () => {
+  // vertex 8 = midpoint of the top-north edge (7,6). The north face routes
+  // through it (7→8, 8→6) while the top face keeps the unsplit edge (6→7).
+  // Geometrically coincident — zero gap — but topologically open: 6→7 has no
+  // reverse twin. This is exactly the defect coordinate-based checks miss.
+  const m = cube();
+  const positions = Float32Array.from([...m.positions, 1, 2, 2]);
+  const indices = Uint32Array.from([
+    0, 2, 1, 0, 3, 2, // bottom
+    4, 5, 6, 4, 6, 7, // top — uses unsplit 6→7
+    0, 1, 5, 0, 5, 4, 1, 2, 6, 1, 6, 5, 3, 0, 4, 3, 4, 7, // south, east, west
+    2, 3, 7, 2, 7, 8, 2, 8, 6, // north split through the edge midpoint 8
+  ]);
+  const r = checkWatertight({ positions, indices });
+  assert.ok(!r.closed && r.unmatched > 0, `T-junction must be open (unmatched ${r.unmatched})`);
+});
+
 test("toTriangleSoup: explodes indices, preserves volume", () => {
   const m = cube();
   const soup = toTriangleSoup(m);

@@ -1,7 +1,7 @@
 // Minimal ZIP writer (no dependency). Entries carry already-encoded data plus
 // the method + CRC of the *uncompressed* bytes; deflate happens in the caller
 // via the browser's native CompressionStream. ZIP32 (files/total < 4 GB — fine
-// for STLs). Little-endian throughout.
+// for 3MF exports). Little-endian throughout.
 
 const TABLE = (() => {
   const t = new Uint32Array(256);
