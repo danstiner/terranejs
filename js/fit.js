@@ -86,7 +86,7 @@ export function suggestScale(realW, realH, targetLongMm = 240) {
 // pre-fetch it's an estimate (default optimistic 10 m).
 // Isotropic mesh sample pitch on the print (mm). Both axes equal so the piece
 // can be printed in either orientation; the export detail tolerance is the real
-// detail knob (see DETAIL_STEPS in app.js).
+// detail knob (see the exportDetail zoom ladder in app.js).
 export const PITCH_MM = 0.1;
 
 export function fit({ polygon, scale, capW = 250, capH = 250,

@@ -548,13 +548,14 @@ async function export3MF() {
     // Steps are zoom-relative (zSrc−3 … zSrc); zSrc from the 0.1 mm
     // print-pitch floor, the z15 pyramid max, and the region tile budget.
     const zSrc = sourceZoom(f.bbox, cLat, f.scale, EXPORT_MAX_TILES);
-    const z = Math.max(1, zSrc - (3 - s.exportDetail));
+    const di = Math.min(3, Math.max(0, Math.round(s.exportDetail)));
+    const z = Math.max(1, zSrc - (3 - di));
     const win = pixelWindow(f.bbox, z);
     const gwF = win.gw, ghF = win.gh;
     if (gwF < 2 || ghF < 2) throw new Error("region smaller than one pixel at this step — raise the detail slider");
     const rows = splits(f.ny, ghF), cols = splits(f.nx, gwF);
     // mm per pixel, anchored to the fitted print size so the piece matches the
-    // UI-stated dimensions; rows are uniform in Mercator y — the print is a
+    // UI-stated dimensions to within one pixel; rows are uniform in Mercator y — the print is a
     // true Mercator map at the nominal scale (<0.5% N–S ground-spacing drift
     // at county extents, the same distortion the map preview shows)
     const dx = f.widthMm / (lonToGlobalX(lonE, z) - lonToGlobalX(lonW, z));
