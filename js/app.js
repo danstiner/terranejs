@@ -22,7 +22,7 @@ const store = createStore({
   scale: null, // 1:N
   scaleAuto: true,
   exag: 1.0,
-  base: 3.0,
+  base: 6.0,
   capW: 250,
   capH: 250,
   waterDrop: 3, // ocean recess depth (mm); 0 = off
