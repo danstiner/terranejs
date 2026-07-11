@@ -1,4 +1,4 @@
-// Clip a decimation triangle to the region polygon, in world mm. Returns the
+// Clip a top-surface triangle to the region polygon, in world mm. Returns the
 // inside part as a flat array of top-surface triangles (9 numbers each: three
 // [x,y,z] verts). A clipped vertex lies on the source triangle's plane (the
 // clipped facet), so its z is that plane at (x,y) — no re-sampling.
