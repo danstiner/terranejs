@@ -70,4 +70,5 @@ test("cropGrid: exact sample extraction by global pixel index", () => {
   assert.deepEqual([...out], [10, 11, 12, 18, 19, 20]);
   assert.throws(() => cropGrid(mosaic, { gx0: 106, gy0: 201, gw: 3, gh: 2 }));
   assert.throws(() => cropGrid(mosaic, { gx0: 99, gy0: 201, gw: 3, gh: 2 }));
+  assert.throws(() => cropGrid(mosaic, { gx0: 102, gy0: 205, gw: 3, gh: 2 }));
 });
