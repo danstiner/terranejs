@@ -56,6 +56,15 @@ test("pixelWindow: interior pixel-center lattice, row 0 = north", () => {
   assert.ok(globalYToLat(win.gy0 + win.gh - 1 + 0.5, z) >= bbox[0] - 1e-9);
 });
 
+test("pixelWindow: bbox edges exactly on pixel centers are kept (epsilon)", () => {
+  const z = 10;
+  const bbox = [globalYToLat(205.5, z), globalXToLon(100.5, z),
+    globalYToLat(200.5, z), globalXToLon(110.5, z)];
+  const win = pixelWindow(bbox, z);
+  assert.deepEqual({ gx0: win.gx0, gy0: win.gy0, gw: win.gw, gh: win.gh },
+    { gx0: 100, gy0: 200, gw: 11, gh: 6 });
+});
+
 test("pixelWindow: sub-pixel bbox yields an empty window (caller must guard)", () => {
   const z = 5;
   const win = pixelWindow([10, globalXToLon(50.6, z), 10.001, globalXToLon(50.9, z)], z);
