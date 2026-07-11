@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { resampleBilinear, gridRange } from "../js/resample.js";
+import { resampleBilinear, gridRange, cropGrid } from "../js/resample.js";
 import { lonToGlobalX, latToGlobalY } from "../js/tilemath.js";
 
 // Build a mosaic whose elevation is an exact linear function of global pixel
@@ -60,4 +60,14 @@ test("gridRange", () => {
   const r = gridRange(new Float32Array([3, -1, 7, 2]));
   assert.equal(r.min, -1);
   assert.equal(r.max, 7);
+});
+
+test("cropGrid: exact sample extraction by global pixel index", () => {
+  const width = 8, height = 6;
+  const data = Float32Array.from({ length: width * height }, (_, i) => i);
+  const mosaic = { data, width, height, originGx: 100, originGy: 200, z: 7 };
+  const out = cropGrid(mosaic, { gx0: 102, gy0: 201, gw: 3, gh: 2 });
+  assert.deepEqual([...out], [10, 11, 12, 18, 19, 20]);
+  assert.throws(() => cropGrid(mosaic, { gx0: 106, gy0: 201, gw: 3, gh: 2 }));
+  assert.throws(() => cropGrid(mosaic, { gx0: 99, gy0: 201, gw: 3, gh: 2 }));
 });

@@ -50,3 +50,20 @@ export function gridRange(grid) {
   }
   return { min, max };
 }
+
+// Exact pixel-window crop (no interpolation): out[r*gw+c] = the mosaic sample
+// at integer global pixel (win.gx0+c, win.gy0+r). The fetch's 1-px halo
+// guarantees coverage; throw rather than clamp if that invariant breaks.
+export function cropGrid(mosaic, win) {
+  const { data, width, height, originGx, originGy } = mosaic;
+  const x0 = win.gx0 - originGx, y0 = win.gy0 - originGy;
+  if (x0 < 0 || y0 < 0 || x0 + win.gw > width || y0 + win.gh > height) {
+    throw new Error("cropGrid: window outside mosaic");
+  }
+  const out = new Float32Array(win.gw * win.gh);
+  for (let r = 0; r < win.gh; r++) {
+    const s = (y0 + r) * width + x0;
+    out.set(data.subarray(s, s + win.gw), r * win.gw);
+  }
+  return out;
+}
