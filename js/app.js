@@ -2,9 +2,9 @@ import { createStore } from "./state.js";
 import { PRESETS, DEFAULT_PRESET, bboxToPolygon } from "./presets.js";
 import { initMap } from "./mapPicker.js";
 import { fit, bboxOf, bboxExtentMeters, suggestScale, splits, PITCH_MM } from "./fit.js";
-import { pickZoom, tileRangeForBBox } from "./tilemath.js";
+import { pickZoom, tileRangeForBBox, sourceZoom, pixelWindow, lonToGlobalX, latToGlobalY, globalXToLon, globalYToLat, printPitchMm } from "./tilemath.js";
 import { fetchMosaic } from "./terrain.js";
-import { resampleBilinear, gridRange } from "./resample.js";
+import { resampleBilinear, gridRange, cropGrid } from "./resample.js";
 import { cellMask } from "./polyclip.js";
 import { buildPreviewSolid, buildSolid, buildSolidFromMesh, buildTrailShell } from "./mesh.js";
 import { clipTriangleToPolygon, footprintClassifier } from "./clip.js";
@@ -30,7 +30,7 @@ const store = createStore({
   pathMode: "overlay", // overlay | bump | inset | inlay
   pathWmm: 1.6, // trail width on the print
   pathHmm: 0.6, // bump height / inset depth
-  exportErr: 0.01, // TIN decimation tolerance (mm)
+  exportDetail: 2, // zoom-ladder slider index 0..3 (3 = source zoom)
 });
 
 // inlay-ribbon geometry: mating groove depth, how far the seated ribbon stands
@@ -49,19 +49,8 @@ const WATER_CLEAR_MM = 0.4; // shore-edge clearance: tile pad + insert erode rad
 // and insert depths must never read finer than this.
 const WATER_ZOOM_MAX = 10;
 
-// TIN decimation tolerance steps: log-spaced (each ~3× finer in area, ~√3× denser
-// in sample rate) so perceived facet size drops smoothly with each dial click.
-// Grid dimensions double from 2048→4096 at the finest 2 steps where per-tile
-// decimation time becomes the binding cost. Facet-size hints are measured
-// medians on King County (Task 9, tilejs/scratchpad/measure_export.mjs); the
-// 0.001 hint was recalibrated (0.12→0.08 mm, ~33% off measured).
-const DETAIL_STEPS = [
-  { err: 0.1, dim: 2048, hint: "≈1 mm facets" },
-  { err: 0.03, dim: 2048, hint: "≈0.5 mm facets" },
-  { err: 0.01, dim: 2048, hint: "≈0.25 mm facets" },
-  { err: 0.003, dim: 4096, hint: "≈0.16 mm facets" },
-  { err: 0.001, dim: 4096, hint: "≈0.08 mm facets" },
-];
+const EXPORT_COARSE_DIM = 1200; // whole-region context grid (ocean seeds, trail, z-frame)
+const EXPORT_MAX_TILES = 300; // z12 over a county-size region ≈ 270 terrarium tiles
 
 const PLA_DENSITY = 1.24; // g/cm³
 // fraction of the solid envelope actually deposited: walls + 3% infill.
@@ -277,7 +266,7 @@ $("scaleAuto").addEventListener("click", () => {
 });
 $("exag").addEventListener("input", (e) => store.set({ exag: Number(e.target.value) }));
 $("base").addEventListener("input", (e) => store.set({ base: Number(e.target.value) }));
-$("detail").addEventListener("input", (e) => store.set({ exportErr: DETAIL_STEPS[Number(e.target.value)].err }));
+$("detail").addEventListener("input", (e) => store.set({ exportDetail: Number(e.target.value) }));
 $("capW").addEventListener("input", (e) => store.set({ capW: Number(e.target.value) || 250 }));
 $("capH").addEventListener("input", (e) => store.set({ capH: Number(e.target.value) || 250 }));
 // insert mode needs ≥1 mm of drop — that drop is the insert's shore-edge thickness
@@ -328,6 +317,20 @@ function renderRegion(s) {
     `bbox S,W,N,E:\n  ${[bs, bw, bn, be].map((x) => x.toFixed(4)).join(", ")}`;
 }
 
+// Slider readout: honest computed values for the chosen zoom-ladder step —
+// pixel pitch on the print, triangle estimate, and projected .3mf size
+// (~11 B/triangle deflated, measured on the King County export).
+function detailLabel(f, di) {
+  const cLat = (f.bbox[0] + f.bbox[2]) / 2;
+  const zSrc = sourceZoom(f.bbox, cLat, f.scale, EXPORT_MAX_TILES);
+  const z = Math.max(1, zSrc - (3 - di));
+  const pitch = printPitchMm(cLat, z, f.scale);
+  const tris = 2 * f.coverage * (f.widthMm / pitch) * (f.heightMm / pitch);
+  const mb = (tris * 11) / 1e6;
+  const t = tris >= 1e6 ? `${(tris / 1e6).toFixed(1)}M` : `${Math.round(tris / 1e3)}K`;
+  return `${pitch.toFixed(2)} mm/px · ~${t} tris · ~${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB`;
+}
+
 function renderSettings(s, baked) {
   const box = $("settings");
   if (!s.polygon || s.polygon.length < 3 || !s.scale) { box.hidden = true; return; }
@@ -335,9 +338,6 @@ function renderSettings(s, baked) {
   if ($("scale") !== document.activeElement) $("scale").value = Math.round(s.scale);
   $("exagVal").textContent = s.exag.toFixed(1);
   $("baseVal").textContent = s.base.toFixed(1);
-  const di = Math.max(0, DETAIL_STEPS.findIndex((d) => d.err === s.exportErr));
-  $("detail").value = di;
-  $("detailVal").textContent = `${DETAIL_STEPS[di].err} mm err, ${DETAIL_STEPS[di].hint}`;
   $("waterDropVal").textContent = s.waterDrop.toFixed(1);
   $("waterDrop").value = s.waterDrop; // range thumb must snap to a clamped value, even while dragging
   $("waterOpts").hidden = s.waterDrop <= 0;
@@ -359,6 +359,9 @@ function renderSettings(s, baked) {
   }
 
   const f = fit({ polygon: s.polygon, scale: s.scale, capW: s.capW, capH: s.capH });
+  const di = Math.min(3, Math.max(0, Math.round(s.exportDetail)));
+  $("detail").value = di;
+  $("detailVal").textContent = detailLabel(f, di);
   const nT = f.nx * f.ny;
   const warn = nT > 16 ? ' <span class="warn">(a lot!)</span>' : "";
   const m = estimateMassG(s, baked);
@@ -489,8 +492,6 @@ function rebuildTiles(baked) {
 // --- 3MF export --------------------------------------------------------------
 // Fetches terrain at the export zoom and meshes every tile at full grid
 // density; polygon edge tiles clip cells to the region ring.
-const EXPORT_COARSE_DIM = 1200; // whole-region context grid (ocean seeds, trail, z-frame)
-const EXPORT_MAX_TILES = 300; // z12 over a county-size region ≈ 270 terrarium tiles
 
 // Grid-cell + polygon-clipped solid for one edge tile: full-density cells with
 // the region ring mapped into the tile-local mm frame. Interior cells emit
@@ -539,35 +540,34 @@ async function export3MF() {
   const f = fit({ polygon: s.polygon, scale: s.scale, capW: s.capW, capH: s.capH });
   const [latS, lonW, latN, lonE] = f.bbox;
   const cLat = (latS + latN) / 2;
-  const maxErr = s.exportErr;
-  // grid cap from the matched ladder step — one source of truth with the UI
-  const tileDim = (DETAIL_STEPS.find((d) => d.err === maxErr) || DETAIL_STEPS[2]).dim;
   const btn = $("export");
   btn.disabled = true;
   try {
-    // fine virtual lattice at the fit pitch (data-posting floor included). It is
-    // never materialized whole: each print tile fetches and meshes only its own
-    // padded window, so memory stays flat however large the print is. If a tile
-    // span would exceed tileDim, the whole lattice scales down together
-    // (per-tile decimation time is the binding cost, not total print size).
-    let gwF = Math.round(f.widthMm / f.pitchMm) + 1;
-    let ghF = Math.round(f.heightMm / f.pitchMm) + 1;
-    let rows = splits(f.ny, ghF), cols = splits(f.nx, gwF);
-    const spanMax = (sp) => Math.max(...sp.map(([a, b]) => b - a + 1));
-    const maxSpan = Math.max(spanMax(rows), spanMax(cols));
-    if (maxSpan > tileDim) {
-      gwF = Math.max(2, Math.round((gwF * tileDim) / maxSpan));
-      ghF = Math.max(2, Math.round((ghF * tileDim) / maxSpan));
-      rows = splits(f.ny, ghF);
-      cols = splits(f.nx, gwF);
-    }
-    const dx = f.widthMm / (gwF - 1), dy = f.heightMm / (ghF - 1);
+    // pixel-locked lattice: the export grid IS the terrarium pixel lattice at
+    // the ladder zoom — one vertex per source sample, no terrain resampling.
+    // Steps are zoom-relative (zSrc−3 … zSrc); zSrc from the 0.1 mm
+    // print-pitch floor, the z15 pyramid max, and the region tile budget.
+    const zSrc = sourceZoom(f.bbox, cLat, f.scale, EXPORT_MAX_TILES);
+    const z = Math.max(1, zSrc - (3 - s.exportDetail));
+    const win = pixelWindow(f.bbox, z);
+    const gwF = win.gw, ghF = win.gh;
+    if (gwF < 2 || ghF < 2) throw new Error("region smaller than one pixel at this step — raise the detail slider");
+    const rows = splits(f.ny, ghF), cols = splits(f.nx, gwF);
+    // mm per pixel, anchored to the fitted print size so the piece matches the
+    // UI-stated dimensions; rows are uniform in Mercator y — the print is a
+    // true Mercator map at the nominal scale (<0.5% N–S ground-spacing drift
+    // at county extents, the same distortion the map preview shows)
+    const dx = f.widthMm / (lonToGlobalX(lonE, z) - lonToGlobalX(lonW, z));
+    const dy = f.heightMm / (latToGlobalY(latS, z) - latToGlobalY(latN, z));
     const mmPerM = 1000 / f.scale;
     const k = mmPerM * s.exag;
-    // one zoom for every tile so neighbors read identical data at their seam
-    const { z } = pickZoom(Math.max(f.groundM, f.realW / (gwF - 1)), cLat);
-    const lonAt = (ci) => lonW + (ci / (gwF - 1)) * (lonE - lonW);
-    const latAt = (ri) => latN - (ri / (ghF - 1)) * (latN - latS); // row 0 = north
+    const lonAt = (ci) => globalXToLon(win.gx0 + ci + 0.5, z);
+    const latAt = (ri) => globalYToLat(win.gy0 + ri + 0.5, z);
+    // the interior lattice starts up to one pixel inside the bbox corner;
+    // trail points are sampled in the bbox mm frame, so window offsets must
+    // carry the lattice origin
+    const x0off = (win.gx0 + 0.5 - lonToGlobalX(lonW, z)) * dx;
+    const y0off = (latToGlobalY(latS, z) - (win.gy0 + ghF - 1 + 0.5)) * dy;
 
     // --- context pass: one small whole-region grid for everything the tiles
     // must agree on globally — ocean connectivity (seed source for the per-tile
@@ -665,7 +665,7 @@ async function export3MF() {
         const mosaic = await fetchMosaic(tb, z, {
           onProgress: (d, t) => { $("progress").textContent = `${label}: fetching ${d}/${t}…`; },
         });
-        const rawT = resampleBilinear(mosaic, tb, gwT, ghT);
+        const rawT = cropGrid(mosaic, { gx0: win.gx0 + pc0, gy0: win.gy0 + pr0, gw: gwT, gh: ghT });
         $("progress").textContent = `${label}: meshing…`;
         await new Promise((r) => setTimeout(r, 0)); // let the message paint
 
@@ -690,7 +690,7 @@ async function export3MF() {
         // the groove floor and ribbon heights are seam-continuous by construction
         let ribbon = null, pathCells = null, overlayCells = null;
         if (trail) {
-          const offX = pc0 * dx, offY = (ghF - 1 - pr1) * dy;
+          const offX = x0off + pc0 * dx, offY = y0off + (ghF - 1 - pr1) * dy;
           const ptsT = new Float32Array(trail.pts.length);
           for (let i = 0; i < ptsT.length; i += 2) {
             ptsT[i] = trail.pts[i] - offX;
@@ -824,7 +824,7 @@ async function export3MF() {
     download(new Blob([bytes], { type: "model/3mf" }), "tilejs_export.3mf");
     $("progress").textContent =
       `exported ${n} tile${n === 1 ? "" : "s"}${water} → tilejs_export.3mf ` +
-      `(${(bytes.length / 1e6).toFixed(1)} MB, ${(tris / 1e6).toFixed(1)}M triangles, z${z})` +
+      `(${(bytes.length / 1e6).toFixed(1)} MB, ${(tris / 1e6).toFixed(1)}M triangles, z${z}, ${printPitchMm(cLat, z, f.scale).toFixed(2)} mm/px)` +
       trailNote + floorNote;
   } catch (err) {
     $("progress").innerHTML = `<span class="warn">export failed: ${err.message}</span>`;

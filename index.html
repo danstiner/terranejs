@@ -100,9 +100,10 @@
         <details>
           <summary>Advanced</summary>
           <label for="detail">Export detail: <span id="detailVal"></span></label>
-          <input id="detail" type="range" min="0" max="4" step="1" value="2">
-          <p class="hint">Mesh error tolerance. Finer = more triangles, bigger file,
-            slower export; steps below 0.01 also fetch finer terrain data.</p>
+          <input id="detail" type="range" min="0" max="3" step="1" value="2">
+          <p class="hint">Pixel pitch of the exported mesh — one vertex per
+            terrain sample. Finer steps fetch deeper zoom: more triangles and a
+            bigger file, shown live above.</p>
           <label>Bed cap W &times; H (mm)</label>
           <div class="row">
             <input id="capW" type="number" min="50" step="5" value="250" class="num">
