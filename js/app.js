@@ -14,9 +14,8 @@ import { oceanMask, oceanMaskSeeded, cellOcean, erodeMask, recessedGrid,
 import { parseGPX, trackBbox } from "./gpx.js";
 import { samplePath, rasterizePath, profileAlong, smoothProfile, stampOffset,
   stampInlay, ribbonGrid } from "./path.js";
-import { encodeBinarySTL } from "./stl.js";
-import { checkWatertight, toTriangleSoup } from "./validate.js";
-import { crc32, buildZip } from "./zip.js";
+import { checkWatertight } from "./validate.js";
+import { ThreeMFWriter } from "./threeMF.js";
 
 const store = createStore({
   polygon: null, // [[lat,lon],…] or null
@@ -487,7 +486,7 @@ function rebuildTiles(baked) {
   preview.setTiles(tiles);
 }
 
-// --- STL export ------------------------------------------------------------
+// --- 3MF export --------------------------------------------------------------
 // Fetches high-detail terrain, resamples to an anisotropic grid, and per tile
 // either decimates (fully-covered tiles -> adaptive TIN, tiny files) or falls
 // back to the uniform stair-clip solid (polygon-clipped edge tiles).
@@ -631,21 +630,20 @@ async function exportSTLs() {
     const wantPath = trail && s.pathMode === "inlay";
     const wantOverlay = trail && s.pathMode === "overlay";
 
-    // deflate-as-we-go: each STL is compressed into a zip entry the moment it is
-    // built and its raw bytes released, so peak heap is ~sum(deflated) + one raw
-    // buffer — not the full raw total. `firstRaw` is kept only until a 2nd file
-    // arrives, so a single-file export can still download the bare STL.
-    const entries = [];
-    let firstRaw = null;
-    const addFile = async (name, buf) => {
-      firstRaw = entries.length === 0 ? { name, bytes: buf } : null;
-      let data = buf, method = 0;
-      if (typeof CompressionStream !== "undefined") {
-        try { data = await deflateRaw(buf); method = 8; } catch { data = buf; method = 0; }
-      }
-      entries.push({ name, data, crc: crc32(buf), size: buf.length, method });
+    const writer = new ThreeMFWriter();
+    const gapX = 0.14 * f.tileWmm, gapY = 0.14 * f.tileHmm;
+    const placeX = (cx) => cx * (f.tileWmm + gapX);
+    const rowY = (ry) => (f.ny - 1 - ry) * (f.tileHmm + gapY);
+    // separate pieces sit in mirrored blocks below the tile grid: water block
+    // first, then path/trail (mutually exclusive), so nothing overlaps
+    const belowY = (ry, block) => -(f.tileHmm + gapY) * (ry + 1 + block * f.ny);
+    let tris = 0;
+    const add = async (name, solid, x, y) => {
+      tris += solid.indices.length / 3;
+      await writer.addObject(name, solid, x, y);
+      await new Promise((r) => setTimeout(r, 0)); // let progress paint
     };
-    let bytes = 0, n = 0, nw = 0, np = 0, nt = 0, ti = 0, nFloored = 0;
+    let n = 0, nw = 0, np = 0, nt = 0, ti = 0, nFloored = 0;
     const nTiles = f.nx * f.ny;
     for (const [ry, [r0, r1]] of rows.entries()) {
       for (const [cx, [c0, c1]] of cols.entries()) {
@@ -765,11 +763,8 @@ async function exportSTLs() {
             || buildSolid(grid, gwT, ghT, span, mask,
               { dx, dy, mmPerM, emin, exag: s.exag, base: s.base });
         }
-        const buf = new Uint8Array(encodeBinarySTL(toTriangleSoup(solid)));
-        bytes += buf.length;
         n++;
-        await addFile(`tile_r${ry}_c${cx}.stl`, buf);
-        await new Promise((r) => setTimeout(r, 0));
+        await add(`tile_r${ry}_c${cx}`, solid, placeX(cx), rowY(ry));
 
         // water insert for this tile: printed top follows the ocean floor
         // (depth·scale above the drop), flat face at z=0 is the sea surface;
@@ -793,10 +788,8 @@ async function exportSTLs() {
             const wsolid = buildSolid(depthFlip, gwT, ghT,
               { r0: ghT - 1 - span.r1, r1: ghT - 1 - span.r0, c0: span.c0, c1: span.c1 },
               oceanCellsFlip, { dx, dy, mmPerM, emin: 0, exag: s.exag, base: s.waterDrop });
-            const wbuf = new Uint8Array(encodeBinarySTL(toTriangleSoup(wsolid)));
-            bytes += wbuf.length;
             nw++;
-            await addFile(`water_r${ry}_c${cx}.stl`, wbuf);
+            await add(`water_r${ry}_c${cx}`, wsolid, placeX(cx), belowY(ry, 0));
           }
         }
 
@@ -807,10 +800,8 @@ async function exportSTLs() {
           if (pc > 0) {
             const psolid = buildSolid(ribbon, gwT, ghT, span, pathCells,
               { dx, dy, mmPerM: 1, emin: 0, exag: 1, base: 0 });
-            const pbuf = new Uint8Array(encodeBinarySTL(toTriangleSoup(psolid)));
-            bytes += pbuf.length;
             np++;
-            await addFile(`path_r${ry}_c${cx}.stl`, pbuf);
+            await add(`path_r${ry}_c${cx}`, psolid, placeX(cx), belowY(ry, 1));
           }
         }
 
@@ -822,16 +813,14 @@ async function exportSTLs() {
           if (tc > 0) {
             const tsolid = buildTrailShell(grid, gwT, ghT, span, overlayCells,
               { dx, dy, mmPerM, emin, exag: s.exag }, s.pathHmm);
-            const tbuf = new Uint8Array(encodeBinarySTL(toTriangleSoup(tsolid)));
-            bytes += tbuf.length;
             nt++;
-            await addFile(`trail_r${ry}_c${cx}.stl`, tbuf);
+            await add(`trail_r${ry}_c${cx}`, tsolid, placeX(cx), belowY(ry, 1));
           }
         }
       }
     }
 
-    if (!entries.length) { $("progress").textContent = "nothing to export (region empty?)"; return; }
+    if (writer.count === 0) { $("progress").textContent = "nothing to export (region empty?)"; return; }
     const water = (nw ? ` + ${nw} water insert${nw === 1 ? "" : "s"}` : "") +
       (np ? ` + ${np} trail ribbon${np === 1 ? "" : "s"}` : "") +
       (nt ? ` + ${nt} trail piece${nt === 1 ? "" : "s"}` : "");
@@ -842,30 +831,19 @@ async function exportSTLs() {
     const floorNote = nFloored
       ? ` — floored ${nFloored} deep sample${nFloored === 1 ? "" : "s"} to keep a ≥1 mm base`
       : "";
-    if (entries.length === 1) {
-      download(new Blob([firstRaw.bytes], { type: "model/stl" }), firstRaw.name);
-      $("progress").textContent =
-        `exported ${firstRaw.name} — ${(bytes / 1e6).toFixed(1)} MB (z${z}, ≤${maxErr} mm)` + trailNote + floorNote;
-    } else {
-      $("progress").textContent = "zipping…";
-      await new Promise((r) => setTimeout(r, 0));
-      const zip = buildZip(entries); // entries are already deflated
-      download(new Blob([zip], { type: "application/zip" }), "tilejs_export.zip");
-      $("progress").textContent =
-        `exported ${n} tile${n === 1 ? "" : "s"}${water} → tilejs_export.zip ` +
-        `(${(zip.length / 1e6).toFixed(1)} MB zip, ${(bytes / 1e6).toFixed(0)} MB raw)` + trailNote + floorNote;
-    }
+    $("progress").textContent = "packing 3MF…";
+    await new Promise((r) => setTimeout(r, 0));
+    const bytes = await writer.finish();
+    download(new Blob([bytes], { type: "model/3mf" }), "tilejs_export.3mf");
+    $("progress").textContent =
+      `exported ${n} tile${n === 1 ? "" : "s"}${water} → tilejs_export.3mf ` +
+      `(${(bytes.length / 1e6).toFixed(1)} MB, ${(tris / 1e6).toFixed(1)}M triangles, z${z}, ≤${maxErr} mm)` +
+      trailNote + floorNote;
   } catch (err) {
     $("progress").innerHTML = `<span class="warn">export failed: ${err.message}</span>`;
   } finally {
     btn.disabled = false;
   }
-}
-
-// deflate one buffer with the browser's native raw-deflate (ZIP method 8)
-async function deflateRaw(bytes) {
-  const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream("deflate-raw"));
-  return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
 function download(blob, name) {

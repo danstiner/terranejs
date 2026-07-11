@@ -2,13 +2,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { buildSolid } from "../js/mesh.js";
-import { encodeBinarySTL, parseSTL } from "../js/stl.js";
-import { signedVolume, checkWatertight, toTriangleSoup } from "../js/validate.js";
+import { signedVolume, checkWatertight } from "../js/validate.js";
 
 const golden = JSON.parse(readFileSync(new URL("./reference/expected.json", import.meta.url)));
-// STL round-trips through soup (parseSTL has no indices to rebuild) — a
-// standalone volume helper mirrors validate.js's divergence-theorem formula.
-const soupVolume = (t) => { let v = 0; for (let i = 0; i < t.length; i += 9) v += (t[i] * (t[i + 4] * t[i + 8] - t[i + 5] * t[i + 7]) - t[i + 1] * (t[i + 3] * t[i + 8] - t[i + 5] * t[i + 6]) + t[i + 2] * (t[i + 3] * t[i + 7] - t[i + 4] * t[i + 6])) / 6; return v; };
 
 function fullTileSolid(extra = {}) {
   const { H, W, dx, dy, base, relief } = golden.solid;
@@ -43,16 +39,6 @@ test("buildSolid: clipped footprint stays watertight and smaller", () => {
   assert.ok(w.closed, `clipped solid not closed: ${w.unmatched} unmatched`);
   assert.ok(signedVolume(s) < golden.solid.volume, "clipped volume < full");
   assert.ok(signedVolume(s) > 0, "clipped volume positive (outward-wound)");
-});
-
-test("STL binary round-trips (header, count, coords, volume)", () => {
-  const s = fullTileSolid();
-  const soup = toTriangleSoup(s);
-  const buf = encodeBinarySTL(soup);
-  assert.equal(buf.byteLength, 84 + (soup.length / 9) * 50);
-  const { count, tris } = parseSTL(buf);
-  assert.equal(count, soup.length / 9);
-  assert.ok(Math.abs(soupVolume(tris) - signedVolume(s)) < 1e-3);
 });
 
 test("buildSolid: exaggeration scales relief volume, not base", () => {

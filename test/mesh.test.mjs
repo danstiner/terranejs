@@ -2,8 +2,30 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { pointInPolygon, cellMask } from "../js/polyclip.js";
 import { buildPreviewSolid, buildTrailShell, buildSolid as buildSolidIdx } from "../js/mesh.js";
-import { checkWatertight } from "../js/stl.js"; // buildPreviewSolid still emits an undeduped soup
 import { signedVolume as volIdx, checkWatertight as wtIdx } from "../js/validate.js";
+
+// Soup-form closed-manifold check (quantize verts, count directed edges).
+// buildPreviewSolid still emits an undeduped triangle soup, not an indexed
+// mesh, so validate.js's index-based checkWatertight doesn't apply here.
+function checkWatertight(tris, eps = 1e-4) {
+  const q = (x) => Math.round(x / eps);
+  const vid = (x, y, z) => `${q(x)},${q(y)},${q(z)}`;
+  const edges = new Map();
+  const bump = (a, b) => edges.set(`${a}|${b}`, (edges.get(`${a}|${b}`) || 0) + 1);
+  for (let i = 0; i < tris.length; i += 9) {
+    const A = vid(tris[i], tris[i + 1], tris[i + 2]);
+    const B = vid(tris[i + 3], tris[i + 4], tris[i + 5]);
+    const C = vid(tris[i + 6], tris[i + 7], tris[i + 8]);
+    bump(A, B); bump(B, C); bump(C, A);
+  }
+  let unmatched = 0;
+  for (const [k, cnt] of edges) {
+    const [a, b] = k.split("|");
+    const rev = edges.get(`${b}|${a}`) || 0;
+    if (cnt !== rev) unmatched++;
+  }
+  return { closed: unmatched === 0, unmatched };
+}
 
 test("pointInPolygon: square", () => {
   const sq = [[0, 0], [0, 10], [10, 10], [10, 0]];
