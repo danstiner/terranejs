@@ -1,7 +1,7 @@
 // Clip a decimation triangle to the region polygon, in world mm. Returns the
 // inside part as a flat array of top-surface triangles (9 numbers each: three
 // [x,y,z] verts). A clipped vertex lies on the source triangle's plane (the
-// decimated facet), so its z is that plane at (x,y) — no re-sampling.
+// clipped facet), so its z is that plane at (x,y) — no re-sampling.
 //
 // The clip is Sutherland–Hodgman: subject = region polygon, clip window = the
 // convex triangle. Edge crossings on a triangle edge are deterministic, so a
