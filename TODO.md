@@ -3,6 +3,13 @@
 Backlog from the 2026-07-07 code review (xhigh, 10 angles). Check items off as
 they land; P3 items are deferred until proven needed (simplicity first).
 
+**2026-07-10:** the 2026-07-09 terrain-export-fidelity plan shipped: 5-step
+export detail slider (`DETAIL_STEPS`, TIN error tolerance), single placed
+`.3mf` project export (STL/zip path removed), and water classification +
+insert depths sourced from bathymetry-valid data (`WATER_ZOOM_MAX = 10`) in
+both export and preview. Measured numbers: `docs/superpowers/specs/2026-07-09-
+terrain-export-fidelity-design.md` § Measured (implementation).
+
 ## P1 — correctness
 
 - [x] **emin from the coarse grid can break solids** (app.js exportSTLs ~524).
@@ -46,6 +53,16 @@ they land; P3 items are deferred until proven needed (simplicity first).
   one side of a seam only. Mitigate: dilate coarse-seed lookup by 1 cell +
   propagate fine edge flags to the next tile (W→E, N→S). Known residual:
   sub-coarse channels entering from east/south.
+  **2026-07-10 (export-fidelity plan, Task 5):** every tile now floods the
+  same whole-region ≤z10 bathymetry dataset (`WATER_ZOOM_MAX`) instead of its
+  own per-tile fine-grid read, so the *z-mismatch* component of this bug
+  (adjacent tiles seeing different, mostly-broken z11+ signals) is gone.
+  Residual is purely geometric: the coarse-seed lookup still only dilates by
+  1 cell, so a sub-coarse channel whose sole seed connection crosses a tile
+  seam from the east/south can still misclassify — unchanged by Task 5. The
+  Task 9 harness measured 100% fine-flood coverage of the coarse-mask ocean
+  area on King County (no seam channel geometry there to exercise this case),
+  so the residual is unconfirmed either way on real data; leaving open.
 
 ## P2 — efficiency / memory
 

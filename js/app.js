@@ -53,14 +53,15 @@ const WATER_ZOOM_MAX = 10;
 // TIN decimation tolerance steps: log-spaced (each ~3× finer in area, ~√3× denser
 // in sample rate) so perceived facet size drops smoothly with each dial click.
 // Grid dimensions double from 2048→4096 at the finest 2 steps where per-tile
-// decimation time becomes the binding cost. Facet-size expectations measured on
-// King County; Task 9 recalibrates if needed.
+// decimation time becomes the binding cost. Facet-size hints are measured
+// medians on King County (Task 9, tilejs/scratchpad/measure_export.mjs); the
+// 0.001 hint was recalibrated (0.12→0.08 mm, ~33% off measured).
 const DETAIL_STEPS = [
   { err: 0.1, dim: 2048, hint: "≈1 mm facets" },
   { err: 0.03, dim: 2048, hint: "≈0.5 mm facets" },
   { err: 0.01, dim: 2048, hint: "≈0.25 mm facets" },
   { err: 0.003, dim: 4096, hint: "≈0.16 mm facets" },
-  { err: 0.001, dim: 4096, hint: "≈0.12 mm facets" },
+  { err: 0.001, dim: 4096, hint: "≈0.08 mm facets" },
 ];
 
 const PLA_DENSITY = 1.24; // g/cm³
