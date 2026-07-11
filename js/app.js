@@ -6,8 +6,7 @@ import { pickZoom, tileRangeForBBox } from "./tilemath.js";
 import { fetchMosaic } from "./terrain.js";
 import { resampleBilinear, gridRange } from "./resample.js";
 import { cellMask } from "./polyclip.js";
-import { buildPreviewSolid, buildSolid, buildSolidTIN, buildSolidFromMesh, buildTrailShell } from "./mesh.js";
-import { decimate } from "./decimate.js";
+import { buildPreviewSolid, buildSolid, buildSolidFromMesh, buildTrailShell } from "./mesh.js";
 import { clipTriangleToPolygon, footprintClassifier } from "./clip.js";
 import { oceanMask, oceanMaskSeeded, cellOcean, erodeMask, recessedGrid,
   offsetGrid } from "./water.js";
@@ -488,48 +487,43 @@ function rebuildTiles(baked) {
 }
 
 // --- 3MF export --------------------------------------------------------------
-// Fetches high-detail terrain, resamples to an anisotropic grid, and per tile
-// either decimates (fully-covered tiles -> adaptive TIN, tiny files) or falls
-// back to the uniform stair-clip solid (polygon-clipped edge tiles).
+// Fetches terrain at the export zoom and meshes every tile at full grid
+// density; polygon edge tiles clip cells to the region ring.
 const EXPORT_COARSE_DIM = 1200; // whole-region context grid (ocean seeds, trail, z-frame)
 const EXPORT_MAX_TILES = 300; // z12 over a county-size region ≈ 270 terrarium tiles
 
-// Adaptive-decimated + polygon-clipped solid for one edge tile. Decimates the
-// tile's rectangular grid, maps the region ring into the tile-local mm frame
-// (same as buildSolidTIN), clips each TIN facet to it, and assembles a
-// watertight solid with a smooth polygon-following boundary. Returns null on any
-// failure (degenerate clip / non-closing solid) so the caller falls back to the
-// uniform stair-clip and export never breaks.
+// Grid-cell + polygon-clipped solid for one edge tile: full-density cells with
+// the region ring mapped into the tile-local mm frame. Interior cells emit
+// their two grid triangles whole; boundary-band cells (SAT prefilter) are
+// clipped to the ring. Returns null on any failure (degenerate clip /
+// non-closing solid) so the caller falls back to the uniform stair-clip and
+// export never breaks.
 function clipTileSolid(grid, gw, gh, span, polygon, geom, subMask) {
   const { r0, r1, c0, c1 } = span;
-  const { dx, dy, mmPerM, emin, exag, base, bbox: [s, w, n, e], widthMm, heightMm, maxErr } = geom;
+  const { dx, dy, mmPerM, emin, exag, base, bbox: [s, w, n, e], widthMm, heightMm } = geom;
   try {
+    const k = mmPerM * exag;
     const gwt = c1 - c0 + 1, ght = r1 - r0 + 1;
-    const zt = new Float32Array(gwt * ght);
-    for (let r = 0; r < ght; r++)
-      for (let c = 0; c < gwt; c++)
-        zt[r * gwt + c] = (grid[(r0 + r) * gw + (c0 + c)] - emin) * mmPerM * exag;
-    const { coords, triangles } = decimate(zt, gwt, ght, maxErr);
-
-    const vx = (vi) => coords[2 * vi] * dx;
-    const vy = (vi) => (ght - 1 - coords[2 * vi + 1]) * dy;
-    const vz = (vi) => base + zt[coords[2 * vi + 1] * gwt + coords[2 * vi]];
     const poly = polygon.map(([lat, lon]) => [
       ((lon - w) / (e - w)) * widthMm - c0 * dx,
       r1 * dy - ((n - lat) / (n - s)) * heightMm,
     ]);
-
+    const X = (c) => (c - c0) * dx;
+    const Y = (r) => (r1 - r) * dy;
+    const Z = (r, c) => base + (grid[r * gw + c] - emin) * k;
     const classify = footprintClassifier(subMask, gwt - 1, ght - 1);
     const top = [];
-    for (let i = 0; i < triangles.length; i += 3) {
-      const a = triangles[i], b = triangles[i + 1], c = triangles[i + 2];
-      const xs = [coords[2 * a], coords[2 * b], coords[2 * c]];
-      const ys = [coords[2 * a + 1], coords[2 * b + 1], coords[2 * c + 1]];
-      const cls = classify(Math.min(...xs), Math.min(...ys), Math.max(...xs) - 1, Math.max(...ys) - 1);
-      if (cls === "out") continue;
-      const tri = [[vx(a), vy(a), vz(a)], [vx(b), vy(b), vz(b)], [vx(c), vy(c), vz(c)]];
-      if (cls === "in") { top.push(...tri[0], ...tri[1], ...tri[2]); continue; }
-      for (const v of clipTriangleToPolygon(tri, poly)) top.push(v);
+    for (let r = r0; r < r1; r++) {
+      for (let c = c0; c < c1; c++) {
+        const cls = classify(c - c0, r - r0, c - c0, r - r0);
+        if (cls === "out") continue;
+        const A = [X(c), Y(r), Z(r, c)], B = [X(c + 1), Y(r), Z(r, c + 1)];
+        const C = [X(c), Y(r + 1), Z(r + 1, c)], D = [X(c + 1), Y(r + 1), Z(r + 1, c + 1)];
+        for (const tri of [[A, C, B], [B, C, D]]) {
+          if (cls === "in") top.push(...tri[0], ...tri[1], ...tri[2]);
+          else for (const q of clipTriangleToPolygon(tri, poly)) top.push(q);
+        }
+      }
     }
     if (!top.length) return null;
     const solid = buildSolidFromMesh(top);
@@ -735,26 +729,17 @@ async function export3MF() {
           }
         }
 
-        // terrain solid
+        // terrain solid: full-density grid; edge tiles clip cells to the
+        // region ring, falling back to the uniform stair-clip
         let solid;
         if (covered === total) {
-          // fully covered -> adaptive decimation
-          const gwt = span.c1 - span.c0 + 1, ght = span.r1 - span.r0 + 1;
-          const zt = new Float32Array(gwt * ght);
-          for (let r = 0; r < ght; r++) {
-            for (let c = 0; c < gwt; c++) {
-              zt[r * gwt + c] = (grid[(span.r0 + r) * gwT + (span.c0 + c)] - emin) * k;
-            }
-          }
-          const { coords, triangles } = decimate(zt, gwt, ght, maxErr);
-          solid = buildSolidTIN(zt, gwt, ght, coords, triangles, dx, dy, s.base);
+          solid = buildSolid(grid, gwT, ghT, span, mask,
+            { dx, dy, mmPerM, emin, exag: s.exag, base: s.base });
         } else {
-          // clipped edge tile -> adaptive decimation + smooth polygon clip,
-          // falling back to the uniform stair-clip if the clip can't close.
           // geom is window-local: clipTileSolid's polygon mapping is
-          // self-consistent in any frame whose bbox/dims match the grid.
+          // self-consistent in any frame whose bbox/dims match the grid
           const geom = { dx, dy, mmPerM, emin, exag: s.exag, base: s.base,
-            bbox: tb, widthMm: (gwT - 1) * dx, heightMm: (ghT - 1) * dy, maxErr };
+            bbox: tb, widthMm: (gwT - 1) * dx, heightMm: (ghT - 1) * dy };
           // span-local cell mask for the clip prefilter
           const gwt = span.c1 - span.c0 + 1, ght = span.r1 - span.r0 + 1;
           const subMask = new Uint8Array((gwt - 1) * (ght - 1));
@@ -839,7 +824,7 @@ async function export3MF() {
     download(new Blob([bytes], { type: "model/3mf" }), "tilejs_export.3mf");
     $("progress").textContent =
       `exported ${n} tile${n === 1 ? "" : "s"}${water} → tilejs_export.3mf ` +
-      `(${(bytes.length / 1e6).toFixed(1)} MB, ${(tris / 1e6).toFixed(1)}M triangles, z${z}, ≤${maxErr} mm)` +
+      `(${(bytes.length / 1e6).toFixed(1)} MB, ${(tris / 1e6).toFixed(1)}M triangles, z${z})` +
       trailNote + floorNote;
   } catch (err) {
     $("progress").innerHTML = `<span class="warn">export failed: ${err.message}</span>`;

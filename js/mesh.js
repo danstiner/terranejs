@@ -341,29 +341,8 @@ export function buildTrailShell(grid, gw, gh, span, mask, geom, hMm) {
     relief, "mirror");
 }
 
-// Watertight solid from a decimated TIN of one tile (standalone gw×gh grid; zt
-// holds print-mm relief; coords/triangles from decimate()). Flat z=0 base.
-export function buildSolidTIN(zt, gw, gh, coords, triangles, dx, dy, base) {
-  const gid = (vi) => coords[2 * vi + 1] * gw + coords[2 * vi];
-  const wx = (id) => (id % gw) * dx;
-  const wy = (id) => (gh - 1 - ((id / gw) | 0)) * dy;
-  const topTris = new Uint32Array(triangles.length);
-  for (let i = 0; i < triangles.length; i += 3) {
-    const A = gid(triangles[i]);
-    let B = gid(triangles[i + 1]);
-    let C = gid(triangles[i + 2]);
-    const area = (wx(B) - wx(A)) * (wy(C) - wy(A)) - (wx(C) - wx(A)) * (wy(B) - wy(A));
-    if (area < 0) { const t = B; B = C; C = t; }
-    topTris[i] = A; topTris[i + 1] = B; topTris[i + 2] = C;
-  }
-  return assembleSolid(topTris, gw * gh,
-    (id) => [wx(id), wy(id)],
-    (id) => base + zt[id],
-    () => 0, "flat");
-}
-
 // Watertight solid from an arbitrary top-surface triangle soup in world mm
-// (polygon-clipped decimated tiles; clip vertices are off-grid). Vertices are
+// (polygon-clipped edge tiles; clip vertices are off-grid). Vertices are
 // welded by quantized XY (top is single-valued in z), re-wound +Z. Flat base.
 export function buildSolidFromMesh(topTris, eps = 1e-3) {
   const q = (v) => Math.round(v / eps);

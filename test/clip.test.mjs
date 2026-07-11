@@ -2,7 +2,6 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { clipTriangleToPolygon, pointInPolygon, footprintClassifier } from "../js/clip.js";
 import { buildSolidFromMesh } from "../js/mesh.js";
-import { decimate } from "../js/decimate.js";
 import { checkWatertight, signedVolume } from "../js/validate.js";
 
 const SQUARE = [[0, 0], [10, 0], [10, 10], [0, 10]];
@@ -65,7 +64,7 @@ test("clip vertex z lies on the source triangle's sloped plane", () => {
   assert.ok(sawCut, "expected a cut vertex at x=10");
 });
 
-test("clipped decimated mesh assembles into a watertight solid", () => {
+test("clipped triangulated mesh assembles into a watertight solid", () => {
   // wavy non-convex polygon + a triangulated terrain -> clip -> solid
   const poly = [];
   for (let a = 0; a < 32; a++) {
@@ -89,72 +88,68 @@ test("clipped decimated mesh assembles into a watertight solid", () => {
   assert.ok(signedVolume(solid) > 0, "positive (outward) volume");
 });
 
-test("real export path: decimate -> clip -> solid is watertight and stays sparse", () => {
-  // mirrors clipTileSolid: an adaptive TIN (non-uniform triangles) clipped to a
-  // wavy boundary, then assembled. Locks watertightness on real delatin output
-  // and that the decimation win survives clipping (few triangles vs the grid).
-  const W = 160, H = 160, base = 3;
+test("real export path: grid cells -> classify -> clip -> solid is watertight", () => {
+  // mirrors clipTileSolid: full-density grid cells, interior cells kept whole,
+  // band cells clipped to a wavy boundary, then assembled
+  const W = 96, H = 96, base = 3;
   const zt = new Float32Array(W * H);
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-    const r2 = ((x - 80) / 55) ** 2 + ((y - 80) / 55) ** 2;
+    const r2 = ((x - 48) / 33) ** 2 + ((y - 48) / 33) ** 2;
     zt[y * W + x] = base + 12 * Math.exp(-r2) + 0.5 * Math.sin(x / 9) * Math.cos(y / 11);
   }
-  const { coords, triangles } = decimate(zt, W, H, 0.05);
-  const gridTris = 2 * (W - 1) * (H - 1);
-  assert.ok(triangles.length / 3 < gridTris / 20, "TIN should be far sparser than the grid");
-
   const poly = [];
   for (let a = 0; a < 40; a++) {
     const t = (a / 40) * Math.PI * 2;
-    const r = 62 + 14 * Math.sin(3 * t);
-    poly.push([80 + r * Math.cos(t), 80 + r * Math.sin(t)]);
+    const r = 37 + 8 * Math.sin(3 * t);
+    poly.push([48 + r * Math.cos(t), 48 + r * Math.sin(t)]);
   }
-  const vx = (vi) => coords[2 * vi], vy = (vi) => coords[2 * vi + 1];
-  const vz = (vi) => zt[coords[2 * vi + 1] * W + coords[2 * vi]];
+  const cw = W - 1, ch = H - 1;
+  const mask = new Uint8Array(cw * ch);
+  for (let r = 0; r < ch; r++)
+    for (let c = 0; c < cw; c++) mask[r * cw + c] = pointInPolygon(c + 0.5, r + 0.5, poly) ? 1 : 0;
+  const classify = footprintClassifier(mask, cw, ch);
   const top = [];
-  for (let i = 0; i < triangles.length; i += 3) {
-    const a = triangles[i], b = triangles[i + 1], c = triangles[i + 2];
-    const tri = [[vx(a), vy(a), vz(a)], [vx(b), vy(b), vz(b)], [vx(c), vy(c), vz(c)]];
-    for (const v of clipTriangleToPolygon(tri, poly)) top.push(v);
+  const v = (x, y) => [x, y, zt[y * W + x]];
+  let nIn = 0, nBand = 0;
+  for (let r = 0; r < ch; r++) {
+    for (let c = 0; c < cw; c++) {
+      const cls = classify(c, r, c, r);
+      if (cls === "out") continue;
+      if (cls === "in") nIn++; else nBand++;
+      const A = v(c, r), B = v(c + 1, r), C = v(c, r + 1), D = v(c + 1, r + 1);
+      for (const tri of [[A, B, C], [B, D, C]]) {
+        if (cls === "in") top.push(...tri[0], ...tri[1], ...tri[2]);
+        else for (const q of clipTriangleToPolygon(tri, poly)) top.push(q);
+      }
+    }
   }
+  assert.ok(nIn > 0 && nBand > 0, `degenerate split in=${nIn} band=${nBand}`);
   const solid = buildSolidFromMesh(top);
   const w = checkWatertight(solid);
   assert.ok(w.closed, `not watertight: ${w.unmatched} unmatched edges`);
   assert.ok(signedVolume(solid) > 0, "positive volume");
-  assert.ok(solid.indices.length / 3 < gridTris, "clipped solid far smaller than a full-grid solid");
 });
 
 test("footprintClassifier: 'in'/'out' verdicts are exact vs real clipping", () => {
   const gw = 25, gh = 25;
-  const zt = new Float32Array(gw * gh);
-  for (let r = 0; r < gh; r++)
-    for (let c = 0; c < gw; c++) zt[r * gw + c] = Math.sin(r * 0.7) * Math.cos(c * 0.5);
-  const { coords, triangles } = decimate(zt, gw, gh, 0.05);
   const poly = [[3, 3], [21, 5], [19, 20], [10, 22], [2, 15]]; // pentagon, grid units
-  // cell mask from polygon (cell centers), matching app.js cellMask semantics
   const cw = gw - 1, ch = gh - 1;
   const mask = new Uint8Array(cw * ch);
-  const pip = (x, y) => { // ray cast
-    let ins = false;
-    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-      const [xi, yi] = poly[i], [xj, yj] = poly[j];
-      if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) ins = !ins;
-    }
-    return ins;
-  };
   for (let r = 0; r < ch; r++)
-    for (let c = 0; c < cw; c++) mask[r * cw + c] = pip(c + 0.5, r + 0.5) ? 1 : 0;
+    for (let c = 0; c < cw; c++) mask[r * cw + c] = pointInPolygon(c + 0.5, r + 0.5, poly) ? 1 : 0;
   const classify = footprintClassifier(mask, cw, ch);
   let nIn = 0, nOut = 0, nBand = 0;
-  for (let i = 0; i < triangles.length; i += 3) {
-    const xs = [coords[2 * triangles[i]], coords[2 * triangles[i + 1]], coords[2 * triangles[i + 2]]];
-    const ys = [coords[2 * triangles[i] + 1], coords[2 * triangles[i + 1] + 1], coords[2 * triangles[i + 2] + 1]];
-    const tri = xs.map((x, k) => [x, ys[k], 0]);
-    const cls = classify(Math.min(...xs), Math.min(...ys), Math.max(...xs) - 1, Math.max(...ys) - 1);
-    const clipped = clipTriangleToPolygon(tri, poly);
-    if (cls === "in") { nIn++; assert.equal(clipped.length, 9, "'in' facet must survive whole"); }
-    else if (cls === "out") { nOut++; assert.equal(clipped.length, 0, "'out' facet must vanish"); }
-    else nBand++;
+  for (let r = 0; r < ch; r++) {
+    for (let c = 0; c < cw; c++) {
+      const cls = classify(c, r, c, r);
+      const A = [c, r, 0], B = [c + 1, r, 0], C = [c, r + 1, 0], D = [c + 1, r + 1, 0];
+      for (const tri of [[A, B, C], [B, D, C]]) {
+        const clipped = clipTriangleToPolygon(tri, poly);
+        if (cls === "in") { nIn++; assert.equal(clipped.length, 9, "'in' facet must survive whole"); }
+        else if (cls === "out") { nOut++; assert.equal(clipped.length, 0, "'out' facet must vanish"); }
+        else nBand++;
+      }
+    }
   }
   assert.ok(nIn > 0 && nOut > 0 && nBand > 0, `degenerate split ${nIn}/${nOut}/${nBand}`);
 });
