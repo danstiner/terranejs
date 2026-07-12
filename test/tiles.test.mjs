@@ -201,3 +201,17 @@ test("pruneToOrigin drops cells the new adjacency disconnects", () => {
   assert.equal(connectedToOrigin([[0, 0], [1, -1]], "hex"), true);
   assert.equal(connectedToOrigin([[0, 0], [1, -1]], "square"), false);
 });
+
+test("hex footprint: absolute vertex positions, order, and edge length", () => {
+  const z = 11;
+  const S = tileSpanPx(CENTER[0], SCALE, W, z);
+  const gxC = lonToGlobalX(CENTER[1], z), gyC = latToGlobalY(CENTER[0], z);
+  const v = footprintPx(CENTER, SCALE, W, [0, 0], z, "hex");
+  const want = [[2, 0], [1, 1], [-1, 1], [-2, 0], [-1, -1], [1, -1]]
+    .map(([m, n2]) => [gxC + (m * S) / 4, gyC + (n2 * Math.sqrt(3) * S) / 4]);
+  for (let k2 = 0; k2 < 6; k2++) {
+    assert.ok(Math.hypot(v[k2][0] - want[k2][0], v[k2][1] - want[k2][1]) < 1e-9, `k${k2} position`);
+    const nx = v[(k2 + 1) % 6];
+    assert.ok(Math.abs(Math.hypot(nx[0] - v[k2][0], nx[1] - v[k2][1]) - S / 2) < 1e-9, `edge ${k2} length S/2`);
+  }
+});

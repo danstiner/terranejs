@@ -145,7 +145,7 @@ export function connectedToOrigin(cells, shape = "square") {
 
 // Shape switches can orphan cells (hex links (±1,∓1) don't exist for squares);
 // keep only what the new adjacency still reaches from the origin.
-export function pruneToOrigin(cells, shape) {
+export function pruneToOrigin(cells, shape = "square") {
   const sel = new Set(cells.map(key));
   if (!sel.has("0,0")) return cells.length ? [cells[0]] : [];
   const seen = new Set(["0,0"]), stack = [[0, 0]];
