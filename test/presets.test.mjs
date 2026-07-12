@@ -13,8 +13,15 @@ test("preset names are unique (dropdown lookup is by name)", () => {
 test("every preset seeds a valid center and scale", () => {
   for (const p of PRESETS) {
     const [lat, lon] = p.center;
-    assert.ok(lat > -90 && lat < 90 && lon >= -180 && lon <= 180, `${p.name}: bad center`);
+    // ±85: Web Mercator's own bound (the lattice is Mercator-uniform, tilemath.js)
+    assert.ok(lat > -85 && lat < 85 && lon >= -180 && lon <= 180, `${p.name}: bad center`);
     assert.ok(Number.isFinite(p.scale) && p.scale > 0, `${p.name}: bad scale`);
+  }
+});
+
+test("boundary presets resolve to a real ring", () => {
+  for (const p of PRESETS) {
+    if (p.boundary) assert.ok(p.boundary.length >= 3, `${p.name}: boundary too small`);
   }
 });
 

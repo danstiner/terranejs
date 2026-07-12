@@ -684,6 +684,9 @@ async function export3MF() {
       const cw = gwT - 1;
       const mask = new Uint8Array(cw * (ghT - 1)).fill(1); // full footprint — no region clip
 
+      // defense-in-depth: zSrc's sourceZoom() call already clamps the whole
+      // union bbox to EXPORT_MAX_TILES at z <= zSrc, so this one cell's window
+      // can only exceed it if erosion padding pushes it into one extra row/col
       const range = tileRangeForBBox(tb, z);
       if (range.count > EXPORT_MAX_TILES) {
         throw new Error(`${label}: ${range.count} tiles at z${z} — coarsen the scale to export`);
@@ -827,7 +830,6 @@ async function export3MF() {
       }
     }
 
-    if (writer.count === 0) { $("progress").textContent = "nothing to export (region empty?)"; return; }
     const water = (nw ? ` + ${nw} water insert${nw === 1 ? "" : "s"}` : "") +
       (np ? ` + ${np} trail ribbon${np === 1 ? "" : "s"}` : "") +
       (nt ? ` + ${nt} trail piece${nt === 1 ? "" : "s"}` : "");

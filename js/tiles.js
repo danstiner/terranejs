@@ -17,8 +17,8 @@ export function tileSpanPx(centerLat, scale, tileWmm, z) {
 const key = ([i, j]) => `${i},${j}`;
 
 // Per-cell pixel windows at zoom z. Cell edges land on Math.round of the exact
-// Mercator boundary, so adjacent cells SHARE the boundary pixel index — the
-// splits() principle; physical tile size quantizes to pixel pitch (≤1 px).
+// Mercator boundary, so adjacent cells SHARE the boundary pixel index and
+// physical tile size quantizes to pixel pitch (≤1 px).
 // Windows are inclusive pixel-center ranges: {gx0, gy0, gw, gh}.
 export function cellWindows([lat, lon], scale, tileWmm, cells, z) {
   const S = tileSpanPx(lat, scale, tileWmm, z);
