@@ -10,6 +10,13 @@ insert depths sourced from bathymetry-valid data (`WATER_ZOOM_MAX = 10`) in
 both export and preview. Measured numbers: `docs/superpowers/specs/2026-07-09-
 terrain-export-fidelity-design.md` § Measured (implementation).
 
+**2026-07-11:** the uniform-grid export plan shipped: export mesh = terrarium
+pixel lattice 1:1 at a zoom from the 0.1 mm print-pitch floor (`sourceZoom`),
+4-step zoom-relative detail slider with computed mm/tris/MB labels, terrain
+read via exact `cropGrid` (no resample), Delatin TIN deleted
+(decimate.js, buildSolidTIN). Measured ladder: spec
+2026-07-11-uniform-grid-export-design.md § Measured.
+
 ## P1 — correctness
 
 - [x] **emin from the coarse grid can break solids** (app.js exportSTLs ~524).
@@ -95,9 +102,12 @@ terrain-export-fidelity-design.md` § Measured (implementation).
   one assembleSolid. Residual: buildPreviewSolid keeps its own inline copy.
 - [ ] ~~Zip naming by region+scale and tiles/, water/, path/ folders~~ —
   superseded 2026-07-10: export is now a single placed .3mf project.
-- [ ] Finest detail step (0.001/4096) on polygon-clipped tiles: clipTileSolid's
-  plain-array top accumulator + buildSolidFromMesh's string-keyed weld Map are
-  unmeasured at ~11M tris (est. 1.5–2.5 GB transient; possible tab OOM, and the
-  caught-error fallback re-meshes the FULL window, which is heavier). Fix if a
-  real export hits it: typed chunked accumulator + sort-based welding, and/or a
-  UI warning on the finest step for clipped regions (final review 2026-07-10).
+- [ ] Edge-tile memory at fine ladder steps: clipTileSolid accumulates a plain
+  JS number array (9 floats/tri) for interior+band cells and welds through
+  buildSolidFromMesh's string-keyed Map. Worst case (bed-size clipped tile at
+  the source step, ~0.05 mm/px) ≈ 25M vertices — past the 2^24 Map cap the
+  weld throws and the tile silently falls back to the uniform stair-clip;
+  before that, multi-GB transients risk tab OOM. Fix if a real export hits it:
+  pre-sized typed accumulator for "in" cells (count known via classify, like
+  gridTopTris) + sort-based welding for the band, and/or a UI warning on the
+  top slider steps for clipped regions (Task 3/4 quality reviews, 2026-07-11).
