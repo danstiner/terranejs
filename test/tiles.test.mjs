@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   CELL_CAP, tileSpanPx, cellWindows, cellBbox, cellsBbox, ghostCells, vertexMask,
 } from "../js/tiles.js";
+import { lonToGlobalX, latToGlobalY } from "../js/tilemath.js";
 
 const CENTER = [47.6, -122.3], SCALE = 476190.4762, W = 250; // ~2.1 mm = 1 km
 
@@ -70,3 +71,29 @@ test("vertexMask: half-plane ≈ half, full cover = all", () => {
 });
 
 test("CELL_CAP is 64", () => assert.equal(CELL_CAP, 64));
+
+test("cellBbox and cellWindows agree within quantization (0.5 px)", () => {
+  for (const z of [8, 14]) {
+    const { wins } = cellWindows(CENTER, SCALE, W, [[0, 0]], z);
+    const w2 = wins.get("0,0");
+    const [s, w, n, e] = cellBbox(CENTER, SCALE, W, [0, 0]);
+    assert.ok(Math.abs(w2.gx0 - lonToGlobalX(w, z)) <= 0.5 + 1e-6, `z${z} west`);
+    assert.ok(Math.abs(w2.gx0 + w2.gw - 1 - lonToGlobalX(e, z)) <= 0.5 + 1e-6, `z${z} east`);
+    assert.ok(Math.abs(w2.gy0 - latToGlobalY(n, z)) <= 0.5 + 1e-6, `z${z} north`);
+    assert.ok(Math.abs(w2.gy0 + w2.gh - 1 - latToGlobalY(s, z)) <= 0.5 + 1e-6, `z${z} south`);
+  }
+});
+
+test("seam sharing holds across an 8x8 layout spanning negative indices", () => {
+  const cells = [];
+  for (let i = -4; i < 4; i++) for (let j = -4; j < 4; j++) cells.push([i, j]);
+  const { wins } = cellWindows(CENTER, SCALE, W, cells, 13);
+  for (let i = -4; i < 3; i++) for (let j = -4; j < 4; j++) {
+    const a = wins.get(`${i},${j}`), b = wins.get(`${i + 1},${j}`);
+    assert.equal(a.gx0 + a.gw - 1, b.gx0, `x seam ${i},${j}`);
+  }
+  for (let i = -4; i < 4; i++) for (let j = -4; j < 3; j++) {
+    const a = wins.get(`${i},${j}`), b = wins.get(`${i},${j + 1}`);
+    assert.equal(a.gy0 + a.gh - 1, b.gy0, `y seam ${i},${j}`);
+  }
+});
