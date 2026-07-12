@@ -658,8 +658,11 @@ async function export3MF() {
     const gapX = 0.14 * s.tileWmm, gapY = 0.14 * s.tileWmm;
     const cellJs = s.cells.map(([, j]) => j);
     const minJ = Math.min(...cellJs), maxJ = Math.max(...cellJs);
-    const placeX = (ci) => ci * (s.tileWmm + gapX);
-    const rowY = (cj) => -cj * (s.tileWmm + gapY);
+    // normalize placements to the layout's NW cell: negative build-plate
+    // coordinates are 3MF-legal but trip "outside bed" warnings in slicers
+    const minI = Math.min(...s.cells.map(([i]) => i));
+    const placeX = (ci) => (ci - minI) * (s.tileWmm + gapX);
+    const rowY = (cj) => -(cj - minJ) * (s.tileWmm + gapY);
     // separate pieces sit in mirrored blocks below the deepest tile row
     const belowY = (cj, block) => rowY(cj) - (s.tileWmm + gapY) * (maxJ - minJ + 1) * (block + 1);
     let tris = 0;

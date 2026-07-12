@@ -1,3 +1,6 @@
+// HISTORICAL — ran against the pre-migration presets.js (bbox/boundary
+// entries); re-running against the migrated file would crash. Kept with its
+// output (presets_new.txt) as the migration record.
 // One-time: convert bbox/boundary presets to hard-coded {center, scale}
 // literals for the tile-first UI. Prints a review table (stderr) and the new
 // PRESETS body (stdout). Boundary presets keep their outline reference.
