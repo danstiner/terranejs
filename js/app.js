@@ -1,19 +1,17 @@
 import { createStore } from "./state.js";
 import { PRESETS, DEFAULT_PRESET } from "./presets.js";
 import { initMap } from "./mapPicker.js";
-import { fit, bboxExtentMeters, suggestScale, PITCH_MM, fmtMmPerKm } from "./fit.js";
-import { pickZoom, tileRangeForBBox, sourceZoom, pixelWindow, lonToGlobalX, latToGlobalY, globalXToLon, globalYToLat, printPitchMm } from "./tilemath.js";
+import { bboxExtentMeters, suggestScale, PITCH_MM, fmtMmPerKm } from "./fit.js";
+import { pickZoom, tileRangeForBBox, sourceZoom, globalXToLon, globalYToLat, printPitchMm } from "./tilemath.js";
 import { fetchMosaic } from "./terrain.js";
 import { resampleBilinear, gridRange, cropGrid } from "./resample.js";
-import { cellBbox, cellsBbox, CELL_CAP } from "./tiles.js";
-import { buildPreviewSolid, buildSolid, buildSolidFromMesh, buildTrailShell } from "./mesh.js";
-import { clipTriangleToPolygon, footprintClassifier } from "./clip.js";
+import { cellBbox, cellsBbox, cellWindows, CELL_CAP } from "./tiles.js";
+import { buildPreviewSolid, buildSolid, buildTrailShell } from "./mesh.js";
 import { oceanMask, oceanMaskSeeded, cellOcean, erodeMask, recessedGrid,
   offsetGrid } from "./water.js";
 import { parseGPX, trackBbox } from "./gpx.js";
 import { samplePath, rasterizePath, profileAlong, smoothProfile, stampOffset,
   stampInlay, ribbonGrid } from "./path.js";
-import { checkWatertight } from "./validate.js";
 import { ThreeMFWriter } from "./threeMF.js";
 
 const store = createStore({
@@ -534,122 +532,72 @@ function rebuildTiles(baked) {
 }
 
 // --- 3MF export --------------------------------------------------------------
-// Fetches terrain at the export zoom and meshes every tile at full grid
-// density; polygon edge tiles clip cells to the region ring.
-
-// Grid-cell + polygon-clipped solid for one edge tile: full-density cells with
-// the region ring mapped into the tile-local mm frame. Interior cells emit
-// their two grid triangles whole; boundary-band cells (SAT prefilter) are
-// clipped to the ring. Returns null on any failure (degenerate clip /
-// non-closing solid) so the caller falls back to the uniform stair-clip and
-// export never breaks.
-function clipTileSolid(grid, gw, gh, span, polygon, geom, subMask) {
-  const { r0, r1, c0, c1 } = span;
-  const { dx, dy, mmPerM, emin, exag, base, bbox: [s, w, n, e], widthMm, heightMm } = geom;
-  try {
-    const k = mmPerM * exag;
-    const gwt = c1 - c0 + 1, ght = r1 - r0 + 1;
-    const poly = polygon.map(([lat, lon]) => [
-      ((lon - w) / (e - w)) * widthMm - c0 * dx,
-      r1 * dy - ((n - lat) / (n - s)) * heightMm,
-    ]);
-    const X = (c) => (c - c0) * dx;
-    const Y = (r) => (r1 - r) * dy;
-    const Z = (r, c) => base + (grid[r * gw + c] - emin) * k;
-    const classify = footprintClassifier(subMask, gwt - 1, ght - 1);
-    const top = [];
-    for (let r = r0; r < r1; r++) {
-      for (let c = c0; c < c1; c++) {
-        const cls = classify(c - c0, r - r0, c - c0, r - r0);
-        if (cls === "out") continue;
-        const A = [X(c), Y(r), Z(r, c)], B = [X(c + 1), Y(r), Z(r, c + 1)];
-        const C = [X(c), Y(r + 1), Z(r + 1, c)], D = [X(c + 1), Y(r + 1), Z(r + 1, c + 1)];
-        for (const tri of [[A, C, B], [B, C, D]]) {
-          if (cls === "in") top.push(...tri[0], ...tri[1], ...tri[2]);
-          else for (const q of clipTriangleToPolygon(tri, poly)) top.push(q);
-        }
-      }
-    }
-    if (!top.length) return null;
-    const solid = buildSolidFromMesh(top);
-    return checkWatertight(solid).closed ? solid : null;
-  } catch {
-    return null;
-  }
-}
+// Fetches terrain at the export zoom and meshes every selected cell at full
+// grid density over the shared lattice; no region clip (Task 5 adds boundary
+// flatten via vertex elevation, not geometry clipping).
 
 async function export3MF() {
   const s = store.get();
   if (!s.cells.length || !s.scale) { $("progress").textContent = "place a tile first"; return; }
-  if (true) { $("progress").textContent = "tile export lands in the next commit"; return; } // Task 4 removes
-  const f = fit({ polygon: s.polygon, scale: s.scale, capW: s.capW, capH: s.capH });
-  const [latS, lonW, latN, lonE] = f.bbox;
-  const cLat = (latS + latN) / 2;
   const btn = $("export");
   btn.disabled = true;
   try {
-    // pixel-locked lattice: the export grid IS the terrarium pixel lattice at
-    // the ladder zoom — one vertex per source sample, no terrain resampling.
-    // Steps are zoom-relative (zSrc−3 … zSrc); zSrc from the 0.1 mm
-    // print-pitch floor, the z15 pyramid max, and the region tile budget.
-    const zSrc = sourceZoom(f.bbox, cLat, f.scale, EXPORT_MAX_TILES);
+    const f = layoutFit(s);
+    const [latS, lonW, latN, lonE] = f.bbox;
+    const cLat = (latS + latN) / 2;
+    const zSrc = sourceZoom(f.bbox, cLat, s.scale, EXPORT_MAX_TILES);
     const di = Math.min(3, Math.max(0, Math.round(s.exportDetail)));
     const z = Math.max(1, zSrc - (3 - di));
-    const win = pixelWindow(f.bbox, z);
-    const gwF = win.gw, ghF = win.gh;
-    if (gwF < 2 || ghF < 2) throw new Error("region smaller than one pixel at this step — raise the detail slider");
-    const rows = splits(f.ny, ghF), cols = splits(f.nx, gwF);
-    // mm per pixel, anchored to the fitted print size so the piece matches the
-    // UI-stated dimensions to within one pixel; rows are uniform in Mercator y — the print is a
-    // true Mercator map at the nominal scale (<0.5% N–S ground-spacing drift
-    // at county extents, the same distortion the map preview shows)
-    const dx = f.widthMm / (lonToGlobalX(lonE, z) - lonToGlobalX(lonW, z));
-    const dy = f.heightMm / (latToGlobalY(latS, z) - latToGlobalY(latN, z));
-    const mmPerM = 1000 / f.scale;
+    // shared lattice: every cell's window quantizes to the same global pixel
+    // grid, adjacent cells share their boundary index — seams read identical data
+    const { spanPx, wins, union } = cellWindows(s.center, s.scale, s.tileWmm, s.cells, z);
+    const dx = s.tileWmm / spanPx, dy = dx; // Mercator is conformal: square cells
+    const mmPerM = 1000 / s.scale;
     const k = mmPerM * s.exag;
-    const lonAt = (ci) => globalXToLon(win.gx0 + ci + 0.5, z);
-    const latAt = (ri) => globalYToLat(win.gy0 + ri + 0.5, z);
-    // the interior lattice starts up to one pixel inside the bbox corner;
-    // trail points are sampled in the bbox mm frame, so window offsets must
-    // carry the lattice origin
-    const x0off = (win.gx0 + 0.5 - lonToGlobalX(lonW, z)) * dx;
-    const y0off = (latToGlobalY(latS, z) - (win.gy0 + ghF - 1 + 0.5)) * dy;
+    const lonAt = (gx) => globalXToLon(gx + 0.5, z);
+    const latAt = (gy) => globalYToLat(gy + 0.5, z);
+    // union-window mm frame anchors the trail/context passes; window origins
+    // are integer pixels of the same lattice, so offsets are exact multiples of dx
+    const uniW = (union.gw - 1) * dx, uniH = (union.gh - 1) * dy;
+    const uniBbox = [latAt(union.gy0 + union.gh - 1), lonAt(union.gx0),
+      latAt(union.gy0), lonAt(union.gx0 + union.gw - 1)];
 
     // --- context pass: one small whole-region grid for everything the tiles
     // must agree on globally — ocean connectivity (seed source for the per-tile
     // floods), the trail profile / mating curve, and the shared z-frame min.
-    let gwC = Math.round(f.widthMm / PITCH_MM) + 1;
-    let ghC = Math.round(f.heightMm / PITCH_MM) + 1;
+    let gwC = Math.round(uniW / PITCH_MM) + 1;
+    let ghC = Math.round(uniH / PITCH_MM) + 1;
     const capC = Math.max(gwC, ghC);
     if (capC > EXPORT_COARSE_DIM) {
       gwC = Math.max(2, Math.round((gwC * EXPORT_COARSE_DIM) / capC));
       ghC = Math.max(2, Math.round((ghC * EXPORT_COARSE_DIM) / capC));
     }
     const { z: zC } = pickZoom(Math.max(f.groundM, f.realW / (gwC - 1)), cLat);
-    const rangeC = tileRangeForBBox(f.bbox, zC);
+    const rangeC = tileRangeForBBox(uniBbox, zC);
     if (rangeC.count > EXPORT_MAX_TILES) {
       throw new Error(`${rangeC.count} tiles at z${zC} — coarsen the scale to export`);
     }
     $("progress").textContent = `context pass (z${zC}, ${rangeC.count} tiles)…`;
-    const mosaicC = await fetchMosaic(f.bbox, zC, {
+    const mosaicC = await fetchMosaic(uniBbox, zC, {
       onProgress: (d, t) => { $("progress").textContent = `context pass: fetching ${d}/${t}…`; },
     });
-    const rawC = resampleBilinear(mosaicC, f.bbox, gwC, ghC);
+    const rawC = resampleBilinear(mosaicC, uniBbox, gwC, ghC);
     // water reads from a coarser mosaic when zC is finer than bathymetry-valid;
     // reuse mosaicC (no extra fetch) when it's already coarse enough
     const zW = Math.min(zC, WATER_ZOOM_MAX);
     let mosaicWater = mosaicC;
     if (s.waterDrop > 0 && zW !== zC) {
       $("progress").textContent = `water pass (z${zW})…`;
-      mosaicWater = await fetchMosaic(f.bbox, zW, {});
+      mosaicWater = await fetchMosaic(uniBbox, zW, {});
     }
     const rawWC = mosaicWater === mosaicC ? rawC
-      : resampleBilinear(mosaicWater, f.bbox, gwC, ghC);
+      : resampleBilinear(mosaicWater, uniBbox, gwC, ghC);
     const oMaskC = s.waterDrop > 0 ? oceanMask(rawWC, gwC, ghC, 0) : null;
     const gridC = bakeWater(s, rawC, oMaskC, k);
     // trail sampled at the FINE pitch (elevations off the coarse grid): the
     // per-tile rasterization needs sample spacing ≤ halfW to stay gap-free
-    const trail = trailContext(s, gridC, gwC, ghC, f, Math.max(dx, dy));
+    const trail = trailContext(s, gridC, gwC, ghC,
+      { bbox: uniBbox, widthMm: uniW, heightMm: uniH, scale: s.scale }, Math.max(dx, dy));
     // shared z-frame min: bake the trail onto the coarse context grid exactly as
     // the tiles will, then take its true minimum. This captures the inlay groove
     // floor / inset cut / bump in every mode — no per-mode analytic patches, and
@@ -657,7 +605,7 @@ async function export3MF() {
     // dip below this coarse min are floored per-tile (Step 4).
     let stampedC = gridC;
     if (trail) {
-      const dxC = f.widthMm / (gwC - 1), dyC = f.heightMm / (ghC - 1);
+      const dxC = uniW / (gwC - 1), dyC = uniH / (ghC - 1);
       const { mask: pmC, sIdx: siC } = rasterizePath(trail.pts, gwC, ghC, dxC, dyC, trail.halfW);
       ({ grid: stampedC } = stampTrail(s, gridC, trail, pmC, siC));
     }
@@ -673,12 +621,13 @@ async function export3MF() {
     const wantOverlay = trail && s.pathMode === "overlay";
 
     const writer = new ThreeMFWriter();
-    const gapX = 0.14 * f.tileWmm, gapY = 0.14 * f.tileHmm;
-    const placeX = (cx) => cx * (f.tileWmm + gapX);
-    const rowY = (ry) => (f.ny - 1 - ry) * (f.tileHmm + gapY);
-    // separate pieces sit in mirrored blocks below the tile grid: water block
-    // first, then path/trail (mutually exclusive), so nothing overlaps
-    const belowY = (ry, block) => -(f.tileHmm + gapY) * (ry + 1 + block * f.ny);
+    const gapX = 0.14 * s.tileWmm, gapY = 0.14 * s.tileWmm;
+    const js2 = s.cells.map(([, j]) => j);
+    const minJ = Math.min(...js2), maxJ = Math.max(...js2);
+    const placeX = (ci) => ci * (s.tileWmm + gapX);
+    const rowY = (cj) => -cj * (s.tileWmm + gapY);
+    // separate pieces sit in mirrored blocks below the deepest tile row
+    const belowY = (cj, block) => rowY(cj) - (s.tileWmm + gapY) * (maxJ - minJ + 1) * (block + 1);
     let tris = 0;
     const add = async (name, solid, x, y) => {
       tris += solid.indices.length / 3;
@@ -686,169 +635,152 @@ async function export3MF() {
       await new Promise((r) => setTimeout(r, 0)); // let progress paint
     };
     let n = 0, nw = 0, np = 0, nt = 0, ti = 0, nFloored = 0;
-    const nTiles = f.nx * f.ny;
-    for (const [ry, [r0, r1]] of rows.entries()) {
-      for (const [cx, [c0, c1]] of cols.entries()) {
-        const label = `tile ${++ti}/${nTiles}`;
-        const pr0 = Math.max(0, r0 - pad), pr1 = Math.min(ghF - 1, r1 + pad);
-        const pc0 = Math.max(0, c0 - pad), pc1 = Math.min(gwF - 1, c1 + pad);
-        const gwT = pc1 - pc0 + 1, ghT = pr1 - pr0 + 1;
-        const tb = [latAt(pr1), lonAt(pc0), latAt(pr0), lonAt(pc1)]; // window bbox [S,W,N,E]
-        const span = { r0: r0 - pr0, r1: r1 - pr0, c0: c0 - pc0, c1: c1 - pc0 };
-        const cw = gwT - 1;
+    const nTiles = f.nCells;
+    for (const cell of s.cells) {
+      const [ci, cj] = cell;
+      const win = wins.get(`${ci},${cj}`);
+      const label = `tile ${++ti}/${nTiles}`;
+      // padded window: erosion (water/trail clearance) must see past the seam
+      const pr0 = win.gy0 - pad, pr1 = win.gy0 + win.gh - 1 + pad;
+      const pc0 = win.gx0 - pad, pc1 = win.gx0 + win.gw - 1 + pad;
+      const gwT = pc1 - pc0 + 1, ghT = pr1 - pr0 + 1;
+      const tb = [latAt(pr1), lonAt(pc0), latAt(pr0), lonAt(pc1)]; // window bbox [S,W,N,E]
+      const span = { r0: win.gy0 - pr0, r1: win.gy0 + win.gh - 1 - pr0,
+        c0: win.gx0 - pc0, c1: win.gx0 + win.gw - 1 - pc0 };
+      const cw = gwT - 1;
+      const mask = new Uint8Array(cw * (ghT - 1)).fill(1); // full footprint — no region clip
 
-        // region mask first — skip fetching tiles entirely outside the polygon
-        const mask = cellMask(s.polygon, tb, gwT, ghT);
-        const total = (span.r1 - span.r0) * (span.c1 - span.c0);
-        const covered = countIn(mask, span, cw);
-        if (covered === 0) continue;
+      const range = tileRangeForBBox(tb, z);
+      if (range.count > EXPORT_MAX_TILES) {
+        throw new Error(`${label}: ${range.count} tiles at z${z} — coarsen the scale to export`);
+      }
+      $("progress").textContent = `${label}: fetching (z${z}, ${range.count} tiles)…`;
+      const mosaic = await fetchMosaic(tb, z, {
+        onProgress: (d, t) => { $("progress").textContent = `${label}: fetching ${d}/${t}…`; },
+      });
+      const rawT = cropGrid(mosaic, { gx0: pc0, gy0: pr0, gw: gwT, gh: ghT });
+      $("progress").textContent = `${label}: meshing…`;
+      await new Promise((r) => setTimeout(r, 0)); // let the message paint
 
-        const range = tileRangeForBBox(tb, z);
-        if (range.count > EXPORT_MAX_TILES) {
-          throw new Error(`${label}: ${range.count} tiles at z${z} — coarsen the scale to export`);
+      // ocean: flood the bathymetry view of this window from coarse-mask
+      // seeds (edge-connectivity is global; the geometry grid has no valid
+      // water signal at z>WATER_ZOOM_MAX)
+      let oMaskT = null, waterT = null;
+      if (s.waterDrop > 0) {
+        waterT = resampleBilinear(mosaicWater, tb, gwT, ghT);
+        const seeds = new Uint8Array(gwT * ghT);
+        // padded windows poke past the union edge — clamp the coarse lookup
+        const ccMap = new Int32Array(gwT);
+        for (let c = 0; c < gwT; c++)
+          ccMap[c] = Math.round(((pc0 + c - union.gx0) / (union.gw - 1)) * (gwC - 1));
+        for (let r = 0; r < ghT; r++) {
+          const rc = Math.max(0, Math.min(ghC - 1,
+            Math.round(((pr0 + r - union.gy0) / (union.gh - 1)) * (ghC - 1))));
+          for (let c = 0; c < gwT; c++) {
+            seeds[r * gwT + c] = oMaskC[rc * gwC + Math.max(0, Math.min(gwC - 1, ccMap[c]))];
+          }
         }
-        $("progress").textContent = `${label}: fetching (z${z}, ${range.count} tiles)…`;
-        const mosaic = await fetchMosaic(tb, z, {
-          onProgress: (d, t) => { $("progress").textContent = `${label}: fetching ${d}/${t}…`; },
-        });
-        const rawT = cropGrid(mosaic, { gx0: win.gx0 + pc0, gy0: win.gy0 + pr0, gw: gwT, gh: ghT });
-        $("progress").textContent = `${label}: meshing…`;
-        await new Promise((r) => setTimeout(r, 0)); // let the message paint
+        oMaskT = oceanMaskSeeded(waterT, gwT, ghT, seeds);
+      }
+      let grid = bakeWater(s, rawT, oMaskT, k);
 
-        // ocean: flood the bathymetry view of this window from coarse-mask
-        // seeds (edge-connectivity is global; the geometry grid has no valid
-        // water signal at z>WATER_ZOOM_MAX)
-        let oMaskT = null, waterT = null;
-        if (s.waterDrop > 0) {
-          waterT = resampleBilinear(mosaicWater, tb, gwT, ghT);
-          const seeds = new Uint8Array(gwT * ghT);
-          const ccMap = new Int32Array(gwT); // coarse column per tile column (row-invariant)
-          for (let c = 0; c < gwT; c++) ccMap[c] = Math.round(((pc0 + c) / (gwF - 1)) * (gwC - 1));
+      // trail: same global context, rasterized in this window's local frame so
+      // the groove floor and ribbon heights are seam-continuous by construction
+      let ribbon = null, pathCells = null, overlayCells = null;
+      if (trail) {
+        const offX = (pc0 - union.gx0) * dx, offY = (union.gy0 + union.gh - 1 - pr1) * dy;
+        const ptsT = new Float32Array(trail.pts.length);
+        for (let i = 0; i < ptsT.length; i += 2) {
+          ptsT[i] = trail.pts[i] - offX;
+          ptsT[i + 1] = trail.pts[i + 1] - offY;
+        }
+        // ribbon footprint = groove inset by exactly PATH_CLEAR_MM, never below
+        // a ~2-cell chain; the groove widens so the ribbon always fits inside it
+        const ds = Math.max(dx, dy);
+        const ribbonHalfW = Math.max(trail.halfW - PATH_CLEAR_MM, 1.6 * ds);
+        const grooveHalfW = Math.max(trail.halfW, ribbonHalfW + PATH_CLEAR_MM);
+        // overlay bands at the true trail width (0.6·ds floor for line continuity,
+        // matching the preview); inlay/bump/inset keep the groove-fit width
+        const bandHalfW = wantOverlay ? Math.max(trail.halfW, 0.6 * ds) : grooveHalfW;
+        const innerHalfW = wantPath ? ribbonHalfW : 0;
+        const { mask: pm, sIdx, inner } = rasterizePath(ptsT, gwT, ghT, dx, dy, bandHalfW, innerHalfW);
+        ({ grid, ribbon } = stampTrail(s, grid, trail, pm, sIdx));
+        if (wantPath) {
+          pathCells = cellOcean(inner, gwT, ghT); // clearance already applied
+          for (let i = 0; i < pathCells.length; i++) pathCells[i] &= mask[i];
+        }
+        if (wantOverlay) {
+          // cord footprint = the trail band (pathWmm-wide) ∩ region
+          overlayCells = cellOcean(pm, gwT, ghT);
+          for (let i = 0; i < overlayCells.length; i++) overlayCells[i] &= mask[i];
+        }
+      }
+
+      // z-floor: the fine tile grid meshes at a finer pitch than the coarse grid
+      // emin came from, so a narrow deep feature between coarse samples can read
+      // below emin. Floor the covered span (all the mesh builders read) so the
+      // printed wall stays ≥ min(base, MIN_WALL_MM); tally lifts for the note.
+      for (let r = span.r0; r <= span.r1; r++) {
+        for (let c = span.c0; c <= span.c1; c++) {
+          const i = r * gwT + c;
+          if (grid[i] < floorGrid) { grid[i] = floorGrid; nFloored++; }
+        }
+      }
+
+      const solid = buildSolid(grid, gwT, ghT, span, mask,
+        { dx, dy, mmPerM, emin, exag: s.exag, base: s.base });
+      n++;
+      await add(`tile_i${ci}_j${cj}`, solid, placeX(ci), rowY(cj));
+
+      // water insert for this tile: printed top follows the ocean floor
+      // (depth·scale above the drop), flat face at z=0 is the sea surface;
+      // prints flat face down, flips north-south into the recess, so its
+      // depth grid and cell mask are built row-mirrored within the window
+      if (wantWater && oMaskT) {
+        const rings = Math.max(1, Math.ceil(WATER_CLEAR_MM / dx)); // shore clearance
+        const oceanCells = erodeMask(cellOcean(oMaskT, gwT, ghT), cw, ghT - 1, rings);
+        const oc = countIn(oceanCells, span, cw);
+        if (oc > 0) {
+          const depthFlip = new Float32Array(gwT * ghT);
           for (let r = 0; r < ghT; r++) {
-            const rc = Math.round(((pr0 + r) / (ghF - 1)) * (ghC - 1));
-            for (let c = 0; c < gwT; c++) seeds[r * gwT + c] = oMaskC[rc * gwC + ccMap[c]];
-          }
-          oMaskT = oceanMaskSeeded(waterT, gwT, ghT, seeds);
-        }
-        let grid = bakeWater(s, rawT, oMaskT, k);
-
-        // trail: same global context, rasterized in this window's local frame so
-        // the groove floor and ribbon heights are seam-continuous by construction
-        let ribbon = null, pathCells = null, overlayCells = null;
-        if (trail) {
-          const offX = x0off + pc0 * dx, offY = y0off + (ghF - 1 - pr1) * dy;
-          const ptsT = new Float32Array(trail.pts.length);
-          for (let i = 0; i < ptsT.length; i += 2) {
-            ptsT[i] = trail.pts[i] - offX;
-            ptsT[i + 1] = trail.pts[i + 1] - offY;
-          }
-          // ribbon footprint = groove inset by exactly PATH_CLEAR_MM, never below
-          // a ~2-cell chain; the groove widens so the ribbon always fits inside it
-          const ds = Math.max(dx, dy);
-          const ribbonHalfW = Math.max(trail.halfW - PATH_CLEAR_MM, 1.6 * ds);
-          const grooveHalfW = Math.max(trail.halfW, ribbonHalfW + PATH_CLEAR_MM);
-          // overlay bands at the true trail width (0.6·ds floor for line continuity,
-          // matching the preview); inlay/bump/inset keep the groove-fit width
-          const bandHalfW = wantOverlay ? Math.max(trail.halfW, 0.6 * ds) : grooveHalfW;
-          const innerHalfW = wantPath ? ribbonHalfW : 0;
-          const { mask: pm, sIdx, inner } = rasterizePath(ptsT, gwT, ghT, dx, dy, bandHalfW, innerHalfW);
-          ({ grid, ribbon } = stampTrail(s, grid, trail, pm, sIdx));
-          if (wantPath) {
-            pathCells = cellOcean(inner, gwT, ghT); // clearance already applied
-            for (let i = 0; i < pathCells.length; i++) pathCells[i] &= mask[i];
-          }
-          if (wantOverlay) {
-            // cord footprint = the trail band (pathWmm-wide) ∩ region
-            overlayCells = cellOcean(pm, gwT, ghT);
-            for (let i = 0; i < overlayCells.length; i++) overlayCells[i] &= mask[i];
-          }
-        }
-
-        // z-floor: the fine tile grid meshes at a finer pitch than the coarse grid
-        // emin came from, so a narrow deep feature between coarse samples can read
-        // below emin. Floor the covered span (all the mesh builders read) so the
-        // printed wall stays ≥ min(base, MIN_WALL_MM); tally lifts for the note.
-        for (let r = span.r0; r <= span.r1; r++) {
-          for (let c = span.c0; c <= span.c1; c++) {
-            const i = r * gwT + c;
-            if (grid[i] < floorGrid) { grid[i] = floorGrid; nFloored++; }
-          }
-        }
-
-        // terrain solid: full-density grid; edge tiles clip cells to the
-        // region ring, falling back to the uniform stair-clip
-        let solid;
-        if (covered === total) {
-          solid = buildSolid(grid, gwT, ghT, span, mask,
-            { dx, dy, mmPerM, emin, exag: s.exag, base: s.base });
-        } else {
-          // geom is window-local: clipTileSolid's polygon mapping is
-          // self-consistent in any frame whose bbox/dims match the grid
-          const geom = { dx, dy, mmPerM, emin, exag: s.exag, base: s.base,
-            bbox: tb, widthMm: (gwT - 1) * dx, heightMm: (ghT - 1) * dy };
-          // span-local cell mask for the clip prefilter
-          const gwt = span.c1 - span.c0 + 1, ght = span.r1 - span.r0 + 1;
-          const subMask = new Uint8Array((gwt - 1) * (ght - 1));
-          for (let r = 0; r < ght - 1; r++)
-            for (let c = 0; c < gwt - 1; c++)
-              subMask[r * (gwt - 1) + c] = mask[(span.r0 + r) * cw + (span.c0 + c)];
-          solid = clipTileSolid(grid, gwT, ghT, span, s.polygon, geom, subMask)
-            || buildSolid(grid, gwT, ghT, span, mask,
-              { dx, dy, mmPerM, emin, exag: s.exag, base: s.base });
-        }
-        n++;
-        await add(`tile_r${ry}_c${cx}`, solid, placeX(cx), rowY(ry));
-
-        // water insert for this tile: printed top follows the ocean floor
-        // (depth·scale above the drop), flat face at z=0 is the sea surface;
-        // prints flat face down, flips north-south into the recess, so its
-        // depth grid and cell mask are built row-mirrored within the window
-        if (wantWater && oMaskT) {
-          const rings = Math.max(1, Math.ceil(WATER_CLEAR_MM / dx)); // shore clearance
-          const oceanCells = erodeMask(cellOcean(oMaskT, gwT, ghT), cw, ghT - 1, rings);
-          const oc = countIn(oceanCells, span, cw);
-          if (oc > 0) {
-            const depthFlip = new Float32Array(gwT * ghT);
-            for (let r = 0; r < ghT; r++) {
-              for (let c = 0; c < gwT; c++) {
-                depthFlip[(ghT - 1 - r) * gwT + c] = Math.max(0, -waterT[r * gwT + c]);
-              }
+            for (let c = 0; c < gwT; c++) {
+              depthFlip[(ghT - 1 - r) * gwT + c] = Math.max(0, -waterT[r * gwT + c]);
             }
-            const oceanCellsFlip = new Uint8Array(cw * (ghT - 1));
-            for (let r = 0; r < ghT - 1; r++) {
-              oceanCellsFlip.set(oceanCells.subarray(r * cw, (r + 1) * cw), (ghT - 2 - r) * cw);
-            }
-            const wsolid = buildSolid(depthFlip, gwT, ghT,
-              { r0: ghT - 1 - span.r1, r1: ghT - 1 - span.r0, c0: span.c0, c1: span.c1 },
-              oceanCellsFlip, { dx, dy, mmPerM, emin: 0, exag: s.exag, base: s.waterDrop });
-            nw++;
-            await add(`water_r${ry}_c${cx}`, wsolid, placeX(cx), belowY(ry, 0));
           }
+          const oceanCellsFlip = new Uint8Array(cw * (ghT - 1));
+          for (let r = 0; r < ghT - 1; r++) {
+            oceanCellsFlip.set(oceanCells.subarray(r * cw, (r + 1) * cw), (ghT - 2 - r) * cw);
+          }
+          const wsolid = buildSolid(depthFlip, gwT, ghT,
+            { r0: ghT - 1 - span.r1, r1: ghT - 1 - span.r0, c0: span.c0, c1: span.c1 },
+            oceanCellsFlip, { dx, dy, mmPerM, emin: 0, exag: s.exag, base: s.waterDrop });
+          nw++;
+          await add(`water_i${ci}_j${cj}`, wsolid, placeX(ci), belowY(cj, 0));
         }
+      }
 
-        // trail ribbon for this tile: prints flat (bottom = mating face at z=0),
-        // top carries the residual relief; flexes into the groove as-printed
-        if (wantPath && pathCells) {
-          const pc = countIn(pathCells, span, cw);
-          if (pc > 0) {
-            const psolid = buildSolid(ribbon, gwT, ghT, span, pathCells,
-              { dx, dy, mmPerM: 1, emin: 0, exag: 1, base: 0 });
-            np++;
-            await add(`path_r${ry}_c${cx}`, psolid, placeX(cx), belowY(ry, 1));
-          }
+      // trail ribbon for this tile: prints flat (bottom = mating face at z=0),
+      // top carries the residual relief; flexes into the groove as-printed
+      if (wantPath && pathCells) {
+        const pc = countIn(pathCells, span, cw);
+        if (pc > 0) {
+          const psolid = buildSolid(ribbon, gwT, ghT, span, pathCells,
+            { dx, dy, mmPerM: 1, emin: 0, exag: 1, base: 0 });
+          np++;
+          await add(`path_i${ci}_j${cj}`, psolid, placeX(ci), belowY(cj, 1));
         }
+      }
 
-        // trail overlay for this tile: a conforming constant-thickness cord that
-        // sits on the unmodified terrain — underside = terrain relief, top =
-        // +pathHmm. Self-registers by its molded underside; prints with supports.
-        if (wantOverlay && overlayCells) {
-          const tc = countIn(overlayCells, span, cw);
-          if (tc > 0) {
-            const tsolid = buildTrailShell(grid, gwT, ghT, span, overlayCells,
-              { dx, dy, mmPerM, emin, exag: s.exag }, s.pathHmm);
-            nt++;
-            await add(`trail_r${ry}_c${cx}`, tsolid, placeX(cx), belowY(ry, 1));
-          }
+      // trail overlay for this tile: a conforming constant-thickness cord that
+      // sits on the unmodified terrain — underside = terrain relief, top =
+      // +pathHmm. Self-registers by its molded underside; prints with supports.
+      if (wantOverlay && overlayCells) {
+        const tc = countIn(overlayCells, span, cw);
+        if (tc > 0) {
+          const tsolid = buildTrailShell(grid, gwT, ghT, span, overlayCells,
+            { dx, dy, mmPerM, emin, exag: s.exag }, s.pathHmm);
+          nt++;
+          await add(`trail_i${ci}_j${cj}`, tsolid, placeX(ci), belowY(cj, 1));
         }
       }
     }
