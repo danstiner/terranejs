@@ -5,7 +5,7 @@ import { bboxExtentMeters, suggestScale, PITCH_MM, fmtMmPerKm } from "./fit.js";
 import { pickZoom, tileRangeForBBox, sourceZoom, globalXToLon, globalYToLat, printPitchMm } from "./tilemath.js";
 import { fetchMosaic } from "./terrain.js";
 import { resampleBilinear, gridRange, cropGrid } from "./resample.js";
-import { cellBbox, cellsBbox, cellWindows, CELL_CAP } from "./tiles.js";
+import { cellBbox, cellsBbox, cellWindows, CELL_CAP, vertexMask, insideMin, bakeFlatten } from "./tiles.js";
 import { buildPreviewSolid, buildSolid, buildTrailShell } from "./mesh.js";
 import { oceanMask, oceanMaskSeeded, cellOcean, erodeMask, recessedGrid,
   offsetGrid } from "./water.js";
@@ -128,6 +128,10 @@ function bakedSurface(s, rawGrid, gw, gh, f, waterGrid = rawGrid) {
   const k = (1000 / f.scale) * s.exag; // print mm per grid unit
   const oMask = s.waterDrop > 0 ? oceanMask(waterGrid, gw, gh, 0) : null; // sea level = 0, bathymetry-valid data
   let grid = bakeWater(s, rawGrid, oMask, k);
+  if (s.boundary && s.flattenOutside) {
+    const bm = vertexMask(s.boundary, f.bbox, gw, gh);
+    grid = bakeFlatten(grid, bm, insideMin(grid, bm));
+  }
   const dx = f.widthMm / (gw - 1), dy = f.heightMm / (gh - 1);
   const ctx = trailContext(s, grid, gw, gh, f, Math.max(dx, dy));
   let pathMask = null, ribbon = null;
@@ -308,6 +312,7 @@ $("waterSeparate").addEventListener("change", (e) => store.set({
   waterSeparate: e.target.checked,
   waterDrop: e.target.checked ? Math.max(1, store.get().waterDrop) : store.get().waterDrop,
 }));
+$("flattenOutside").addEventListener("change", (e) => store.set({ flattenOutside: e.target.checked }));
 $("export").addEventListener("click", export3MF);
 
 // --- preview state ---------------------------------------------------------
@@ -380,6 +385,8 @@ function renderSettings(s, baked) {
   $("waterDrop").value = s.waterDrop; // range thumb must snap to a clamped value, even while dragging
   $("waterOpts").hidden = s.waterDrop <= 0;
   $("waterSeparate").checked = s.waterSeparate;
+  $("flattenRow").hidden = !s.boundary;
+  $("flattenOutside").checked = s.flattenOutside;
 
   $("trailOpts").hidden = !s.tracks.length;
   if (s.tracks.length) {
@@ -593,7 +600,16 @@ async function export3MF() {
     const rawWC = mosaicWater === mosaicC ? rawC
       : resampleBilinear(mosaicWater, uniBbox, gwC, ghC);
     const oMaskC = s.waterDrop > 0 ? oceanMask(rawWC, gwC, ghC, 0) : null;
-    const gridC = bakeWater(s, rawC, oMaskC, k);
+    const gridC1 = bakeWater(s, rawC, oMaskC, k);
+    // flatten min is computed ONCE on the water-baked context grid and reused
+    // by every tile — per-window minima would step the plinth at seams
+    let flatMin = Infinity, bmC = null;
+    const wantFlatten = !!(s.boundary && s.flattenOutside);
+    if (wantFlatten) {
+      bmC = vertexMask(s.boundary, uniBbox, gwC, ghC);
+      flatMin = insideMin(gridC1, bmC);
+    }
+    const gridC = wantFlatten ? bakeFlatten(gridC1, bmC, flatMin) : gridC1;
     // trail sampled at the FINE pitch (elevations off the coarse grid): the
     // per-tile rasterization needs sample spacing ≤ halfW to stay gap-free
     const trail = trailContext(s, gridC, gwC, ghC,
@@ -683,6 +699,7 @@ async function export3MF() {
         oMaskT = oceanMaskSeeded(waterT, gwT, ghT, seeds);
       }
       let grid = bakeWater(s, rawT, oMaskT, k);
+      if (wantFlatten) grid = bakeFlatten(grid, vertexMask(s.boundary, tb, gwT, ghT), flatMin);
 
       // trail: same global context, rasterized in this window's local frame so
       // the groove floor and ribbon heights are seam-continuous by construction

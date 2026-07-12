@@ -84,3 +84,20 @@ export function vertexMask(polygon, [s, w, n, e], gw, gh) {
   }
   return mask;
 }
+
+// Min elevation over inside-mask vertices; Infinity when the window holds none.
+export function insideMin(grid, insideMask) {
+  let min = Infinity;
+  for (let i = 0; i < grid.length; i++) if (insideMask[i]) min = Math.min(min, grid[i]);
+  return min;
+}
+
+// Flatten-outside: copy with every outside vertex at `min`, so the plinth sits
+// at exactly base height. recessedGrid's sibling. `min` is REQUIRED and must be
+// the whole-layout inside minimum — a per-window local min would step at seams.
+export function bakeFlatten(grid, insideMask, min) {
+  if (!Number.isFinite(min)) return Float32Array.from(grid); // no inside vertex anywhere
+  const out = Float32Array.from(grid);
+  for (let i = 0; i < out.length; i++) if (!insideMask[i]) out[i] = min;
+  return out;
+}

@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   CELL_CAP, tileSpanPx, cellWindows, cellBbox, cellsBbox, ghostCells, vertexMask,
+  insideMin, bakeFlatten,
 } from "../js/tiles.js";
 import { lonToGlobalX, latToGlobalY } from "../js/tilemath.js";
 
@@ -82,6 +83,21 @@ test("cellBbox and cellWindows agree within quantization (0.5 px)", () => {
     assert.ok(Math.abs(w2.gy0 - latToGlobalY(n, z)) <= 0.5 + 1e-6, `z${z} north`);
     assert.ok(Math.abs(w2.gy0 + w2.gh - 1 - latToGlobalY(s, z)) <= 0.5 + 1e-6, `z${z} south`);
   }
+});
+
+test("bakeFlatten: outside -> inside min, inside untouched", () => {
+  const gw = 21, gh = 21, tb = [47.0, -122.0, 47.2, -121.8];
+  const poly = [[46.9, -121.9], [46.9, -121.7], [47.3, -121.7], [47.3, -121.9]]; // east half
+  const grid = Float32Array.from({ length: gw * gh }, (_, i) => 100 + (i % gw));
+  const m = vertexMask(poly, tb, gw, gh);
+  const min = insideMin(grid, m);
+  assert.ok(Number.isFinite(min) && min >= 100, `inside min ${min}`);
+  const out = bakeFlatten(grid, m, min);
+  for (let i = 0; i < m.length; i++) {
+    if (m[i]) assert.equal(out[i], grid[i], `inside ${i}`);
+    else assert.equal(out[i], min, `outside ${i}`);
+  }
+  assert.notEqual(out, grid, "copy, not in-place");
 });
 
 test("seam sharing holds across an 8x8 layout spanning negative indices", () => {
