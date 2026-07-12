@@ -215,9 +215,12 @@ preset.addEventListener("change", () => {
   map.fitBbox(cellsBbox(p.center, p.scale, store.get().tileWmm, [[0, 0]]));
 });
 $("clear").addEventListener("click", () => {
-  map.setBoundary(null);
   preset.value = "";
   store.set({ center: null, cells: [], scale: null, boundary: null, flattenOutside: false, tracks: [] });
+  // drop the cached grid and orphan any in-flight fetch so a stale preview
+  // can't outlive the layout it was fetched for
+  pv = null; pvKey = null; loadToken++;
+  preview?.setTiles([]);
 });
 
 // --- GPX trail ---------------------------------------------------------------
@@ -326,14 +329,18 @@ function scheduleReload() {
 }
 
 // --- render ----------------------------------------------------------------
+let layoutKey = null, boundaryRef;
 store.subscribe((s) => {
-  map.setLayout(s);
-  map.setBoundary(s.boundary);
+  const lk = keyOf(s);
+  // layout/boundary redraw only when their inputs change: a full layer
+  // teardown mid-drag also silently kills the marker's drag in Leaflet
+  if (lk !== layoutKey) { layoutKey = lk; map.setLayout(s); }
+  if (s.boundary !== boundaryRef) { boundaryRef = s.boundary; map.setBoundary(s.boundary); }
   renderTracks(s);
   // one bake per event, shared by the mass estimate and the tile rebuild
-  const baked = pv && pvKey === keyOf(s) ? bakedSurface(s, pv.grid, pv.gw, pv.gh, pv.f, pv.waterGrid) : null;
+  const baked = pv && pvKey === lk ? bakedSurface(s, pv.grid, pv.gw, pv.gh, pv.f, pv.waterGrid) : null;
   renderSettings(s, baked);
-  if (pvKey === null || keyOf(s) !== pvKey) scheduleReload();
+  if (pvKey === null || lk !== pvKey) scheduleReload();
   else if (pv) rebuildTiles(baked);
 });
 
@@ -888,6 +895,6 @@ function download(blob, name) {
   const p = PRESETS.find((x) => x.name === DEFAULT_PRESET) || PRESETS[0];
   preset.value = p.name;
   store.set({ center: p.center, scale: p.scale, cells: [[0, 0]], boundary: p.boundary ?? null });
-  map.fitBbox(cellsBbox(p.center, p.scale, 250, [[0, 0]]));
+  map.fitBbox(cellsBbox(p.center, p.scale, store.get().tileWmm, [[0, 0]]));
   loadPreview();
 })();
