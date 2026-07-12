@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
   roundHalfEven, splits, metersPerDegree, bboxExtentMeters,
-  fit, suggestScale, polygonAreaMeters,
+  fit, suggestScale, polygonAreaMeters, floorMmPerKm, fmtMmPerKm,
 } from "../js/fit.js";
 
 const golden = JSON.parse(
@@ -90,4 +90,31 @@ test("coverage: rectangle is ~100%, half-triangle is ~50%", () => {
   assert.ok(Math.abs(full / (realW * realH) - 1) < 1e-6, "rectangle covers bbox");
   const tri = polygonAreaMeters([[s, w], [s, e], [n, w]], bbox);
   assert.ok(Math.abs(tri / (realW * realH) - 0.5) < 1e-6, "triangle covers half");
+});
+
+test("floorMmPerKm floors to 2 significant figures", () => {
+  assert.equal(floorMmPerKm(2.1533), 2.1);
+  assert.equal(floorMmPerKm(0.5432), 0.54);
+  assert.equal(floorMmPerKm(25), 25);
+  assert.equal(floorMmPerKm(99.99), 99);
+  assert.equal(floorMmPerKm(2.2), 2.2); // already nice -> unchanged
+  assert.equal(floorMmPerKm(100), 100);
+});
+
+test("fmtMmPerKm renders <=3 sig figs, no trailing zeros", () => {
+  assert.equal(fmtMmPerKm(2.2), "2.2");
+  assert.equal(fmtMmPerKm(25), "25");
+  assert.equal(fmtMmPerKm(0.55), "0.55");
+  assert.equal(fmtMmPerKm(1e6 / 460000), "2.17");
+});
+
+test("suggestScale: mm-per-km is 2-sf nice and never overshoots the target", () => {
+  for (const [name, { bbox }] of Object.entries(golden.extents)) {
+    const { realW, realH } = bboxExtentMeters(bbox);
+    const s = suggestScale(realW, realH);
+    const mm = 1e6 / s;
+    assert.ok(Math.abs(mm - floorMmPerKm(mm)) <= 1e-9 * mm, `${name}: ${mm} not 2-sf nice`);
+    const longMm = (Math.max(realW, realH) * 1000) / s;
+    assert.ok(longMm <= 240 + 1e-9, `${name}: long side ${longMm} > 240`);
+  }
 });

@@ -67,18 +67,23 @@ export function splits(n, size) {
   return spans;
 }
 
-// Round to 2 significant figures — map scales read nicer as 1:75000 than 1:78750.
-export function niceScale(n) {
-  if (n <= 0) return 1;
-  const mag = Math.pow(10, Math.floor(Math.log10(n)) - 1);
-  return Math.round(n / mag) * mag;
+// Floor to 2 significant figures in the mm-per-km domain. Suggestions round
+// DOWN so the fitted piece can only shrink below target — nearest-rounding
+// could overshoot the 250 mm bed and split a fresh region into two tiles.
+export function floorMmPerKm(mm) {
+  if (!(mm > 0) || !Number.isFinite(mm)) return 1;
+  const mag = 10 ** (Math.floor(Math.log10(mm)) - 1);
+  return Number((Math.floor(mm / mag + 1e-9) * mag).toPrecision(2));
 }
+
+// UI formatter for mm-per-km: <=3 significant figures, trailing zeros stripped.
+export const fmtMmPerKm = (v) => String(parseFloat(v.toPrecision(3)));
 
 // Scale that makes the piece's long side ~targetLongMm (default 240 -> just
 // under a 250 bed, one tile) — the sensible starting scale for a fresh region.
 export function suggestScale(realW, realH, targetLongMm = 240) {
   const longM = Math.max(realW, realH);
-  return niceScale((longM * 1000) / targetLongMm);
+  return 1e6 / floorMmPerKm((1000 * targetLongMm) / longM);
 }
 
 // The whole derived state for the readout. dataPostingM is the source DEM
