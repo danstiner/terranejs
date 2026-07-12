@@ -124,4 +124,5 @@ test("floorMmPerKm guards degenerate input", () => {
   assert.equal(floorMmPerKm(-5), 1);
   assert.equal(floorMmPerKm(NaN), 1);
   assert.equal(floorMmPerKm(Infinity), 1);
+  assert.equal(suggestScale(0, 0), 1e6); // zero-extent region -> 1 mm = 1 km
 });

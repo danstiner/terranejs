@@ -1,8 +1,9 @@
 // Pure sizing math — no DOM, no network. Runs in the browser and under node.
 //
 // Model: the printed piece is a rectangular grid over the region's bounding
-// box, at a user-chosen map scale 1:N. Everything else (print size, tile grid,
-// mesh pitch) derives from N. Distances are true ground metres via an
+// box, at a user-chosen map scale (picked as mm-per-km in the UI, stored as
+// the 1:N denominator). Everything else (print size, tile grid, mesh pitch)
+// derives from N. Distances are true ground metres via an
 // ellipsoidal metres-per-degree series at the region's centre latitude — within
 // ~0.1-0.3% of topotile's UTM over these extents, no projection lib needed.
 
@@ -71,7 +72,7 @@ export function splits(n, size) {
 // DOWN so the fitted piece can only shrink below target — nearest-rounding
 // could overshoot the 250 mm bed and split a fresh region into two tiles.
 export function floorMmPerKm(mm) {
-  if (!(mm > 0) || !Number.isFinite(mm)) return 1;
+  if (!Number.isFinite(mm) || mm <= 0) return 1;
   const mag = 10 ** (Math.floor(Math.log10(mm)) - 1);
   return Number((Math.floor(mm / mag + 1e-9) * mag).toPrecision(2));
 }
