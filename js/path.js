@@ -1,3 +1,5 @@
+import { latToGlobalY } from "./tilemath.js";
+
 // GPX-trail geometry on the print grid — pure, node-testable.
 //
 // Frames: print mm, x east in [0, widthMm], y north in [0, heightMm]; grid
@@ -11,7 +13,10 @@
 // marks each segment's first sample so smoothing never crosses segment breaks.
 export function samplePath(segments, [s, w, n, e], widthMm, heightMm, ds) {
   const X = (lon) => ((lon - w) / (e - w)) * widthMm;
-  const Y = (lat) => ((lat - s) / (n - s)) * heightMm;
+  // y through Mercator, not linear lat: the tile lattice is Mercator-uniform,
+  // and lat-linear mapping drifts with layout extent² (≈1 mm per 4 stacked tiles)
+  const gyS = latToGlobalY(s, 0), gyN = latToGlobalY(n, 0);
+  const Y = (lat) => ((gyS - latToGlobalY(lat, 0)) / (gyS - gyN)) * heightMm;
   const pts = [], segStarts = [];
   for (const seg of segments) {
     if (seg.length < 2) continue;

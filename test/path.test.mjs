@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { samplePath, rasterizePath, profileAlong, smoothProfile, stampOffset,
   stampInlay, ribbonGrid } from "../js/path.js";
+import { latToGlobalY } from "../js/tilemath.js";
 import { cellOcean } from "../js/water.js";
 import { buildSolid } from "../js/mesh.js";
 import { checkWatertight } from "../js/validate.js";
@@ -10,10 +11,10 @@ import { checkWatertight } from "../js/validate.js";
 const BBOX = [0, 0, 1, 1], W_MM = 100, H_MM = 100;
 
 test("samplePath: uniform spacing along a straight track", () => {
-  // diagonal from (10,10) to (70,90) mm -> length 100
+  // diagonal from (10,10) to (70,90) mm -> ~99.996 mm under Mercator y
   const { pts, segStarts } = samplePath([[[0.1, 0.1], [0.9, 0.7]]], BBOX, W_MM, H_MM, 1);
   assert.deepEqual([...segStarts], [0]);
-  assert.equal(pts.length / 2, 101, "1 mm steps over 100 mm incl. start");
+  assert.equal(pts.length / 2, 100, "1 mm steps over ~99.996 mm incl. start");
   for (let j = 1; j < pts.length / 2; j++) {
     const d = Math.hypot(pts[2 * j] - pts[2 * j - 2], pts[2 * j + 1] - pts[2 * j - 1]);
     assert.ok(Math.abs(d - 1) < 1e-4, `step ${j}: ${d}`);
@@ -26,9 +27,9 @@ test("samplePath: spacing survives polyline vertices and multiple segments", () 
     [[0.8, 0.8], [0.8, 0.9]], // 10 mm
   ];
   const { pts, segStarts } = samplePath(segs, BBOX, W_MM, H_MM, 2);
-  assert.deepEqual([...segStarts], [0, 26]);
+  assert.deepEqual([...segStarts], [0, 25]);
   // step across the corner is 2 mm of arc, not 2 mm of chord
-  const n0 = 26;
+  const n0 = 25;
   for (let j = 1; j < n0; j++) {
     const d = Math.hypot(pts[2 * j] - pts[2 * j - 2], pts[2 * j + 1] - pts[2 * j - 1]);
     assert.ok(d <= 2 + 1e-4, `arc step ${j} chord ${d} ≤ ds`);
@@ -189,4 +190,14 @@ test("inlay: ribbon solid is watertight, flat-bottomed, prints as-is", () => {
   }
   assert.equal(zmin, 0, "bottom on the bed");
   assert.ok(topMin >= GROOVE + PROUD - 1e-6, "no thin spots");
+});
+
+test("samplePath: y follows Mercator, not linear latitude", () => {
+  const bbox = [60, 0, 61, 1], W = 50, H = 100;
+  const gyS = latToGlobalY(60, 0), gyN = latToGlobalY(61, 0);
+  const yMid = ((gyS - latToGlobalY(60.5, 0)) / (gyS - gyN)) * H;
+  assert.ok(Math.abs(yMid - 50) > 0.15, `Mercator midpoint ${yMid} should be measurably off 50`);
+  // ds larger than the track: only the first point is emitted -> pure Y probe
+  const { pts } = samplePath([[[60.5, 0.2], [60.5, 0.8]]], bbox, W, H, 1000);
+  assert.ok(Math.abs(pts[1] - yMid) < 1e-4, `trail lat maps through Mercator (${pts[1]} vs ${yMid})`);
 });

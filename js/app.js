@@ -622,8 +622,8 @@ async function export3MF() {
 
     const writer = new ThreeMFWriter();
     const gapX = 0.14 * s.tileWmm, gapY = 0.14 * s.tileWmm;
-    const js2 = s.cells.map(([, j]) => j);
-    const minJ = Math.min(...js2), maxJ = Math.max(...js2);
+    const cellJs = s.cells.map(([, j]) => j);
+    const minJ = Math.min(...cellJs), maxJ = Math.max(...cellJs);
     const placeX = (ci) => ci * (s.tileWmm + gapX);
     const rowY = (cj) => -cj * (s.tileWmm + gapY);
     // separate pieces sit in mirrored blocks below the deepest tile row
