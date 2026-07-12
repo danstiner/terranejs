@@ -1,7 +1,7 @@
 import { createStore } from "./state.js";
 import { PRESETS, DEFAULT_PRESET, bboxToPolygon } from "./presets.js";
 import { initMap } from "./mapPicker.js";
-import { fit, bboxOf, bboxExtentMeters, suggestScale, splits, PITCH_MM } from "./fit.js";
+import { fit, bboxOf, bboxExtentMeters, suggestScale, splits, PITCH_MM, fmtMmPerKm } from "./fit.js";
 import { pickZoom, tileRangeForBBox, sourceZoom, pixelWindow, lonToGlobalX, latToGlobalY, globalXToLon, globalYToLat, printPitchMm } from "./tilemath.js";
 import { fetchMosaic } from "./terrain.js";
 import { resampleBilinear, gridRange, cropGrid } from "./resample.js";
@@ -258,7 +258,7 @@ $("pathH").addEventListener("input", (e) => store.set({ pathHmm: Number(e.target
 // --- print settings --------------------------------------------------------
 $("scale").addEventListener("input", (e) => {
   const v = Number(e.target.value);
-  if (v > 0) store.set({ scale: v, scaleAuto: false });
+  if (v > 0) store.set({ scale: 1e6 / v, scaleAuto: false });
 });
 $("scaleAuto").addEventListener("click", () => {
   const s = store.get();
@@ -335,7 +335,7 @@ function renderSettings(s, baked) {
   const box = $("settings");
   if (!s.polygon || s.polygon.length < 3 || !s.scale) { box.hidden = true; return; }
   box.hidden = false;
-  if ($("scale") !== document.activeElement) $("scale").value = Math.round(s.scale);
+  if ($("scale") !== document.activeElement) $("scale").value = fmtMmPerKm(1e6 / s.scale);
   $("exagVal").textContent = s.exag.toFixed(1);
   $("baseVal").textContent = s.base.toFixed(1);
   $("waterDropVal").textContent = s.waterDrop.toFixed(1);
@@ -370,7 +370,7 @@ function renderSettings(s, baked) {
     : "— loading…";
   const chip = (label, val) => `<span><b>${label}</b> ${val}</span>`;
   $("fit").innerHTML =
-    chip("scale", `1:${Math.round(f.scale).toLocaleString()}`) +
+    chip("scale", `${fmtMmPerKm(1e6 / f.scale)} mm = 1 km`) +
     chip("print", `${f.widthMm.toFixed(0)}×${f.heightMm.toFixed(0)} mm`) +
     chip("tiles", `${f.nx}×${f.ny} = ${nT}${warn}`) +
     chip("/tile", `${f.tileWmm.toFixed(0)}×${f.tileHmm.toFixed(0)} mm`) +

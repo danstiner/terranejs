@@ -50,10 +50,10 @@
 
         <label for="scale">Map scale</label>
         <div class="row">
-          <span>1&nbsp;:&nbsp;<input id="scale" type="number" min="500" step="1000"></span>
+          <span><input id="scale" type="number" min="0.01" step="any" class="num">&nbsp;mm&nbsp;=&nbsp;1&nbsp;km</span>
           <button id="scaleAuto" type="button" title="Scale so the piece fills one bed">fit bed</button>
         </div>
-        <p class="hint">Smaller number = bigger print, more tiles, finer detail.</p>
+        <p class="hint">Bigger number = bigger print, more tiles, finer detail.</p>
 
         <label for="exag">Vertical exaggeration: <span id="exagVal">1.0</span>&times;</label>
         <input id="exag" type="range" min="0.5" max="4" step="0.1" value="1">
