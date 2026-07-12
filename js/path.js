@@ -14,7 +14,8 @@ import { latToGlobalY } from "./tilemath.js";
 export function samplePath(segments, [s, w, n, e], widthMm, heightMm, ds) {
   const X = (lon) => ((lon - w) / (e - w)) * widthMm;
   // y through Mercator, not linear lat: the tile lattice is Mercator-uniform,
-  // and lat-linear mapping drifts with layout extent² (≈1 mm per 4 stacked tiles)
+  // and lat-linear mapping drifts with layout extent² (mm-scale within a few
+  // stacked tiles, worse as layouts grow tall)
   const gyS = latToGlobalY(s, 0), gyN = latToGlobalY(n, 0);
   const Y = (lat) => ((gyS - latToGlobalY(lat, 0)) / (gyS - gyN)) * heightMm;
   const pts = [], segStarts = [];
