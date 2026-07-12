@@ -118,3 +118,10 @@ test("suggestScale: mm-per-km is 2-sf nice and never overshoots the target", () 
     assert.ok(longMm <= 240 + 1e-9, `${name}: long side ${longMm} > 240`);
   }
 });
+
+test("floorMmPerKm guards degenerate input", () => {
+  assert.equal(floorMmPerKm(0), 1);
+  assert.equal(floorMmPerKm(-5), 1);
+  assert.equal(floorMmPerKm(NaN), 1);
+  assert.equal(floorMmPerKm(Infinity), 1);
+});
