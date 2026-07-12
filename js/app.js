@@ -257,8 +257,10 @@ $("pathH").addEventListener("input", (e) => store.set({ pathHmm: Number(e.target
 
 // --- print settings --------------------------------------------------------
 $("scale").addEventListener("input", (e) => {
-  const v = Number(e.target.value);
-  if (v > 0) store.set({ scale: 1e6 / v, scaleAuto: false });
+  // guard the converted value: v<=0/NaN and exponent typos (2e400 -> scale 0,
+  // 1e-320 -> scale Infinity) must not reach the store
+  const scale = 1e6 / Number(e.target.value);
+  if (Number.isFinite(scale) && scale > 0) store.set({ scale, scaleAuto: false });
 });
 $("scaleAuto").addEventListener("click", () => {
   const s = store.get();
