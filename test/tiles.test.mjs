@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   CELL_CAP, tileSpanPx, cellWindows, cellBbox, cellsBbox, ghostCells, vertexMask,
-  insideMin, bakeFlatten,
+  insideMin, bakeFlatten, footprintPx, cellRingLatLon, pruneToOrigin, connectedToOrigin,
 } from "../js/tiles.js";
 import { lonToGlobalX, latToGlobalY } from "../js/tilemath.js";
 import { pointInPolygon } from "../js/polyclip.js";
@@ -142,4 +142,62 @@ test("seam sharing holds across an 8x8 layout spanning negative indices", () => 
     const a = wins.get(`${i},${j}`), b = wins.get(`${i},${j + 1}`);
     assert.equal(a.gy0 + a.gh - 1, b.gy0, `y seam ${i},${j}`);
   }
+});
+
+test("hex: shared footprint vertices are bit-identical across all 6 neighbors", () => {
+  for (const z of [8, 13]) {
+    for (const [dq, dr] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, -1], [-1, 1]]) {
+      const a = footprintPx(CENTER, SCALE, W, [0, 0], z, "hex");
+      const b = footprintPx(CENTER, SCALE, W, [dq, dr], z, "hex");
+      let shared = 0;
+      for (const [ax, ay] of a) {
+        for (const [bx, by] of b) {
+          if (Object.is(ax, bx) && Object.is(ay, by)) shared++;
+        }
+      }
+      assert.equal(shared, 2, `z${z} dir ${dq},${dr}: exactly the 2 edge endpoints, bit-identical`);
+    }
+  }
+});
+
+test("hex windows: bbox of the footprint, union covers, sane extents", () => {
+  const S = tileSpanPx(CENTER[0], SCALE, W, 11);
+  const cells = [[0, 0], [1, 0], [0, 1], [1, -1]];
+  const { wins, union } = cellWindows(CENTER, SCALE, W, cells, 11, "hex");
+  for (const cell of cells) {
+    const w2 = wins.get(`${cell[0]},${cell[1]}`);
+    assert.ok(Math.abs(w2.gw - 1 - S) <= 1, `width ${w2.gw - 1} vs ${S}`);
+    assert.ok(Math.abs(w2.gh - 1 - S * Math.sqrt(3) / 2) <= 1, `height ${w2.gh - 1}`);
+    assert.ok(w2.gx0 >= union.gx0 && w2.gy0 >= union.gy0, "inside union");
+    assert.ok(w2.gx0 + w2.gw <= union.gx0 + union.gw && w2.gy0 + w2.gh <= union.gy0 + union.gh, "inside union hi");
+  }
+});
+
+test("ghostCells by shape", () => {
+  assert.equal(ghostCells([[0, 0]], "hex").length, 6);
+  const two = ghostCells([[0, 0], [1, 0]], "hex");
+  assert.equal(two.length, 8, "2 adjacent hexes -> 8 distinct ghosts");
+  assert.deepEqual(ghostCells([[0, 0]], "circle"), []);
+  assert.equal(ghostCells([[0, 0]]).length, 4, "square default unchanged");
+});
+
+test("cellRingLatLon: vert counts and containment of the cell center", () => {
+  const hex = cellRingLatLon(CENTER, SCALE, W, [0, 0], "hex");
+  const cir = cellRingLatLon(CENTER, SCALE, W, [0, 0], "circle");
+  const sq = cellRingLatLon(CENTER, SCALE, W, [0, 0], "square");
+  assert.equal(hex.length, 6);
+  assert.equal(cir.length, 64);
+  assert.equal(sq.length, 4);
+  for (const ring of [hex, cir, sq]) {
+    const lat = ring.reduce((a, p) => a + p[0], 0) / ring.length;
+    const lon = ring.reduce((a, p) => a + p[1], 0) / ring.length;
+    assert.ok(Math.abs(lat - CENTER[0]) < 0.02 && Math.abs(lon - CENTER[1]) < 0.02, "centroid near center");
+  }
+});
+
+test("pruneToOrigin drops cells the new adjacency disconnects", () => {
+  assert.deepEqual(pruneToOrigin([[0, 0], [1, -1]], "square"), [[0, 0]]);
+  assert.deepEqual(pruneToOrigin([[0, 0], [1, -1]], "hex"), [[0, 0], [1, -1]]);
+  assert.equal(connectedToOrigin([[0, 0], [1, -1]], "hex"), true);
+  assert.equal(connectedToOrigin([[0, 0], [1, -1]], "square"), false);
 });
