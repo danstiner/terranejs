@@ -1,11 +1,11 @@
 import { createStore } from "./state.js";
-import { PRESETS, DEFAULT_PRESET, bboxToPolygon } from "./presets.js";
+import { PRESETS, DEFAULT_PRESET } from "./presets.js";
 import { initMap } from "./mapPicker.js";
-import { fit, bboxOf, bboxExtentMeters, suggestScale, splits, PITCH_MM, fmtMmPerKm } from "./fit.js";
+import { fit, bboxExtentMeters, suggestScale, PITCH_MM, fmtMmPerKm } from "./fit.js";
 import { pickZoom, tileRangeForBBox, sourceZoom, pixelWindow, lonToGlobalX, latToGlobalY, globalXToLon, globalYToLat, printPitchMm } from "./tilemath.js";
 import { fetchMosaic } from "./terrain.js";
 import { resampleBilinear, gridRange, cropGrid } from "./resample.js";
-import { cellMask } from "./polyclip.js";
+import { cellBbox, cellsBbox, CELL_CAP } from "./tiles.js";
 import { buildPreviewSolid, buildSolid, buildSolidFromMesh, buildTrailShell } from "./mesh.js";
 import { clipTriangleToPolygon, footprintClassifier } from "./clip.js";
 import { oceanMask, oceanMaskSeeded, cellOcean, erodeMask, recessedGrid,
@@ -17,13 +17,15 @@ import { checkWatertight } from "./validate.js";
 import { ThreeMFWriter } from "./threeMF.js";
 
 const store = createStore({
-  polygon: null, // [[lat,lon],…] or null
+  shape: "square", // Plan 2 adds hex + circle
+  center: null, // [lat, lon] of the origin cell, null until placed
+  cells: [], // [[i,j],…]; [0,0] present whenever a layout exists
   scale: null, // 1:N
-  scaleAuto: true,
+  tileWmm: 250, // print size of one tile (largest dimension)
+  boundary: null, // optional park outline (reference + flatten)
+  flattenOutside: false,
   exag: 1.0,
   base: 6.0,
-  capW: 250,
-  capH: 250,
   waterDrop: 3, // ocean recess depth (mm); 0 = off
   waterSeparate: false, // print water as a separate insert
   tracks: [], // imported GPX files: [{ name, segs: [[[lat,lon],…],…] }]
@@ -32,6 +34,7 @@ const store = createStore({
   pathHmm: 0.6, // bump height / inset depth
   exportDetail: 2, // zoom-ladder slider index 0..3 (3 = source zoom)
 });
+const DEFAULT_SCALE = 500000; // 2 mm = 1 km — first freeform click before any preset
 
 // inlay-ribbon geometry: mating groove depth, how far the seated ribbon stands
 // above the terrain, and XY clearance eroded off the ribbon footprint
@@ -58,10 +61,6 @@ const PLA_DENSITY = 1.24; // g/cm³
 const MASS_FACTOR = 0.138;
 
 const $ = (id) => document.getElementById(id);
-const extentOf = (poly) => {
-  const { realW, realH } = bboxExtentMeters(bboxOf(poly));
-  return [realW, realH];
-};
 
 // count set cells inside a tile span, cw = cells per row
 const countIn = (cells, sp, cw) => {
@@ -148,21 +147,54 @@ function bakedSurface(s, rawGrid, gw, gh, f, waterGrid = rawGrid) {
 const map = initMap({
   center: [46.85, -121.75],
   zoom: 11,
-  onChange: (polygon, isCreate) => {
+  onPlace: ([lat, lon]) => {
     const s = store.get();
-    const suggest = polygon && (isCreate || s.scale == null) && s.scaleAuto;
-    store.set({ polygon, scale: suggest ? suggestScale(...extentOf(polygon)) : s.scale });
+    if (s.cells.length) return; // layout exists; move via the marker
+    store.set({ center: [lat, lon], cells: [[0, 0]], scale: s.scale ?? DEFAULT_SCALE });
   },
+  onToggle: (cell, adding) => {
+    const s = store.get();
+    if (adding) {
+      if (s.cells.length >= CELL_CAP) {
+        $("progress").textContent = `cell cap: at most ${CELL_CAP} tiles per layout`;
+        return;
+      }
+      store.set({ cells: [...s.cells, cell] });
+    } else {
+      if (cell[0] === 0 && cell[1] === 0) return; // origin holds the center
+      const rest = s.cells.filter(([i, j]) => !(i === cell[0] && j === cell[1]));
+      if (!connectedToOrigin(rest)) {
+        $("progress").textContent = "that tile bridges the layout — remove outer tiles first";
+        return;
+      }
+      store.set({ cells: rest });
+    }
+  },
+  onMove: (center) => store.set({ center }),
 });
+
+// BFS over 4-neighbors from [0,0]; layouts must stay one connected piece
+function connectedToOrigin(cells) {
+  const sel = new Set(cells.map(([i, j]) => `${i},${j}`));
+  if (!sel.has("0,0")) return false;
+  const seen = new Set(["0,0"]), stack = [[0, 0]];
+  while (stack.length) {
+    const [i, j] = stack.pop();
+    for (const [ni, nj] of [[i + 1, j], [i - 1, j], [i, j + 1], [i, j - 1]]) {
+      const k = `${ni},${nj}`;
+      if (sel.has(k) && !seen.has(k)) { seen.add(k); stack.push([ni, nj]); }
+    }
+  }
+  return seen.size === sel.size;
+}
 
 // --- presets ---------------------------------------------------------------
 const preset = $("preset");
 const groups = new Map();
 for (const p of PRESETS) {
-  // a preset with neither a resolved boundary nor a bbox can't build a polygon
-  // (bboxToPolygon(undefined) throws) — skip it so a partial bake can't kill load
-  if (!p.boundary && !p.bbox) {
-    console.warn(`preset "${p.name}" has no boundary or bbox — skipping (unbaked region?)`);
+  // a center-less preset can't seed a layout — skip it so a partial bake can't kill load
+  if (!p.center) {
+    console.warn(`preset "${p.name}" has no center — skipping (unbaked entry?)`);
     continue;
   }
   if (!groups.has(p.group)) {
@@ -175,22 +207,17 @@ for (const p of PRESETS) {
   o.value = o.textContent = p.name;
   groups.get(p.group).appendChild(o);
 }
-// a preset region is either a real boundary ring or a rectangle from its bbox
-function presetPolygon(p) {
-  return p.boundary || bboxToPolygon(p.bbox);
-}
 preset.addEventListener("change", () => {
   const p = PRESETS.find((x) => x.name === preset.value);
   if (!p) return;
-  const poly = presetPolygon(p);
-  map.setPolygon(poly);
-  map.fitBbox(bboxOf(poly));
-  store.set({ polygon: poly, scaleAuto: true, scale: suggestScale(...extentOf(poly)) });
+  store.set({ center: p.center, scale: p.scale, cells: [[0, 0]],
+    boundary: p.boundary ?? null, flattenOutside: false });
+  map.fitBbox(cellsBbox(p.center, p.scale, store.get().tileWmm, [[0, 0]]));
 });
 $("clear").addEventListener("click", () => {
-  map.clear();
+  map.setBoundary(null);
   preset.value = "";
-  store.set({ polygon: null, scale: null, scaleAuto: true, tracks: [] });
+  store.set({ center: null, cells: [], scale: null, boundary: null, flattenOutside: false, tracks: [] });
 });
 
 // --- GPX trail ---------------------------------------------------------------
@@ -216,14 +243,16 @@ $("gpxFile").addEventListener("change", async (e) => {
   // additive: imports accumulate; re-importing a filename replaces that file
   const names = new Set(added.map((t) => t.name));
   const tracks = [...st.tracks.filter((t) => !names.has(t.name)), ...added];
-  if (st.polygon) {
+  if (st.cells.length) {
     store.set({ tracks });
   } else {
-    // no region yet — frame the imported tracks
-    const poly = bboxToPolygon(trackBbox(tracks.flatMap((t) => t.segs)));
-    map.setPolygon(poly);
-    map.fitBbox(bboxOf(poly));
-    store.set({ tracks, polygon: poly, scaleAuto: true, scale: suggestScale(...extentOf(poly)) });
+    // no layout yet — seed one tile framing the tracks (~90% of the tile width)
+    const bb = trackBbox(tracks.flatMap((t) => t.segs));
+    const { realW, realH } = bboxExtentMeters(bb);
+    const scale = suggestScale(realW, realH, 0.9 * st.tileWmm);
+    const center = [(bb[0] + bb[2]) / 2, (bb[1] + bb[3]) / 2];
+    store.set({ tracks, center, scale, cells: [[0, 0]] });
+    map.fitBbox(bb);
   }
 });
 
@@ -260,17 +289,15 @@ $("scale").addEventListener("input", (e) => {
   // guard the converted value: v<=0/NaN and exponent typos (2e400 -> scale 0,
   // 1e-320 -> scale Infinity) must not reach the store
   const scale = 1e6 / Number(e.target.value);
-  if (Number.isFinite(scale) && scale > 0) store.set({ scale, scaleAuto: false });
-});
-$("scaleAuto").addEventListener("click", () => {
-  const s = store.get();
-  if (s.polygon) store.set({ scaleAuto: true, scale: suggestScale(...extentOf(s.polygon)) });
+  if (Number.isFinite(scale) && scale > 0) store.set({ scale });
 });
 $("exag").addEventListener("input", (e) => store.set({ exag: Number(e.target.value) }));
 $("base").addEventListener("input", (e) => store.set({ base: Number(e.target.value) }));
 $("detail").addEventListener("input", (e) => store.set({ exportDetail: Number(e.target.value) }));
-$("capW").addEventListener("input", (e) => store.set({ capW: Number(e.target.value) || 250 }));
-$("capH").addEventListener("input", (e) => store.set({ capH: Number(e.target.value) || 250 }));
+$("tileW").addEventListener("input", (e) => {
+  const v = Number(e.target.value);
+  if (Number.isFinite(v) && v >= 50) store.set({ tileWmm: v });
+});
 // insert mode needs ≥1 mm of drop — that drop is the insert's shore-edge thickness
 $("waterDrop").addEventListener("input", (e) => {
   const v = Number(e.target.value);
@@ -284,10 +311,10 @@ $("export").addEventListener("click", export3MF);
 
 // --- preview state ---------------------------------------------------------
 let preview = null; // three.js view, lazily created
-let pv = null; // { grid, waterGrid, gw, gh, f, mask } cached mosaic+resample; survives exag/base
+let pv = null; // { grid, waterGrid, gw, gh, f, mask, spans } cached mosaic+resample; survives exag/base
 let pvKey = null; // fit-affecting inputs; changing them invalidates pv
 
-const keyOf = (s) => JSON.stringify([s.polygon, s.scale, s.capW, s.capH]);
+const keyOf = (s) => JSON.stringify([s.center, s.cells, s.scale, s.tileWmm]);
 
 // terrain auto-reloads (debounced) when the fetched-grid inputs change;
 // exag/base/water only rebuild the mesh from the cached grid.
@@ -300,7 +327,8 @@ function scheduleReload() {
 
 // --- render ----------------------------------------------------------------
 store.subscribe((s) => {
-  renderRegion(s);
+  map.setLayout(s);
+  map.setBoundary(s.boundary);
   renderTracks(s);
   // one bake per event, shared by the mass estimate and the tile rebuild
   const baked = pv && pvKey === keyOf(s) ? bakedSurface(s, pv.grid, pv.gw, pv.gh, pv.f, pv.waterGrid) : null;
@@ -309,33 +337,36 @@ store.subscribe((s) => {
   else if (pv) rebuildTiles(baked);
 });
 
-function renderRegion(s) {
-  const el = $("readout");
-  const v = s.polygon;
-  if (!v || v.length < 3) { el.textContent = "No region selected."; return; }
-  const [bs, bw, bn, be] = bboxOf(v);
-  el.textContent =
-    `${v.length} vertices\n` +
-    `bbox S,W,N,E:\n  ${[bs, bw, bn, be].map((x) => x.toFixed(4)).join(", ")}`;
-}
-
 // Slider readout: honest computed values for the chosen zoom-ladder step —
 // pixel pitch on the print, triangle estimate, and projected .3mf size
 // (~11 B/triangle deflated, measured on the King County export).
-function detailLabel(f, di) {
+function detailLabel(s, f, di) {
   const cLat = (f.bbox[0] + f.bbox[2]) / 2;
   const zSrc = sourceZoom(f.bbox, cLat, f.scale, EXPORT_MAX_TILES);
   const z = Math.max(1, zSrc - (3 - di));
   const pitch = printPitchMm(cLat, z, f.scale);
-  const tris = 2 * f.coverage * (f.widthMm / pitch) * (f.heightMm / pitch);
+  const tris = 2 * f.nCells * (s.tileWmm / pitch) ** 2;
   const mb = (tris * 11) / 1e6;
   const t = tris >= 1e6 ? `${(tris / 1e6).toFixed(1)}M` : `${Math.round(tris / 1e3)}K`;
   return `${pitch.toFixed(2)} mm/px · ~${t} tris · ~${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB`;
 }
 
+// Derived layout constants — the old fit() collapses to this: per-tile print
+// size is tileWmm by decree, count is |cells|, only ground size derives.
+function layoutFit(s) {
+  const bbox = cellsBbox(s.center, s.scale, s.tileWmm, s.cells);
+  const { realW, realH } = bboxExtentMeters(bbox);
+  const widthMm = (realW * 1000) / s.scale, heightMm = (realH * 1000) / s.scale;
+  return { bbox, realW, realH, scale: s.scale, widthMm, heightMm,
+    tileWmm: s.tileWmm, nCells: s.cells.length,
+    groundM: Math.max(10, (PITCH_MM * s.scale) / 1000) };
+}
+
 function renderSettings(s, baked) {
+  $("readout").textContent = !s.center ? "No tiles placed." :
+    `${s.cells.length} tile${s.cells.length === 1 ? "" : "s"} · center ${s.center[0].toFixed(4)}, ${s.center[1].toFixed(4)}`;
   const box = $("settings");
-  if (!s.polygon || s.polygon.length < 3 || !s.scale) { box.hidden = true; return; }
+  if (!s.center || !s.cells.length || !s.scale) { box.hidden = true; return; }
   box.hidden = false;
   if ($("scale") !== document.activeElement) $("scale").value = fmtMmPerKm(1e6 / s.scale);
   $("exagVal").textContent = s.exag.toFixed(1);
@@ -360,12 +391,12 @@ function renderSettings(s, baked) {
     if ($("pathH") !== document.activeElement) $("pathH").value = s.pathHmm;
   }
 
-  const f = fit({ polygon: s.polygon, scale: s.scale, capW: s.capW, capH: s.capH });
+  const f = layoutFit(s);
   const di = Math.min(3, Math.max(0, Math.round(s.exportDetail)));
   $("detail").value = di;
-  $("detailVal").textContent = detailLabel(f, di);
-  const nT = f.nx * f.ny;
-  const warn = nT > 16 ? ' <span class="warn">(a lot!)</span>' : "";
+  $("detailVal").textContent = detailLabel(s, f, di);
+  const tileKm = ((s.tileWmm * s.scale) / 1e6).toPrecision(2);
+  $("tileKm").textContent = `Each tile ≈ ${tileKm} km wide.`;
   const m = estimateMassG(s, baked);
   const massLine = m
     ? `~${m.total.toFixed(0)} g @3% infill (~${m.perTile.toFixed(0)} g/tile)`
@@ -373,12 +404,11 @@ function renderSettings(s, baked) {
   const chip = (label, val) => `<span><b>${label}</b> ${val}</span>`;
   $("fit").innerHTML =
     chip("scale", `${fmtMmPerKm(1e6 / f.scale)} mm = 1 km`) +
-    chip("print", `${f.widthMm.toFixed(0)}×${f.heightMm.toFixed(0)} mm`) +
-    chip("tiles", `${f.nx}×${f.ny} = ${nT}${warn}`) +
-    chip("/tile", `${f.tileWmm.toFixed(0)}×${f.tileHmm.toFixed(0)} mm`) +
-    chip("sampling", `~${f.groundM.toFixed(1)} m${f.dataLimited ? " *data-limited*" : ""}`) +
-    chip("material", massLine) +
-    chip("coverage", `${(f.coverage * 100).toFixed(0)}%`);
+    chip("tile", `≈ ${tileKm} km`) +
+    chip("tiles", `${f.nCells}${f.nCells > 16 ? ' <span class="warn">(a lot!)</span>' : ""}`) +
+    chip("/tile", `${s.tileWmm}×${s.tileWmm} mm`) +
+    chip("sampling", `~${f.groundM.toFixed(1)} m`) +
+    chip("material", massLine);
 }
 
 // PLA mass from the loaded terrain: solid volume (base + relief per cell) times
@@ -386,31 +416,32 @@ function renderSettings(s, baked) {
 // only available once terrain is loaded and still matches the current settings.
 function estimateMassG(s, baked) {
   if (!pv || !baked || pvKey !== keyOf(s)) return null;
-  const { gw, gh, f, mask } = pv;
+  const { gw, f } = pv;
   const { grid, min } = baked;
   const mmPerM = 1000 / f.scale;
-  const cellArea = (f.widthMm / (gw - 1)) * (f.heightMm / (gh - 1));
-  const cw = gw - 1;
+  const cellArea = (f.widthMm / (gw - 1)) * (f.heightMm / (pv.gh - 1));
   let vol = 0; // mm³
-  for (let r = 0; r < gh - 1; r++) {
-    for (let c = 0; c < cw; c++) {
-      if (!mask[r * cw + c]) continue;
-      const avg = (grid[r * gw + c] + grid[r * gw + c + 1] +
-        grid[(r + 1) * gw + c] + grid[(r + 1) * gw + c + 1]) / 4;
-      vol += cellArea * (s.base + (avg - min) * mmPerM * s.exag);
+  // per-cell spans; every grid cell inside a span is printed, so no mask check
+  for (const { r0, r1, c0, c1 } of pv.spans) {
+    for (let r = r0; r < r1; r++) {
+      for (let c = c0; c < c1; c++) {
+        const avg = (grid[r * gw + c] + grid[r * gw + c + 1] +
+          grid[(r + 1) * gw + c] + grid[(r + 1) * gw + c + 1]) / 4;
+        vol += cellArea * (s.base + (avg - min) * mmPerM * s.exag);
+      }
     }
   }
   const total = (vol / 1000) * PLA_DENSITY * MASS_FACTOR;
-  return { total, perTile: total / (f.nx * f.ny) };
+  return { total, perTile: total / pv.f.nCells };
 }
 
 // --- terrain fetch + preview (auto-triggered, debounced) ------------------
 async function loadPreview() {
   clearTimeout(reloadTimer);
   const s = store.get();
-  if (!s.polygon || !s.scale) return;
+  if (!s.center || !s.cells.length || !s.scale) return;
   const token = ++loadToken; // discard if a newer load starts before we commit
-  const f = fit({ polygon: s.polygon, scale: s.scale, capW: s.capW, capH: s.capH });
+  const f = layoutFit(s);
 
   // preview grid: finer than a bare sketch so smooth terrain (e.g. Fuji's cone)
   // doesn't show coarse facets; raising it also raises the fetch zoom, cutting
@@ -441,12 +472,21 @@ async function loadPreview() {
       if (token !== loadToken) return; // a newer load supersedes this one
       waterGrid = resampleBilinear(mosaicW, f.bbox, gw, gh);
     }
-    // use the fetch-start snapshot, not post-await store state: a Clear mid-fetch
-    // makes store.polygon null (cellMask throws), and a polygon edit would stamp
-    // this now-stale grid as fresh. The token guard above already dropped any
-    // superseded load, so s/f are the inputs this grid was actually fetched for.
-    const mask = cellMask(s.polygon, f.bbox, gw, gh);
-    pv = { grid, waterGrid, gw, gh, f, mask };
+    // per-cell spans on the preview grid: proportional index of each cell's
+    // exact bbox inside the union bbox (preview has no lattice to quantize to).
+    // Built from the fetch-start snapshot `s` — the token guard above already
+    // dropped any superseded load, so s/f are what this grid was fetched for.
+    const [uS, uW, uN, uE] = f.bbox;
+    const spans = s.cells.map((cell) => {
+      const [cs, cw2, cn, ce] = cellBbox(s.center, s.scale, s.tileWmm, cell);
+      return { cell,
+        c0: Math.round(((cw2 - uW) / (uE - uW)) * (gw - 1)),
+        c1: Math.round(((ce - uW) / (uE - uW)) * (gw - 1)),
+        r0: Math.round(((uN - cn) / (uN - uS)) * (gh - 1)),
+        r1: Math.round(((uN - cs) / (uN - uS)) * (gh - 1)) };
+    });
+    const mask = new Uint8Array((gw - 1) * (gh - 1)).fill(1);
+    pv = { grid, waterGrid, gw, gh, f, mask, spans };
     pvKey = keyOf(s);
     $("progress").textContent = upsampled
       ? `z${z} — note: sampling finer than the data supports (interpolated)`
@@ -474,20 +514,15 @@ function rebuildTiles(baked) {
   const mmPerM = 1000 / f.scale;
   const dx = f.widthMm / (gw - 1);
   const dy = f.heightMm / (gh - 1);
-  const rows = splits(f.ny, gh);
-  const cols = splits(f.nx, gw);
-  const gapX = 0.14 * f.tileWmm;
-  const gapY = 0.14 * f.tileHmm;
+  const gapX = 0.14 * f.tileWmm, gapY = 0.14 * f.tileWmm;
 
   const tiles = [];
-  rows.forEach(([r0, r1], ry) => {
-    cols.forEach(([c0, c1], cx) => {
-      tiles.push(buildPreviewSolid(grid, gw, gh, { r0, r1, c0, c1 }, mask, {
-        dx, dy, offX: cx * gapX, offY: (f.ny - 1 - ry) * gapY, oceanMask: oMask, pathMask,
-        mmPerM, emin: min, erange, exag: s.exag, base: s.base,
-      }));
-    });
-  });
+  for (const { cell: [ci, cj], r0, r1, c0, c1 } of pv.spans) {
+    tiles.push(buildPreviewSolid(grid, gw, gh, { r0, r1, c0, c1 }, mask, {
+      dx, dy, offX: ci * gapX, offY: -cj * gapY, oceanMask: oMask, pathMask,
+      mmPerM, emin: min, erange, exag: s.exag, base: s.base,
+    }));
+  }
   preview.setTiles(tiles);
 }
 
@@ -538,7 +573,8 @@ function clipTileSolid(grid, gw, gh, span, polygon, geom, subMask) {
 
 async function export3MF() {
   const s = store.get();
-  if (!s.polygon || !s.scale) { $("progress").textContent = "pick a region first"; return; }
+  if (!s.cells.length || !s.scale) { $("progress").textContent = "place a tile first"; return; }
+  if (true) { $("progress").textContent = "tile export lands in the next commit"; return; } // Task 4 removes
   const f = fit({ polygon: s.polygon, scale: s.scale, capW: s.capW, capH: s.capH });
   const [latS, lonW, latN, lonE] = f.bbox;
   const cLat = (latS + latN) / 2;
@@ -847,13 +883,11 @@ function download(blob, name) {
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 
-// --- open on the default region with its terrain already previewed ----------
+// --- open on the default preset with its terrain already previewed ----------
 (function start() {
   const p = PRESETS.find((x) => x.name === DEFAULT_PRESET) || PRESETS[0];
-  const poly = presetPolygon(p);
-  map.setPolygon(poly);
-  map.fitBbox(bboxOf(poly));
   preset.value = p.name;
-  store.set({ polygon: poly, scaleAuto: true, scale: suggestScale(...extentOf(poly)) });
+  store.set({ center: p.center, scale: p.scale, cells: [[0, 0]], boundary: p.boundary ?? null });
+  map.fitBbox(cellsBbox(p.center, p.scale, 250, [[0, 0]]));
   loadPreview();
 })();

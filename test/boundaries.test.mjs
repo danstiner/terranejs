@@ -22,12 +22,11 @@ test("every baked boundary is a valid [[lat,lon]] ring", () => {
   }
 });
 
-test("boundary presets resolve to their ring; cores stay bboxes", () => {
+test("boundary presets resolve to their ring; cores carry only center+scale", () => {
   const rainier = PRESETS.find((p) => p.name === "Mt Rainier National Park");
   assert.ok(rainier.boundary && rainier.boundary === BOUNDARIES["Mt Rainier National Park"]);
-  assert.ok(!rainier.bbox, "boundary preset has no bbox");
   const core = PRESETS.find((p) => p.name === "Yosemite — Half Dome");
-  assert.ok(core.bbox && !core.boundary, "scenic core stays a bbox");
+  assert.ok(core.center && !core.boundary, "scenic core has no boundary ring");
   const wa = PRESETS.find((p) => p.name === "Washington State");
   assert.ok(wa && wa.group === "US States & Counties" && wa.boundary);
   const king = PRESETS.find((p) => p.name === "King County, WA");

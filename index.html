@@ -6,8 +6,6 @@
   <title>tilejs — terrain print tiler</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
         integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
-  <link rel="stylesheet"
-        href="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.18.3/dist/leaflet-geoman.css">
   <link rel="stylesheet" href="style.css">
   <script type="importmap">
   {
@@ -35,8 +33,9 @@
         <div class="row"><strong>Region</strong>
           <button id="clear" type="button">Clear</button></div>
         <div id="readout" class="readout">No region selected.</div>
-        <p class="hint">Draw a polygon / rectangle with the map's top-left
-          tools, then drag its vertices to refine.</p>
+        <p class="hint">Click the map to place a tile; click dashed neighbors
+          to add tiles, placed tiles to remove them. Drag the marker to move
+          the layout.</p>
         <div class="row">
           <input id="gpxFile" type="file" accept=".gpx" multiple hidden>
           <button id="gpxImport" type="button">Import GPX trail…</button>
@@ -51,9 +50,8 @@
         <label for="scale">Map scale</label>
         <div class="row">
           <span><input id="scale" type="number" min="0.01" step="any" class="num">&nbsp;mm&nbsp;=&nbsp;1&nbsp;km</span>
-          <button id="scaleAuto" type="button" title="Scale so the piece fills one bed">fit bed</button>
         </div>
-        <p class="hint">Bigger number = bigger print, more tiles, finer detail.</p>
+        <p class="hint">Bigger number = bigger print, finer detail. <span id="tileKm"></span></p>
 
         <label for="exag">Vertical exaggeration: <span id="exagVal">1.0</span>&times;</label>
         <input id="exag" type="range" min="0.5" max="4" step="0.1" value="1">
@@ -104,11 +102,10 @@
           <p class="hint">Pixel pitch of the exported mesh — one vertex per
             terrain sample. Finer steps fetch deeper zoom: more triangles and a
             bigger file, shown live above.</p>
-          <label>Bed cap W &times; H (mm)</label>
-          <div class="row">
-            <input id="capW" type="number" min="50" step="5" value="250" class="num">
-            <input id="capH" type="number" min="50" step="5" value="250" class="num">
-          </div>
+          <label for="tileW">Tile width (mm)</label>
+          <input id="tileW" type="number" min="50" step="5" value="250" class="num">
+          <p class="hint">Print size of each tile (largest dimension) — set it
+            to fit your printer's bed.</p>
         </details>
       </section>
     </aside>
@@ -128,7 +125,6 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
           integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-  <script src="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.18.3/dist/leaflet-geoman.min.js"></script>
   <script type="module" src="js/app.js"></script>
 </body>
 </html>

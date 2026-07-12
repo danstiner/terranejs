@@ -1,83 +1,64 @@
-// Curated regions. Park + state entries carry a real boundary outline (from
-// tools/fetch_boundaries.py -> boundaries.js) so the print is cut to the actual
-// shape; scenic "— core" entries stay as [south, west, north, east] bboxes.
-// `group` drives the <optgroup> in the dropdown.
+// Curated presets — hard-coded center+scale seeds for the tile-first UI: a
+// preset drops one origin tile at `center`. Park + state entries keep a real
+// outline (from tools/fetch_boundaries.py -> boundaries.js) for display and
+// the boundary flatten. `group` drives the <optgroup> in the dropdown.
 import { BOUNDARIES } from "./boundaries.js";
-import { metersPerDegree } from "./fit.js";
 
-const PARK = "US National Parks";
-const STATE = "US States & Counties";
-const PEAK = "Iconic Peaks";
-const SQUARE = "Square Tiles (single print)";
 const b = (name) => BOUNDARIES[name];
 
-// ground-square bbox (equal N-S / E-W metres, so the print is square) centered
-// on (lat, lon); at the auto-suggested scale it fits one ~240×240 mm tile
-const sq = (lat, lon, km) => {
-  const { mLat, mLon } = metersPerDegree(lat);
-  const dLat = (km * 500) / mLat, dLon = (km * 500) / mLon;
-  return [lat - dLat, lon - dLon, lat + dLat, lon + dLon];
-};
-
 export const PRESETS = [
-  { group: PARK, name: "Great Smoky Mtns National Park", boundary: b("Great Smoky Mtns National Park") },
-  { group: PARK, name: "Great Smoky — Clingmans Dome", bbox: [35.52, -83.58, 35.70, -83.38] },
-  { group: PARK, name: "Zion National Park", boundary: b("Zion National Park") },
-  { group: PARK, name: "Zion — Canyon", bbox: [37.18, -113.05, 37.33, -112.92] },
-  { group: PARK, name: "Grand Canyon National Park", boundary: b("Grand Canyon National Park") },
-  { group: PARK, name: "Grand Canyon — South Rim", bbox: [36.00, -112.20, 36.24, -111.92] },
-  { group: PARK, name: "Yellowstone National Park", boundary: b("Yellowstone National Park") },
-  { group: PARK, name: "Yellowstone — Grand Canyon", bbox: [44.42, -110.58, 44.75, -110.30] },
-  { group: PARK, name: "Rocky Mountain National Park", boundary: b("Rocky Mountain National Park") },
-  { group: PARK, name: "Rocky Mtn — Longs Peak", bbox: [40.24, -105.72, 40.42, -105.55] },
-  { group: PARK, name: "Yosemite National Park", boundary: b("Yosemite National Park") },
-  { group: PARK, name: "Yosemite — Half Dome", bbox: [37.70, -119.66, 37.78, -119.50] },
-  { group: PARK, name: "Acadia National Park", boundary: b("Acadia National Park") },
-  { group: PARK, name: "Acadia — Cadillac Mtn", bbox: [44.30, -68.30, 44.40, -68.17] },
-  { group: PARK, name: "Olympic National Park", boundary: b("Olympic National Park") },
-  { group: PARK, name: "Olympic — Mt Olympus", bbox: [47.75, -123.80, 47.92, -123.55] },
-  { group: PARK, name: "Grand Teton National Park", boundary: b("Grand Teton National Park") },
-  { group: PARK, name: "Grand Teton — Range", bbox: [43.68, -110.85, 43.83, -110.68] },
-  { group: PARK, name: "Glacier National Park", boundary: b("Glacier National Park") },
-  { group: PARK, name: "Glacier — Logan Pass", bbox: [48.60, -113.90, 48.80, -113.55] },
-  { group: PARK, name: "Mt Rainier National Park", boundary: b("Mt Rainier National Park") },
-  { group: PARK, name: "Crater Lake National Park", boundary: b("Crater Lake National Park") },
-  { group: PARK, name: "Crater Lake — Caldera", bbox: [42.88, -122.19, 43.00, -122.02] },
-  { group: PARK, name: "Death Valley National Park", boundary: b("Death Valley National Park") },
-  { group: PARK, name: "Death Valley — Badwater↔Telescope", bbox: [36.12, -117.12, 36.40, -116.70] },
-  { group: STATE, name: "Washington State", boundary: b("Washington State") },
-  { group: STATE, name: "King County, WA", boundary: b("King County, WA") },
-  { group: PEAK, name: "Mt Fuji", bbox: [35.28, 138.63, 35.44, 138.83] },
-  { group: PEAK, name: "Matterhorn", bbox: [45.92, 7.56, 46.04, 7.76] },
-  // major mountains, framed square
-  { group: SQUARE, name: "Mt Rainier — 30 km", bbox: sq(46.852, -121.760, 30) },
-  { group: SQUARE, name: "Mt St Helens — 20 km", bbox: sq(46.191, -122.194, 20) },
-  { group: SQUARE, name: "Mt Hood — 20 km", bbox: sq(45.374, -121.696, 20) },
-  { group: SQUARE, name: "Mt Shasta — 25 km", bbox: sq(41.409, -122.195, 25) },
-  { group: SQUARE, name: "Denali — 60 km", bbox: sq(63.069, -151.007, 60) },
-  { group: SQUARE, name: "Grand Teton — 30 km", bbox: sq(43.741, -110.802, 30) },
-  { group: SQUARE, name: "Mt Whitney — 25 km", bbox: sq(36.578, -118.292, 25) },
-  { group: SQUARE, name: "Mt Fuji — 30 km", bbox: sq(35.361, 138.727, 30) },
-  { group: SQUARE, name: "Matterhorn — 20 km", bbox: sq(45.976, 7.658, 20) },
-  { group: SQUARE, name: "Mont Blanc — 30 km", bbox: sq(45.833, 6.865, 30) },
-  { group: SQUARE, name: "Everest — 40 km", bbox: sq(27.988, 86.925, 40) },
-  { group: SQUARE, name: "Kilimanjaro — 50 km", bbox: sq(-3.066, 37.352, 50) },
-  // park highlights, square crops centered on the scenic bboxes above
-  { group: SQUARE, name: "Clingmans Dome — 20 km", bbox: sq(35.61, -83.48, 20) },
-  { group: SQUARE, name: "Zion Canyon — 17 km", bbox: sq(37.255, -112.985, 17) },
-  { group: SQUARE, name: "Grand Canyon South Rim — 27 km", bbox: sq(36.12, -112.06, 27) },
-  { group: SQUARE, name: "Yellowstone Grand Canyon — 37 km", bbox: sq(44.585, -110.44, 37) },
-  { group: SQUARE, name: "Longs Peak — 20 km", bbox: sq(40.33, -105.635, 20) },
-  { group: SQUARE, name: "Half Dome — 14 km", bbox: sq(37.74, -119.58, 14) },
-  { group: SQUARE, name: "Cadillac Mtn — 11 km", bbox: sq(44.35, -68.235, 11) },
-  { group: SQUARE, name: "Mt Olympus — 19 km", bbox: sq(47.835, -123.675, 19) },
-  { group: SQUARE, name: "Logan Pass — 26 km", bbox: sq(48.70, -113.725, 26) },
-  { group: SQUARE, name: "Crater Lake — 14 km", bbox: sq(42.94, -122.105, 14) },
-  { group: SQUARE, name: "Badwater ↔ Telescope — 38 km", bbox: sq(36.26, -116.91, 38) },
+  { group: "US National Parks", name: "Great Smoky Mtns National Park", center: [35.6342,-83.5060], scale: 384615, boundary: b("Great Smoky Mtns National Park") },
+  { group: "US National Parks", name: "Great Smoky — Clingmans Dome", center: [35.6100,-83.4800], scale: 83333 },
+  { group: "US National Parks", name: "Zion National Park", center: [37.3228,-113.0457], scale: 169492, boundary: b("Zion National Park") },
+  { group: "US National Parks", name: "Zion — Canyon", center: [37.2550,-112.9850], scale: 71429 },
+  { group: "US National Parks", name: "Grand Canyon National Park", center: [36.3092,-112.7835], scale: 909091, boundary: b("Grand Canyon National Park") },
+  { group: "US National Parks", name: "Grand Canyon — South Rim", center: [36.1200,-112.0600], scale: 111111 },
+  { group: "US National Parks", name: "Yellowstone National Park", center: [44.6208,-110.4908], scale: 454545, boundary: b("Yellowstone National Park") },
+  { group: "US National Parks", name: "Yellowstone — Grand Canyon", center: [44.5850,-110.4400], scale: 153846 },
+  { group: "US National Parks", name: "Rocky Mountain National Park", center: [40.3559,-105.7037], scale: 185185, boundary: b("Rocky Mountain National Park") },
+  { group: "US National Parks", name: "Rocky Mtn — Longs Peak", center: [40.3300,-105.6350], scale: 83333 },
+  { group: "US National Parks", name: "Yosemite National Park", center: [37.8392,-119.5434], scale: 322581, boundary: b("Yosemite National Park") },
+  { group: "US National Parks", name: "Yosemite — Half Dome", center: [37.7400,-119.5800], scale: 58824 },
+  { group: "US National Parks", name: "Acadia National Park", center: [44.3563,-68.2463], scale: 58824, boundary: b("Acadia National Park") },
+  { group: "US National Parks", name: "Acadia — Cadillac Mtn", center: [44.3500,-68.2350], scale: 47619 },
+  { group: "US National Parks", name: "Olympic National Park", center: [47.7858,-123.7002], scale: 370370, boundary: b("Olympic National Park") },
+  { group: "US National Parks", name: "Olympic — Mt Olympus", center: [47.8350,-123.6750], scale: 83333 },
+  { group: "US National Parks", name: "Grand Teton National Park", center: [43.8110,-110.6856], scale: 256410, boundary: b("Grand Teton National Park") },
+  { group: "US National Parks", name: "Grand Teton — Range", center: [43.7550,-110.7650], scale: 71429 },
+  { group: "US National Parks", name: "Glacier National Park", center: [48.6174,-113.8586], scale: 384615, boundary: b("Glacier National Park") },
+  { group: "US National Parks", name: "Glacier — Logan Pass", center: [48.7000,-113.7250], scale: 107527 },
+  { group: "US National Parks", name: "Mt Rainier National Park", center: [46.8543,-121.6826], scale: 153846, boundary: b("Mt Rainier National Park") },
+  { group: "US National Parks", name: "Crater Lake National Park", center: [42.9288,-122.1343], scale: 149254, boundary: b("Crater Lake National Park") },
+  { group: "US National Parks", name: "Crater Lake — Caldera", center: [42.9400,-122.1050], scale: 58824 },
+  { group: "US National Parks", name: "Death Valley National Park", center: [36.4704,-117.1388], scale: 833333, boundary: b("Death Valley National Park") },
+  { group: "US National Parks", name: "Death Valley — Badwater↔Telescope", center: [36.2600,-116.9100], scale: 158730 },
+  { group: "US States & Counties", name: "Washington State", center: [47.2730,-120.8760], scale: 2500000, boundary: b("Washington State") },
+  { group: "US States & Counties", name: "King County, WA", center: [47.4321,-121.8043], scale: 476190, boundary: b("King County, WA") },
+  { group: "Iconic Peaks", name: "Mt Fuji", center: [35.3600,138.7300], scale: 76923 },
+  { group: "Iconic Peaks", name: "Matterhorn", center: [45.9800,7.6600], scale: 66667 },
+  { group: "Square Tiles (single print)", name: "Mt Rainier — 30 km", center: [46.8520,-121.7600], scale: 125000 },
+  { group: "Square Tiles (single print)", name: "Mt St Helens — 20 km", center: [46.1910,-122.1940], scale: 83333 },
+  { group: "Square Tiles (single print)", name: "Mt Hood — 20 km", center: [45.3740,-121.6960], scale: 83333 },
+  { group: "Square Tiles (single print)", name: "Mt Shasta — 25 km", center: [41.4090,-122.1950], scale: 104167 },
+  { group: "Square Tiles (single print)", name: "Denali — 60 km", center: [63.0690,-151.0070], scale: 250000 },
+  { group: "Square Tiles (single print)", name: "Grand Teton — 30 km", center: [43.7410,-110.8020], scale: 125000 },
+  { group: "Square Tiles (single print)", name: "Mt Whitney — 25 km", center: [36.5780,-118.2920], scale: 104167 },
+  { group: "Square Tiles (single print)", name: "Mt Fuji — 30 km", center: [35.3610,138.7270], scale: 125000 },
+  { group: "Square Tiles (single print)", name: "Matterhorn — 20 km", center: [45.9760,7.6580], scale: 83333 },
+  { group: "Square Tiles (single print)", name: "Mont Blanc — 30 km", center: [45.8330,6.8650], scale: 125000 },
+  { group: "Square Tiles (single print)", name: "Everest — 40 km", center: [27.9880,86.9250], scale: 166667 },
+  { group: "Square Tiles (single print)", name: "Kilimanjaro — 50 km", center: [-3.0660,37.3520], scale: 208333 },
+  { group: "Square Tiles (single print)", name: "Clingmans Dome — 20 km", center: [35.6100,-83.4800], scale: 83333 },
+  { group: "Square Tiles (single print)", name: "Zion Canyon — 17 km", center: [37.2550,-112.9850], scale: 71429 },
+  { group: "Square Tiles (single print)", name: "Grand Canyon South Rim — 27 km", center: [36.1200,-112.0600], scale: 113636 },
+  { group: "Square Tiles (single print)", name: "Yellowstone Grand Canyon — 37 km", center: [44.5850,-110.4400], scale: 156250 },
+  { group: "Square Tiles (single print)", name: "Longs Peak — 20 km", center: [40.3300,-105.6350], scale: 83333 },
+  { group: "Square Tiles (single print)", name: "Half Dome — 14 km", center: [37.7400,-119.5800], scale: 58824 },
+  { group: "Square Tiles (single print)", name: "Cadillac Mtn — 11 km", center: [44.3500,-68.2350], scale: 47619 },
+  { group: "Square Tiles (single print)", name: "Mt Olympus — 19 km", center: [47.8350,-123.6750], scale: 83333 },
+  { group: "Square Tiles (single print)", name: "Logan Pass — 26 km", center: [48.7000,-113.7250], scale: 108696 },
+  { group: "Square Tiles (single print)", name: "Crater Lake — 14 km", center: [42.9400,-122.1050], scale: 58824 },
+  { group: "Square Tiles (single print)", name: "Badwater ↔ Telescope — 38 km", center: [36.2600,-116.9100], scale: 158730 },
 ];
 
 export const DEFAULT_PRESET = "Mt Rainier National Park";
-
-export function bboxToPolygon([s, w, n, e]) {
-  return [[s, w], [s, e], [n, e], [n, w]]; // CCW-ish; winding normalized later
-}
