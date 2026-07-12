@@ -140,7 +140,7 @@ export function clipTriangleToPolygon(tri, polygon) {
   return out;
 }
 
-// Fast footprint classification for TIN facets. Build once per cell mask, then
+// Fast footprint classification for grid cells. Build once per cell mask, then
 // classify a facet's grid-cell bbox as fully 'in', fully 'out', or 'band'
 // (near the footprint boundary → needs the full polygon clip). Band = cells
 // with a mixed 3×3 neighborhood, dilated by one more cell, so a polygon edge
