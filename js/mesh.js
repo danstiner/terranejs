@@ -92,7 +92,46 @@ export function buildPreviewSolid(grid, gridW, gridH, span, mask, geom) {
   return { positions, colors, triangles: nTris };
 }
 
-import { earclip } from "./clip.js";
+// --- ear clipping (moved from the deleted clip.js; the flat-base
+// triangulation below is its only remaining caller) ---
+const EPS = 1e-9;
+const cross3 = (ax, ay, bx, by, cx, cy) => (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+
+// simple-polygon ear clipping -> index triples
+function earclip(ring) {
+  const n = ring.length;
+  if (n < 3) return [];
+  let idx = [...Array(n).keys()];
+  let a2 = 0;
+  for (let i = 0, j = n - 1; i < n; j = i++) a2 += ring[j][0] * ring[i][1] - ring[i][0] * ring[j][1];
+  if (a2 < 0) idx.reverse();
+  const tris = [];
+  let guard = 2 * n;
+  while (idx.length > 3 && guard-- > 0) {
+    let clipped = false;
+    for (let i = 0; i < idx.length; i++) {
+      const ip = idx[(i - 1 + idx.length) % idx.length], ii = idx[i], inx = idx[(i + 1) % idx.length];
+      const a = ring[ip], b = ring[ii], c = ring[inx];
+      if (cross3(a[0], a[1], b[0], b[1], c[0], c[1]) <= EPS) continue; // reflex/collinear
+      let ear = true;
+      for (const k of idx) {
+        if (k === ip || k === ii || k === inx) continue;
+        if (ptInTri(ring[k], a, b, c)) { ear = false; break; }
+      }
+      if (ear) { tris.push([ip, ii, inx]); idx.splice(i, 1); clipped = true; break; }
+    }
+    if (!clipped) break;
+  }
+  if (idx.length === 3) tris.push([idx[0], idx[1], idx[2]]);
+  return tris;
+}
+function ptInTri(p, a, b, c) {
+  const d1 = cross3(a[0], a[1], b[0], b[1], p[0], p[1]);
+  const d2 = cross3(b[0], b[1], c[0], c[1], p[0], p[1]);
+  const d3 = cross3(c[0], c[1], a[0], a[1], p[0], p[1]);
+  const neg = d1 < -EPS || d2 < -EPS || d3 < -EPS, pos = d1 > EPS || d2 > EPS || d3 > EPS;
+  return !(neg && pos);
+}
 
 // ---------------------------------------------------------------------------
 // Indexed watertight solids. A solid is { positions: Float32Array, indices:
@@ -339,34 +378,4 @@ export function buildTrailShell(grid, gw, gh, span, mask, geom, hMm) {
     (id) => [((id % gw) - c0) * dx, (r1 - ((id / gw) | 0)) * dy],
     (id) => relief(id) + hMm,
     relief, "mirror");
-}
-
-// Watertight solid from an arbitrary top-surface triangle soup in world mm
-// (polygon-clipped edge tiles; clip vertices are off-grid). Vertices are
-// welded by quantized XY (top is single-valued in z), re-wound +Z. Flat base.
-export function buildSolidFromMesh(topTris, eps = 1e-3) {
-  const q = (v) => Math.round(v / eps);
-  const idOf = new Map();
-  const vx = [], vy = [], vz = [];
-  const vid = (x, y, z) => {
-    const k = q(x) + "_" + q(y);
-    let id = idOf.get(k);
-    if (id === undefined) { id = vx.length; idOf.set(k, id); vx.push(x); vy.push(y); vz.push(z); }
-    return id;
-  };
-  const tris = [];
-  for (let i = 0; i < topTris.length; i += 9) {
-    let a = vid(topTris[i], topTris[i + 1], topTris[i + 2]);
-    let b = vid(topTris[i + 3], topTris[i + 4], topTris[i + 5]);
-    let c = vid(topTris[i + 6], topTris[i + 7], topTris[i + 8]);
-    if (a === b || b === c || a === c) continue;
-    const area = (vx[b] - vx[a]) * (vy[c] - vy[a]) - (vy[b] - vy[a]) * (vx[c] - vx[a]);
-    if (Math.abs(area) < eps * eps) continue;
-    if (area < 0) { const t = b; b = c; c = t; }
-    tris.push(a, b, c);
-  }
-  return assembleSolid(tris, vx.length,
-    (id) => [vx[id], vy[id]],
-    (id) => vz[id],
-    () => 0, "flat");
 }

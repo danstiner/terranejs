@@ -3,9 +3,12 @@ import assert from "node:assert/strict";
 import {
   CELL_CAP, tileSpanPx, cellWindows, cellBbox, cellsBbox, ghostCells, vertexMask,
   insideMin, bakeFlatten, footprintPx, cellRingLatLon, pruneToOrigin, connectedToOrigin,
+  footprintCellMaskPx,
 } from "../js/tiles.js";
 import { lonToGlobalX, latToGlobalY } from "../js/tilemath.js";
 import { pointInPolygon } from "../js/polyclip.js";
+import { buildSolid } from "../js/mesh.js";
+import { checkWatertight, signedVolume } from "../js/validate.js";
 
 const CENTER = [47.6, -122.3], SCALE = 476190.4762, W = 250; // ~2.1 mm = 1 km
 
@@ -214,4 +217,71 @@ test("hex footprint: absolute vertex positions, order, and edge length", () => {
     const nx = v[(k2 + 1) % 6];
     assert.ok(Math.abs(Math.hypot(nx[0] - v[k2][0], nx[1] - v[k2][1]) - S / 2) < 1e-9, `edge ${k2} length S/2`);
   }
+});
+
+test("footprintCellMaskPx: mask area matches the analytic footprint", () => {
+  for (const z of [10, 12]) {
+    for (const [shape, areaF] of [["hex", (3 * Math.sqrt(3)) / 8], ["circle", Math.PI / 4]]) {
+      const S = tileSpanPx(CENTER[0], SCALE, W, z);
+      const { wins } = cellWindows(CENTER, SCALE, W, [[0, 0]], z, shape);
+      const win = wins.get("0,0");
+      const ring = footprintPx(CENTER, SCALE, W, [0, 0], z, shape);
+      const mask = footprintCellMaskPx(ring, win.gw, win.gh, win.gx0, win.gy0);
+      const area = mask.reduce((a, b) => a + b, 0);
+      const want = areaF * S * S;
+      assert.ok(Math.abs(area - want) / want < 0.02, `${shape} z${z}: ${area} vs ${want}`);
+    }
+  }
+});
+
+test("hex stair masks: adjacent tiles never double-claim a global cell", () => {
+  let checked = 0;
+  for (const [dq, dr] of [[1, 0], [0, 1], [1, -1]]) {
+    for (const z of [10, 12]) {
+      const cells = [[0, 0], [dq, dr]];
+      let wins;
+      try { ({ wins } = cellWindows(CENTER, SCALE, W, cells, z, "hex")); } catch { continue; }
+      const [wa, wb] = cells.map((c2) => wins.get(`${c2[0]},${c2[1]}`));
+      const [ra, rb] = cells.map((c2) => footprintPx(CENTER, SCALE, W, c2, z, "hex"));
+      const [ma, mb] = [[wa, ra], [wb, rb]].map(([w2, r2]) =>
+        footprintCellMaskPx(r2, w2.gw, w2.gh, w2.gx0, w2.gy0));
+      const ox0 = Math.max(wa.gx0, wb.gx0), ox1 = Math.min(wa.gx0 + wa.gw - 1, wb.gx0 + wb.gw - 1);
+      const oy0 = Math.max(wa.gy0, wb.gy0), oy1 = Math.min(wa.gy0 + wa.gh - 1, wb.gy0 + wb.gh - 1);
+      let both = 0, cellsSeen = 0;
+      for (let gy = oy0; gy < oy1; gy++) {
+        for (let gx = ox0; gx < ox1; gx++) {
+          const inA = ma[(gy - wa.gy0) * (wa.gw - 1) + (gx - wa.gx0)];
+          const inB = mb[(gy - wb.gy0) * (wb.gw - 1) + (gx - wb.gx0)];
+          if (inA && inB) both++;
+          cellsSeen++;
+        }
+      }
+      if (dq === 0) {
+        // horizontal shared edge: tight-bbox windows abut at a single vertex
+        // row, so the cell overlap is empty — double-claim impossible
+        assert.equal(cellsSeen, 0, `direction ${dq},${dr} z${z}: windows abut`);
+        assert.equal(wa.gy0 + wa.gh - 1, wb.gy0, `direction ${dq},${dr} z${z}: shared vertex row`);
+      } else {
+        assert.ok(cellsSeen > 100, `direction ${dq},${dr} z${z}: overlap region non-trivial`);
+      }
+      assert.equal(both, 0, `direction ${dq},${dr} z${z}: ${both} double-claimed cells`);
+      checked++;
+    }
+  }
+  assert.ok(checked >= 5, `enough combos ran (${checked})`);
+});
+
+test("hex stair solid: watertight, positive volume", () => {
+  const z = 10;
+  const { wins } = cellWindows(CENTER, SCALE, W, [[0, 0]], z, "hex");
+  const win = wins.get("0,0");
+  const ring = footprintPx(CENTER, SCALE, W, [0, 0], z, "hex");
+  const mask = footprintCellMaskPx(ring, win.gw, win.gh, win.gx0, win.gy0);
+  const grid = Float32Array.from({ length: win.gw * win.gh }, (_, i) =>
+    200 * Math.sin((i % win.gw) / 17) * Math.cos(Math.floor(i / win.gw) / 13));
+  const solid = buildSolid(grid, win.gw, win.gh,
+    { r0: 0, r1: win.gh - 1, c0: 0, c1: win.gw - 1 }, mask,
+    { dx: 0.5, dy: 0.5, mmPerM: 0.01, emin: -220, exag: 1, base: 3 });
+  assert.ok(checkWatertight(solid).closed, "watertight");
+  assert.ok(signedVolume(solid) > 0, "positive volume");
 });

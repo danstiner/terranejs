@@ -49,6 +49,34 @@ export function footprintPx([lat, lon], scale, tileWmm, [q, r], z, shape) {
   });
 }
 
+// Stair cell mask for a footprint ring, decided in GLOBAL pixel coordinates:
+// cell (r,c) of a window at (gx0,gy0) has its center at integer+0.5 globals,
+// and ring verts are bit-identical across adjacent tiles (half-unit lattice),
+// so every tile reaches the same verdict for the same cell — masks are
+// deterministic and never double-claim a seam cell. Per-row scanline (same
+// approach as vertexMask): crossings depend only on the row's gy.
+export function footprintCellMaskPx(ring, gw, gh, gx0, gy0) {
+  const cw = gw - 1;
+  const mask = new Uint8Array(cw * (gh - 1));
+  const m = ring.length;
+  for (let r = 0; r < gh - 1; r++) {
+    const gy = gy0 + r + 0.5;
+    const xs = [];
+    for (let i = 0, j = m - 1; i < m; j = i++) {
+      const [xi, yi] = ring[i], [xj, yj] = ring[j];
+      if ((yi > gy) !== (yj > gy)) xs.push(((xj - xi) * (gy - yi)) / (yj - yi) + xi);
+    }
+    xs.sort((a, b) => a - b);
+    for (let c = 0; c < cw; c++) {
+      const gx = gx0 + c + 0.5;
+      let lo = 0, hi = xs.length;
+      while (lo < hi) { const mid = (lo + hi) >> 1; if (xs[mid] <= gx) lo = mid + 1; else hi = mid; }
+      mask[r * cw + c] = (xs.length - lo) & 1;
+    }
+  }
+  return mask;
+}
+
 // Per-cell pixel windows at zoom z. Cell edges land on Math.round of the exact
 // Mercator boundary, so adjacent cells SHARE the boundary pixel index and
 // physical tile size quantizes to pixel pitch (≤1 px).
