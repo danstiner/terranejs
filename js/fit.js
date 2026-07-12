@@ -5,8 +5,8 @@
 // ground metres via an ellipsoidal metres-per-degree series at the region's
 // centre latitude — within ~0.1-0.3% of topotile's UTM over these extents,
 // no projection lib needed. Per-tile layout constants (tile size, pixel
-// pitch, grid dims) live in app.js layoutFit — this module only sizes the
-// region and picks a starting scale.
+// pitch, grid dims) live in app.js layoutFit (consuming this module's
+// PITCH_MM) — this module only sizes the region and picks a starting scale.
 
 const D2R = Math.PI / 180;
 
