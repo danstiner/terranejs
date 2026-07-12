@@ -127,10 +127,17 @@ function stampTrail(s, grid, ctx, mask, sIdx) {
 function bakedSurface(s, rawGrid, gw, gh, f, waterGrid = rawGrid) {
   const k = (1000 / f.scale) * s.exag; // print mm per grid unit
   const oMask = s.waterDrop > 0 ? oceanMask(waterGrid, gw, gh, 0) : null; // sea level = 0, bathymetry-valid data
+  const bm = s.boundary && s.flattenOutside ? vertexMask(s.boundary, f.bbox, gw, gh) : null;
+  // outside the boundary everything becomes plinth: no recess is cut there and
+  // the preview must not color it as water (masking only clears outside bits,
+  // which the inside-only land min below never reads)
+  if (bm && oMask) for (let i = 0; i < oMask.length; i++) oMask[i] &= bm[i];
   let grid = bakeWater(s, rawGrid, oMask, k);
-  if (s.boundary && s.flattenOutside) {
-    const bm = vertexMask(s.boundary, f.bbox, gw, gh);
-    grid = bakeFlatten(grid, bm, insideMin(grid, bm));
+  if (bm) {
+    // plinth datum = lowest LAND inside the park: ocean vertices carry the
+    // recess constant / bathymetry and would poison the z-frame
+    const land = oMask ? bm.map((v, i) => (v && !oMask[i] ? 1 : 0)) : bm;
+    grid = bakeFlatten(grid, bm, insideMin(grid, land));
   }
   const dx = f.widthMm / (gw - 1), dy = f.heightMm / (gh - 1);
   const ctx = trailContext(s, grid, gw, gh, f, Math.max(dx, dy));
@@ -600,15 +607,26 @@ async function export3MF() {
     const rawWC = mosaicWater === mosaicC ? rawC
       : resampleBilinear(mosaicWater, uniBbox, gwC, ghC);
     const oMaskC = s.waterDrop > 0 ? oceanMask(rawWC, gwC, ghC, 0) : null;
+    const wantFlatten = !!(s.boundary && s.flattenOutside);
+    let flatMin = Infinity, bmC = null;
+    if (wantFlatten) {
+      bmC = vertexMask(s.boundary, uniBbox, gwC, ghC);
+      // outside the boundary everything becomes plinth: no recess is cut
+      // there and no insert may be emitted for it (per-tile floods seed off
+      // this mask, so the scoping propagates to every tile)
+      if (oMaskC) for (let i = 0; i < oMaskC.length; i++) oMaskC[i] &= bmC[i];
+    }
     const gridC1 = bakeWater(s, rawC, oMaskC, k);
     // flatten min is computed ONCE on the water-baked context grid and reused
     // by every tile — per-window minima would step the plinth at seams
-    let flatMin = Infinity, bmC = null;
-    const wantFlatten = !!(s.boundary && s.flattenOutside);
     if (wantFlatten) {
-      bmC = vertexMask(s.boundary, uniBbox, gwC, ghC);
-      flatMin = insideMin(gridC1, bmC);
+      // plinth datum = lowest LAND inside the park: ocean vertices carry the
+      // recess constant / bathymetry and would poison the whole export's z-frame
+      const landC = oMaskC ? bmC.map((v, i) => (v && !oMaskC[i] ? 1 : 0)) : bmC;
+      flatMin = insideMin(gridC1, landC);
     }
+    const flatNote = wantFlatten && !Number.isFinite(flatMin)
+      ? " — flatten skipped: no land inside the boundary in this layout" : "";
     const gridC = wantFlatten ? bakeFlatten(gridC1, bmC, flatMin) : gridC1;
     // trail sampled at the FINE pitch (elevations off the coarse grid): the
     // per-tile rasterization needs sample spacing ≤ halfW to stay gap-free
@@ -698,8 +716,15 @@ async function export3MF() {
         }
         oMaskT = oceanMaskSeeded(waterT, gwT, ghT, seeds);
       }
+      let bmT = null;
+      if (wantFlatten) {
+        bmT = vertexMask(s.boundary, tb, gwT, ghT);
+        // outside the boundary everything becomes plinth: no recess is cut
+        // there and no insert may be emitted for it
+        if (oMaskT) for (let i = 0; i < oMaskT.length; i++) oMaskT[i] &= bmT[i];
+      }
       let grid = bakeWater(s, rawT, oMaskT, k);
-      if (wantFlatten) grid = bakeFlatten(grid, vertexMask(s.boundary, tb, gwT, ghT), flatMin);
+      if (wantFlatten) grid = bakeFlatten(grid, bmT, flatMin);
 
       // trail: same global context, rasterized in this window's local frame so
       // the groove floor and ribbon heights are seam-continuous by construction
@@ -820,7 +845,7 @@ async function export3MF() {
     $("progress").textContent =
       `exported ${n} tile${n === 1 ? "" : "s"}${water} → tilejs_export.3mf ` +
       `(${(bytes.length / 1e6).toFixed(1)} MB, ${(tris / 1e6).toFixed(1)}M triangles, z${z}, ${printPitchMm(cLat, z, f.scale).toFixed(2)} mm/px)` +
-      trailNote + floorNote;
+      trailNote + floorNote + flatNote;
   } catch (err) {
     $("progress").innerHTML = `<span class="warn">export failed: ${err.message}</span>`;
   } finally {

@@ -5,7 +5,6 @@
 // adjacent tiles read identical seam data by construction.
 import { lonToGlobalX, latToGlobalY, globalXToLon, globalYToLat, printPitchMm }
   from "./tilemath.js";
-import { pointInPolygon } from "./polyclip.js";
 
 export const CELL_CAP = 64;
 
@@ -72,14 +71,26 @@ export function ghostCells(cells) {
 }
 
 // Vertex-center inside mask over a window bbox (row 0 = north) — the boundary
-// flatten reads this; cells stay meshed, only elevations change.
+// flatten reads this. Per-column scanline: crossings depend only on the
+// column's longitude, so compute them once per column instead of per vertex
+// (pointInPolygon per vertex is O(ringLen) each — seconds per export tile).
 export function vertexMask(polygon, [s, w, n, e], gw, gh) {
   const mask = new Uint8Array(gw * gh);
-  for (let r = 0; r < gh; r++) {
-    const lat = n - ((n - s) * r) / (gh - 1);
-    for (let c = 0; c < gw; c++) {
-      const lon = w + ((e - w) * c) / (gw - 1);
-      mask[r * gw + c] = pointInPolygon([lat, lon], polygon) ? 1 : 0;
+  const m = polygon.length;
+  for (let c = 0; c < gw; c++) {
+    const lon = w + ((e - w) * c) / (gw - 1);
+    const xs = [];
+    for (let i = 0, j = m - 1; i < m; j = i++) {
+      const [yi, xi] = polygon[i], [yj, xj] = polygon[j]; // [lat, lon]
+      if ((xi > lon) !== (xj > lon)) xs.push(((yj - yi) * (lon - xi)) / (xj - xi) + yi);
+    }
+    xs.sort((a, b) => a - b);
+    for (let r = 0; r < gh; r++) {
+      const lat = n - ((n - s) * r) / (gh - 1);
+      // inside = odd number of crossings strictly above lat (same strict < as pointInPolygon)
+      let lo = 0, hi = xs.length;
+      while (lo < hi) { const mid = (lo + hi) >> 1; if (xs[mid] <= lat) lo = mid + 1; else hi = mid; }
+      mask[r * gw + c] = (xs.length - lo) & 1;
     }
   }
   return mask;

@@ -5,6 +5,7 @@ import {
   insideMin, bakeFlatten,
 } from "../js/tiles.js";
 import { lonToGlobalX, latToGlobalY } from "../js/tilemath.js";
+import { pointInPolygon } from "../js/polyclip.js";
 
 const CENTER = [47.6, -122.3], SCALE = 476190.4762, W = 250; // ~2.1 mm = 1 km
 
@@ -98,6 +99,35 @@ test("bakeFlatten: outside -> inside min, inside untouched", () => {
     else assert.equal(out[i], min, `outside ${i}`);
   }
   assert.notEqual(out, grid, "copy, not in-place");
+});
+
+test("vertexMask scanline matches pointInPolygon exactly", () => {
+  const tb = [46.0, -122.0, 47.0, -121.0];
+  for (let trial = 0; trial < 30; trial++) {
+    const nV = 5 + (trial % 7);
+    const ring = Array.from({ length: nV }, (_, i2) => {
+      const a = (2 * Math.PI * i2) / nV;
+      const rad = 0.2 + 0.35 * Math.abs(Math.sin(trial * 12.9898 + i2 * 78.233));
+      return [46.5 + rad * Math.sin(a), -121.5 + rad * Math.cos(a)];
+    });
+    const gw = 24, gh = 19;
+    const mk = vertexMask(ring, tb, gw, gh);
+    for (let r = 0; r < gh; r++) {
+      const lat = tb[2] - ((tb[2] - tb[0]) * r) / (gh - 1);
+      for (let c = 0; c < gw; c++) {
+        const lon = tb[1] + ((tb[3] - tb[1]) * c) / (gw - 1);
+        assert.equal(mk[r * gw + c], pointInPolygon([lat, lon], ring) ? 1 : 0,
+          `trial ${trial} r${r} c${c}`);
+      }
+    }
+  }
+});
+
+test("bakeFlatten: Infinity min (no inside land) is a no-op copy", () => {
+  const grid = Float32Array.from([1, 2, 3, 4]);
+  const out = bakeFlatten(grid, new Uint8Array(4), Infinity);
+  assert.deepEqual([...out], [1, 2, 3, 4]);
+  assert.notEqual(out, grid);
 });
 
 test("seam sharing holds across an 8x8 layout spanning negative indices", () => {
