@@ -501,7 +501,7 @@ async function loadPreview() {
     });
     const mask = new Uint8Array((gw - 1) * (gh - 1)).fill(1);
     // per-cell footprint stair masks at preview resolution (square: all-ones).
-    // Scoped to each cell's own span — cellMask over the whole grid was
+    // Scoped to each cell's own span — a whole-grid polygon mask was
     // O(cells × grid) and stalled large hex layouts.
     const masks = s.shape === "square" ? null : s.cells.map((cell, idx) => {
       const ring = cellRingLatLon(s.center, s.scale, s.tileWmm, cell, s.shape);

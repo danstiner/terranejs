@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { pointInPolygon, cellMask } from "../js/polyclip.js";
+import { pointInPolygon } from "../js/polyclip.js";
 import { buildPreviewSolid, buildTrailShell, buildSolid as buildSolidIdx } from "../js/mesh.js";
 import { signedVolume as volIdx, checkWatertight as wtIdx } from "../js/validate.js";
 
@@ -32,25 +32,6 @@ test("pointInPolygon: square", () => {
   assert.ok(pointInPolygon([5, 5], sq));
   assert.ok(!pointInPolygon([-1, 5], sq));
   assert.ok(!pointInPolygon([5, 20], sq));
-});
-
-test("cellMask: rectangle covering the whole bbox = all cells in", () => {
-  const bbox = [46, -122, 47, -121];
-  const rect = [[46, -122], [46, -121], [47, -121], [47, -122]];
-  const gw = 6, gh = 5;
-  const mask = cellMask(rect, bbox, gw, gh);
-  assert.equal(mask.length, (gw - 1) * (gh - 1));
-  assert.ok(mask.every((v) => v === 1));
-});
-
-test("cellMask: half-plane polygon masks ~half the cells", () => {
-  const bbox = [46, -122, 47, -121];
-  // western half only
-  const half = [[46, -122], [46, -121.5], [47, -121.5], [47, -122]];
-  const gw = 21, gh = 21;
-  const mask = cellMask(half, bbox, gw, gh);
-  const frac = mask.reduce((a, b) => a + b, 0) / mask.length;
-  assert.ok(frac > 0.4 && frac < 0.6, `covered ${(frac * 100).toFixed(0)}%`);
 });
 
 const PGEOM = { dx: 10, dy: 10, offX: 0, offY: 0, mmPerM: 1, erange: 1, exag: 1 };
