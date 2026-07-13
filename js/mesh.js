@@ -1,6 +1,6 @@
-// Top-surface mesh for the 3D preview: per-tile heightfield triangles in world
-// mm, stair-clipped to the polygon via a cell mask. Phase 5 extends this file
-// with skirt + base for watertight export solids.
+// Preview + export meshing: per-tile heightfield triangles in world mm,
+// stair-clipped to the polygon via a cell footprint mask, plus the skirt +
+// base that close them into watertight export solids.
 
 // hypsometric ramp, t in [0,1] -> [r,g,b] 0..1
 const STOPS = [

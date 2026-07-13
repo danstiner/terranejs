@@ -66,18 +66,3 @@ export function sourceZoom(bbox, latDeg, scale, maxTiles,
   while (z > 1 && tileRangeForBBox(bbox, z).count > maxTiles) z--;
   return z;
 }
-
-// Pixel-center lattice of a bbox at zoom z: vertex (r,c) is the sample at
-// integer global pixel (gx0+c, gy0+r), center on or inside the bbox, row 0 =
-// north. Interior (not covering) so the print never exceeds the fitted size;
-// may return gw/gh <= 0 for sub-pixel bboxes — callers must guard.
-export function pixelWindow([s, w, n, e], z) {
-  // half-pixel comparisons tolerate the ~1e-9 px round-trip error of the
-  // transcendental inverse-Mercator; centers exactly on the edge are kept
-  const EPS = 1e-6;
-  const gx0 = Math.ceil(lonToGlobalX(w, z) - 0.5 - EPS);
-  const gx1 = Math.floor(lonToGlobalX(e, z) - 0.5 + EPS);
-  const gy0 = Math.ceil(latToGlobalY(n, z) - 0.5 - EPS);
-  const gy1 = Math.floor(latToGlobalY(s, z) - 0.5 + EPS);
-  return { gx0, gy0, gw: gx1 - gx0 + 1, gh: gy1 - gy0 + 1, z };
-}

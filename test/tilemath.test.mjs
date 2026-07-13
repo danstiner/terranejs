@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   groundResolution, lonToGlobalX, latToGlobalY, globalXToLon, globalYToLat,
-  printPitchMm, sourceZoom, pixelWindow, tileRangeForBBox, PITCH_FLOOR_MM,
+  printPitchMm, sourceZoom, tileRangeForBBox, PITCH_FLOOR_MM,
 } from "../js/tilemath.js";
 
 test("globalXToLon/globalYToLat invert the forward maps", () => {
@@ -39,34 +39,3 @@ test("sourceZoom: caps at the pyramid max", () => {
   assert.equal(sourceZoom([47.5, -122.0, 47.51, -121.99], 47.5, 20000, 1e9), 15);
 });
 
-test("pixelWindow: interior pixel-center lattice, row 0 = north", () => {
-  const z = 10;
-  // bbox edges strictly between pixel centers: x centers 100.5..110.5 within
-  // [100.4, 110.6], y centers 200.5..205.5 within [200.4, 205.6] — avoids
-  // knife-edge ceil/floor on inverse-Mercator round-trip error
-  const bbox = [globalYToLat(205.6, z), globalXToLon(100.4, z),
-    globalYToLat(200.4, z), globalXToLon(110.6, z)];
-  const win = pixelWindow(bbox, z);
-  assert.deepEqual(
-    { gx0: win.gx0, gy0: win.gy0, gw: win.gw, gh: win.gh },
-    { gx0: 100, gy0: 200, gw: 11, gh: 6 });
-  assert.ok(globalXToLon(win.gx0 + 0.5, z) >= bbox[1] - 1e-9);
-  assert.ok(globalXToLon(win.gx0 + win.gw - 1 + 0.5, z) <= bbox[3] + 1e-9);
-  assert.ok(globalYToLat(win.gy0 + 0.5, z) <= bbox[2] + 1e-9);
-  assert.ok(globalYToLat(win.gy0 + win.gh - 1 + 0.5, z) >= bbox[0] - 1e-9);
-});
-
-test("pixelWindow: bbox edges exactly on pixel centers are kept (epsilon)", () => {
-  const z = 10;
-  const bbox = [globalYToLat(205.5, z), globalXToLon(100.5, z),
-    globalYToLat(200.5, z), globalXToLon(110.5, z)];
-  const win = pixelWindow(bbox, z);
-  assert.deepEqual({ gx0: win.gx0, gy0: win.gy0, gw: win.gw, gh: win.gh },
-    { gx0: 100, gy0: 200, gw: 11, gh: 6 });
-});
-
-test("pixelWindow: sub-pixel bbox yields an empty window (caller must guard)", () => {
-  const z = 5;
-  const win = pixelWindow([10, globalXToLon(50.6, z), 10.001, globalXToLon(50.9, z)], z);
-  assert.ok(win.gw <= 0 || win.gh <= 0);
-});
