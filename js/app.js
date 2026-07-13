@@ -5,7 +5,7 @@ import { bboxExtentMeters, suggestScale, PITCH_MM, fmtMmPerKm } from "./fit.js";
 import { pickZoom, tileRangeForBBox, sourceZoom, globalXToLon, globalYToLat, printPitchMm } from "./tilemath.js";
 import { fetchMosaic } from "./terrain.js";
 import { resampleBilinear, gridRange, cropGrid } from "./resample.js";
-import { cellsBbox, cellWindows, CELL_CAP, vertexMask, insideMin, bakeFlatten,
+import { cellsBbox, cellWindows, CELL_CAP,
   cellRingLatLon, footprintPx, footprintCellMaskPx, connectedToOrigin, pruneToOrigin,
   HEX_H } from "./tiles.js";
 import { pointInPolygon } from "./polyclip.js";
@@ -23,8 +23,6 @@ const store = createStore({
   cells: [], // [[i,j],…]; [0,0] present whenever a layout exists
   scale: null, // 1:N
   tileWmm: 220, // print size of one tile (largest dimension); fits a Prusa Core One bed
-  boundary: null, // optional park outline (reference + flatten)
-  flattenOutside: false,
   exag: 1.0,
   base: 6.0,
   waterDrop: 3, // ocean recess depth (mm); 0 = off
@@ -71,7 +69,7 @@ const countIn = (cells, sp, cw) => {
   return m;
 };
 
-// Ocean bake on any grid, given its ocean vertex mask. Plain mode flattens
+// Ocean bake on any grid, given its ocean vertex mask. Plain mode recesses
 // open ocean to one sunken plane; insert mode keeps the ocean-floor relief,
 // lowered by the drop (exag-corrected so the print-z drop is exactly waterDrop).
 function bakeWater(s, rawGrid, oMask, k) {
@@ -130,18 +128,7 @@ function stampTrail(s, grid, ctx, mask, sIdx) {
 function bakedSurface(s, rawGrid, gw, gh, f, waterGrid = rawGrid) {
   const k = (1000 / f.scale) * s.exag; // print mm per grid unit
   const oMask = s.waterDrop > 0 ? oceanMask(waterGrid, gw, gh, 0) : null; // sea level = 0, bathymetry-valid data
-  const bm = s.boundary && s.flattenOutside ? vertexMask(s.boundary, f.bbox, gw, gh) : null;
-  // outside the boundary everything becomes plinth: no recess is cut there and
-  // the preview must not color it as water (masking only clears outside bits,
-  // which the inside-only land min below never reads)
-  if (bm && oMask) for (let i = 0; i < oMask.length; i++) oMask[i] &= bm[i];
   let grid = bakeWater(s, rawGrid, oMask, k);
-  if (bm) {
-    // plinth datum = lowest LAND inside the park: ocean vertices carry the
-    // recess constant / bathymetry and would poison the z-frame
-    const land = oMask ? bm.map((v, i) => (v && !oMask[i] ? 1 : 0)) : bm;
-    grid = bakeFlatten(grid, bm, insideMin(grid, land));
-  }
   const dx = f.widthMm / (gw - 1), dy = f.heightMm / (gh - 1);
   const ctx = trailContext(s, grid, gw, gh, f, Math.max(dx, dy));
   let pathMask = null, ribbon = null;
@@ -207,13 +194,12 @@ for (const p of PRESETS) {
 preset.addEventListener("change", () => {
   const p = PRESETS.find((x) => x.name === preset.value);
   if (!p) return;
-  store.set({ center: p.center, scale: p.scale, cells: [[0, 0]],
-    boundary: p.boundary ?? null, flattenOutside: false });
+  store.set({ center: p.center, scale: p.scale, cells: [[0, 0]] });
   map.fitBbox(cellsBbox(p.center, p.scale, store.get().tileWmm, [[0, 0]]));
 });
 $("clear").addEventListener("click", () => {
   preset.value = "";
-  store.set({ center: null, cells: [], scale: null, boundary: null, flattenOutside: false, tracks: [] });
+  store.set({ center: null, cells: [], scale: null, tracks: [] });
   // drop the cached grid and orphan any in-flight fetch so a stale preview
   // can't outlive the layout it was fetched for
   pv = null; pvKey = null; loadToken++;
@@ -320,7 +306,6 @@ $("waterSeparate").addEventListener("change", (e) => store.set({
   waterSeparate: e.target.checked,
   waterDrop: e.target.checked ? Math.max(1, store.get().waterDrop) : store.get().waterDrop,
 }));
-$("flattenOutside").addEventListener("change", (e) => store.set({ flattenOutside: e.target.checked }));
 $("export").addEventListener("click", export3MF);
 
 // --- preview state ---------------------------------------------------------
@@ -340,13 +325,12 @@ function scheduleReload() {
 }
 
 // --- render ----------------------------------------------------------------
-let layoutKey = null, boundaryRef;
+let layoutKey = null;
 store.subscribe((s) => {
   const lk = keyOf(s);
-  // layout/boundary redraw only when their inputs change: a full layer
-  // teardown mid-drag also silently kills the marker's drag in Leaflet
+  // layout redraw only when its inputs change: a full layer teardown
+  // mid-drag also silently kills the marker's drag in Leaflet
   if (lk !== layoutKey) { layoutKey = lk; map.setLayout(s); }
-  if (s.boundary !== boundaryRef) { boundaryRef = s.boundary; map.setBoundary(s.boundary); }
   renderTracks(s);
   // one bake per event, shared by the mass estimate and the tile rebuild
   const baked = pv && pvKey === lk ? bakedSurface(s, pv.grid, pv.gw, pv.gh, pv.f, pv.waterGrid) : null;
@@ -395,8 +379,6 @@ function renderSettings(s, baked) {
   $("waterDrop").value = s.waterDrop; // range thumb must snap to a clamped value, even while dragging
   $("waterOpts").hidden = s.waterDrop <= 0;
   $("waterSeparate").checked = s.waterSeparate;
-  $("flattenRow").hidden = !s.boundary;
-  $("flattenOutside").checked = s.flattenOutside;
 
   $("trailOpts").hidden = !s.tracks.length;
   if (s.tracks.length) {
@@ -578,8 +560,7 @@ function rebuildTiles(baked) {
 
 // --- 3MF export --------------------------------------------------------------
 // Fetches terrain at the export zoom and meshes every selected cell at full
-// grid density over the shared lattice; no region clip (Task 5 adds boundary
-// flatten via vertex elevation, not geometry clipping).
+// grid density over the shared lattice; no region clip.
 
 async function export3MF() {
   const s = store.get();
@@ -594,7 +575,7 @@ async function export3MF() {
     const di = Math.min(3, Math.max(0, Math.round(s.exportDetail)));
     const z = Math.max(1, zSrc - (3 - di));
     // shared lattice: every cell's window quantizes to the same global pixel
-    // grid, adjacent cells share their boundary index — seams read identical data
+    // grid, adjacent cells share their edge pixel index — seams read identical data
     const { spanPx, wins, union } = cellWindows(s.center, s.scale, s.tileWmm, s.cells, z, s.shape);
     const dx = s.tileWmm / spanPx, dy = dx; // Mercator is conformal: square cells
     const mmPerM = 1000 / s.scale;
@@ -638,27 +619,7 @@ async function export3MF() {
     const rawWC = mosaicWater === mosaicC ? rawC
       : resampleBilinear(mosaicWater, uniBbox, gwC, ghC);
     const oMaskC = s.waterDrop > 0 ? oceanMask(rawWC, gwC, ghC, 0) : null;
-    const wantFlatten = !!(s.boundary && s.flattenOutside);
-    let flatMin = Infinity, bmC = null;
-    if (wantFlatten) {
-      bmC = vertexMask(s.boundary, uniBbox, gwC, ghC);
-      // outside the boundary everything becomes plinth: no recess is cut
-      // there and no insert may be emitted for it (per-tile floods seed off
-      // this mask, so the scoping propagates to every tile)
-      if (oMaskC) for (let i = 0; i < oMaskC.length; i++) oMaskC[i] &= bmC[i];
-    }
-    const gridC1 = bakeWater(s, rawC, oMaskC, k);
-    // flatten min is computed ONCE on the water-baked context grid and reused
-    // by every tile — per-window minima would step the plinth at seams
-    if (wantFlatten) {
-      // plinth datum = lowest LAND inside the park: ocean vertices carry the
-      // recess constant / bathymetry and would poison the whole export's z-frame
-      const landC = oMaskC ? bmC.map((v, i) => (v && !oMaskC[i] ? 1 : 0)) : bmC;
-      flatMin = insideMin(gridC1, landC);
-    }
-    const flatNote = wantFlatten && !Number.isFinite(flatMin)
-      ? " — flatten skipped: no land inside the boundary in this layout" : "";
-    const gridC = wantFlatten ? bakeFlatten(gridC1, bmC, flatMin) : gridC1;
+    const gridC = bakeWater(s, rawC, oMaskC, k);
     // trail sampled at the FINE pitch (elevations off the coarse grid): the
     // per-tile rasterization needs sample spacing ≤ halfW to stay gap-free
     const trail = trailContext(s, gridC, gwC, ghC,
@@ -771,15 +732,7 @@ async function export3MF() {
         }
         oMaskT = oceanMaskSeeded(waterT, gwT, ghT, seeds);
       }
-      let bmT = null;
-      if (wantFlatten) {
-        bmT = vertexMask(s.boundary, tb, gwT, ghT);
-        // outside the boundary everything becomes plinth: no recess is cut
-        // there and no insert may be emitted for it
-        if (oMaskT) for (let i = 0; i < oMaskT.length; i++) oMaskT[i] &= bmT[i];
-      }
       let grid = bakeWater(s, rawT, oMaskT, k);
-      if (wantFlatten) grid = bakeFlatten(grid, bmT, flatMin);
 
       // trail: same global context, rasterized in this window's local frame so
       // the groove floor and ribbon heights are seam-continuous by construction
@@ -900,7 +853,7 @@ async function export3MF() {
     $("progress").textContent =
       `exported ${n} tile${n === 1 ? "" : "s"}${water} → tilejs_export.3mf ` +
       `(${(bytes.length / 1e6).toFixed(1)} MB, ${(tris / 1e6).toFixed(1)}M triangles, z${z}, ${printPitchMm(cLat, z, f.scale).toFixed(2)} mm/px)` +
-      trailNote + floorNote + flatNote;
+      trailNote + floorNote;
   } catch (err) {
     $("progress").innerHTML = `<span class="warn">export failed: ${err.message}</span>`;
   } finally {
@@ -923,7 +876,7 @@ function download(blob, name) {
 (function start() {
   const p = PRESETS.find((x) => x.name === DEFAULT_PRESET) || PRESETS[0];
   preset.value = p.name;
-  store.set({ center: p.center, scale: p.scale, cells: [[0, 0]], boundary: p.boundary ?? null });
+  store.set({ center: p.center, scale: p.scale, cells: [[0, 0]] });
   map.fitBbox(cellsBbox(p.center, p.scale, store.get().tileWmm, [[0, 0]]));
   loadPreview();
 })();

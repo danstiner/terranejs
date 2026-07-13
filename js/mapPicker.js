@@ -12,7 +12,7 @@ export function initMap({ center, zoom, onPlace, onToggle, onMove }) {
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
   }).addTo(map);
 
-  let cellLayers = [], ghostLayers = [], marker = null, boundaryLayer = null, trackLayers = [];
+  let cellLayers = [], ghostLayers = [], marker = null, trackLayers = [];
 
   map.on("click", (e) => onPlace([e.latlng.lat, e.latlng.lng]));
 
@@ -42,13 +42,6 @@ export function initMap({ center, zoom, onPlace, onToggle, onMove }) {
         const ll = marker.getLatLng();
         onMove([ll.lat, ll.lng]);
       });
-    },
-    setBoundary(ring) {
-      if (boundaryLayer) { map.removeLayer(boundaryLayer); boundaryLayer = null; }
-      if (ring) {
-        boundaryLayer = L.polygon(ring,
-          { color: "#6d4c41", weight: 2, fill: false, dashArray: "4 8", interactive: false }).addTo(map);
-      }
     },
     setTrack(segments) {
       for (const l of trackLayers) map.removeLayer(l);

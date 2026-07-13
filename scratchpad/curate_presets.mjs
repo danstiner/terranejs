@@ -1,3 +1,7 @@
+// HISTORICAL — ran against the pre-removal boundaries.js (deleted in the
+// boundary-removal sweep); re-running would crash on the import. Kept with
+// its outputs (presets_curated.txt, test/reference/park_bboxes.json) as the
+// curation record.
 // One-time: rebake all presets for the 220 mm default tile and the
 // tile-first model. Parks get hand-curated feature centers anchored on a
 // rule-of-thirds point (per-axis span minimization keeps non-park area out);

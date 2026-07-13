@@ -53,8 +53,8 @@ export function footprintPx([lat, lon], scale, tileWmm, [q, r], z, shape) {
 // cell (r,c) of a window at (gx0,gy0) has its center at integer+0.5 globals,
 // and ring verts are bit-identical across adjacent tiles (half-unit lattice),
 // so every tile reaches the same verdict for the same cell — masks are
-// deterministic and never double-claim a seam cell. Per-row scanline (same
-// approach as vertexMask): crossings depend only on the row's gy.
+// deterministic and never double-claim a seam cell. Per-row scanline:
+// crossings depend only on the row's gy.
 export function footprintCellMaskPx(ring, gw, gh, gx0, gy0) {
   const cw = gw - 1;
   const mask = new Uint8Array(cw * (gh - 1));
@@ -78,7 +78,7 @@ export function footprintCellMaskPx(ring, gw, gh, gx0, gy0) {
 }
 
 // Per-cell pixel windows at zoom z. Cell edges land on Math.round of the exact
-// Mercator boundary, so adjacent cells SHARE the boundary pixel index and
+// Mercator crossing, so adjacent cells SHARE the edge pixel index and
 // physical tile size quantizes to pixel pitch (≤1 px).
 // Windows are inclusive pixel-center ranges: {gx0, gy0, gw, gh}.
 export function cellWindows([lat, lon], scale, tileWmm, cells, z, shape = "square") {
@@ -185,47 +185,4 @@ export function pruneToOrigin(cells, shape = "square") {
     }
   }
   return cells.filter((c) => seen.has(key(c)));
-}
-
-// Vertex-center inside mask over a window bbox (row 0 = north) — the boundary
-// flatten reads this. Per-column scanline: crossings depend only on the
-// column's longitude, so compute them once per column instead of per vertex
-// (pointInPolygon per vertex is O(ringLen) each — seconds per export tile).
-export function vertexMask(polygon, [s, w, n, e], gw, gh) {
-  const mask = new Uint8Array(gw * gh);
-  const m = polygon.length;
-  for (let c = 0; c < gw; c++) {
-    const lon = w + ((e - w) * c) / (gw - 1);
-    const xs = [];
-    for (let i = 0, j = m - 1; i < m; j = i++) {
-      const [yi, xi] = polygon[i], [yj, xj] = polygon[j]; // [lat, lon]
-      if ((xi > lon) !== (xj > lon)) xs.push(((yj - yi) * (lon - xi)) / (xj - xi) + yi);
-    }
-    xs.sort((a, b) => a - b);
-    for (let r = 0; r < gh; r++) {
-      const lat = n - ((n - s) * r) / (gh - 1);
-      // inside = odd number of crossings strictly above lat (same strict < as pointInPolygon)
-      let lo = 0, hi = xs.length;
-      while (lo < hi) { const mid = (lo + hi) >> 1; if (xs[mid] <= lat) lo = mid + 1; else hi = mid; }
-      mask[r * gw + c] = (xs.length - lo) & 1;
-    }
-  }
-  return mask;
-}
-
-// Min elevation over inside-mask vertices; Infinity when the window holds none.
-export function insideMin(grid, insideMask) {
-  let min = Infinity;
-  for (let i = 0; i < grid.length; i++) if (insideMask[i]) min = Math.min(min, grid[i]);
-  return min;
-}
-
-// Flatten-outside: copy with every outside vertex at `min`, so the plinth sits
-// at exactly base height. recessedGrid's sibling. `min` is REQUIRED and must be
-// the whole-layout inside minimum — a per-window local min would step at seams.
-export function bakeFlatten(grid, insideMask, min) {
-  if (!Number.isFinite(min)) return Float32Array.from(grid); // no inside vertex anywhere
-  const out = Float32Array.from(grid);
-  for (let i = 0; i < out.length; i++) if (!insideMask[i]) out[i] = min;
-  return out;
 }

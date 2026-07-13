@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  CELL_CAP, tileSpanPx, cellWindows, cellBbox, cellsBbox, ghostCells, vertexMask,
-  insideMin, bakeFlatten, footprintPx, cellRingLatLon, pruneToOrigin, connectedToOrigin,
+  CELL_CAP, tileSpanPx, cellWindows, cellBbox, cellsBbox, ghostCells,
+  footprintPx, cellRingLatLon, pruneToOrigin, connectedToOrigin,
   footprintCellMaskPx,
 } from "../js/tiles.js";
 import { lonToGlobalX, latToGlobalY } from "../js/tilemath.js";
@@ -65,16 +65,6 @@ test("cellsBbox: envelope of per-cell bboxes", () => {
   assert.deepEqual(cellsBbox(CENTER, SCALE, W, cells), want);
 });
 
-test("vertexMask: half-plane ≈ half, full cover = all", () => {
-  const tb = [47.0, -122.0, 47.2, -121.8];
-  const gw = 21, gh = 21;
-  const full = vertexMask([[46.9, -122.1], [46.9, -121.7], [47.3, -121.7], [47.3, -122.1]], tb, gw, gh);
-  assert.equal(full.reduce((a, b) => a + b, 0), gw * gh);
-  const half = vertexMask([[46.9, -121.9], [46.9, -121.7], [47.3, -121.7], [47.3, -121.9]], tb, gw, gh);
-  const frac = half.reduce((a, b) => a + b, 0) / (gw * gh);
-  assert.ok(frac > 0.4 && frac < 0.6, `half-plane frac ${frac}`);
-});
-
 test("CELL_CAP is 64", () => assert.equal(CELL_CAP, 64));
 
 test("cellBbox and cellWindows agree within quantization (0.5 px)", () => {
@@ -87,50 +77,6 @@ test("cellBbox and cellWindows agree within quantization (0.5 px)", () => {
     assert.ok(Math.abs(w2.gy0 - latToGlobalY(n, z)) <= 0.5 + 1e-6, `z${z} north`);
     assert.ok(Math.abs(w2.gy0 + w2.gh - 1 - latToGlobalY(s, z)) <= 0.5 + 1e-6, `z${z} south`);
   }
-});
-
-test("bakeFlatten: outside -> inside min, inside untouched", () => {
-  const gw = 21, gh = 21, tb = [47.0, -122.0, 47.2, -121.8];
-  const poly = [[46.9, -121.9], [46.9, -121.7], [47.3, -121.7], [47.3, -121.9]]; // east half
-  const grid = Float32Array.from({ length: gw * gh }, (_, i) => 100 + (i % gw));
-  const m = vertexMask(poly, tb, gw, gh);
-  const min = insideMin(grid, m);
-  assert.ok(Number.isFinite(min) && min >= 100, `inside min ${min}`);
-  const out = bakeFlatten(grid, m, min);
-  for (let i = 0; i < m.length; i++) {
-    if (m[i]) assert.equal(out[i], grid[i], `inside ${i}`);
-    else assert.equal(out[i], min, `outside ${i}`);
-  }
-  assert.notEqual(out, grid, "copy, not in-place");
-});
-
-test("vertexMask scanline matches pointInPolygon exactly", () => {
-  const tb = [46.0, -122.0, 47.0, -121.0];
-  for (let trial = 0; trial < 30; trial++) {
-    const nV = 5 + (trial % 7);
-    const ring = Array.from({ length: nV }, (_, i2) => {
-      const a = (2 * Math.PI * i2) / nV;
-      const rad = 0.2 + 0.35 * Math.abs(Math.sin(trial * 12.9898 + i2 * 78.233));
-      return [46.5 + rad * Math.sin(a), -121.5 + rad * Math.cos(a)];
-    });
-    const gw = 24, gh = 19;
-    const mk = vertexMask(ring, tb, gw, gh);
-    for (let r = 0; r < gh; r++) {
-      const lat = tb[2] - ((tb[2] - tb[0]) * r) / (gh - 1);
-      for (let c = 0; c < gw; c++) {
-        const lon = tb[1] + ((tb[3] - tb[1]) * c) / (gw - 1);
-        assert.equal(mk[r * gw + c], pointInPolygon([lat, lon], ring) ? 1 : 0,
-          `trial ${trial} r${r} c${c}`);
-      }
-    }
-  }
-});
-
-test("bakeFlatten: Infinity min (no inside land) is a no-op copy", () => {
-  const grid = Float32Array.from([1, 2, 3, 4]);
-  const out = bakeFlatten(grid, new Uint8Array(4), Infinity);
-  assert.deepEqual([...out], [1, 2, 3, 4]);
-  assert.notEqual(out, grid);
 });
 
 test("seam sharing holds across an 8x8 layout spanning negative indices", () => {
