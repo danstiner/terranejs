@@ -8,7 +8,7 @@ import { resampleBilinear, gridRange, cropGrid } from "./resample.js";
 import { cellsBbox, cellWindows, CELL_CAP, vertexMask, insideMin, bakeFlatten,
   cellRingLatLon, footprintPx, footprintCellMaskPx, connectedToOrigin, pruneToOrigin,
   HEX_H } from "./tiles.js";
-import { cellMask } from "./polyclip.js";
+import { pointInPolygon } from "./polyclip.js";
 import { buildPreviewSolid, buildSolid, buildTrailShell } from "./mesh.js";
 import { oceanMask, oceanMaskSeeded, cellOcean, erodeMask, recessedGrid,
   offsetGrid } from "./water.js";
@@ -293,6 +293,9 @@ $("shape").addEventListener("change", (e) => {
   const cells = !s.cells.length ? s.cells
     : shape === "circle" ? [[0, 0]]
     : pruneToOrigin(s.cells, shape);
+  const dropped = s.cells.length - cells.length;
+  if (dropped > 0) $("progress").textContent =
+    `switched to ${shape} — removed ${dropped} tile${dropped === 1 ? "" : "s"} the new adjacency doesn't connect`;
   store.set({ shape, cells });
 });
 $("scale").addEventListener("input", (e) => {
@@ -511,9 +514,23 @@ async function loadPreview() {
     });
     const mask = new Uint8Array((gw - 1) * (gh - 1)).fill(1);
     // per-cell footprint stair masks at preview resolution (square: all-ones).
-    // Each span meshes only its own footprint — hex bboxes overlap neighbors.
-    const masks = s.shape === "square" ? null : s.cells.map((cell) =>
-      cellMask(cellRingLatLon(s.center, s.scale, s.tileWmm, cell, s.shape), f.bbox, gw, gh));
+    // Scoped to each cell's own span — cellMask over the whole grid was
+    // O(cells × grid) and stalled large hex layouts.
+    const masks = s.shape === "square" ? null : s.cells.map((cell, idx) => {
+      const ring = cellRingLatLon(s.center, s.scale, s.tileWmm, cell, s.shape);
+      const m = new Uint8Array((gw - 1) * (gh - 1));
+      const sp = spans[idx];
+      const r0 = Math.max(0, sp.r0 - 1), r1 = Math.min(gh - 2, sp.r1);
+      const c0 = Math.max(0, sp.c0 - 1), c1 = Math.min(gw - 2, sp.c1);
+      for (let r = r0; r <= r1; r++) {
+        const lat = uN - ((uN - uS) * (r + 0.5)) / (gh - 1);
+        for (let c = c0; c <= c1; c++) {
+          const lon = uW + ((uE - uW) * (c + 0.5)) / (gw - 1);
+          m[r * (gw - 1) + c] = pointInPolygon([lat, lon], ring) ? 1 : 0;
+        }
+      }
+      return m;
+    });
     pv = { grid, waterGrid, gw, gh, f, mask, spans, masks };
     pvKey = keyOf(s);
     $("progress").textContent = upsampled

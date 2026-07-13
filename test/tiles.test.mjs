@@ -285,3 +285,18 @@ test("hex stair solid: watertight, positive volume", () => {
   assert.ok(checkWatertight(solid).closed, "watertight");
   assert.ok(signedVolume(solid) > 0, "positive volume");
 });
+
+test("hex windows sit consistently around their footprint centers (placement invariant)", () => {
+  for (const z of [8, 11, 14]) {
+    const S = tileSpanPx(CENTER[0], SCALE, W, z);
+    const cells = [[0, 0], [1, 0], [1, -1], [-2, 3], [10, -4]];
+    const { wins } = cellWindows(CENTER, SCALE, W, cells, z, "hex");
+    for (const [q, r] of cells) {
+      const ring = footprintPx(CENTER, SCALE, W, [q, r], z, "hex");
+      const cx = (ring[0][0] + ring[3][0]) / 2, cy = (ring[0][1] + ring[3][1]) / 2;
+      const w2 = wins.get(`${q},${r}`);
+      assert.ok(Math.abs(w2.gx0 - (cx - S / 2)) <= 0.5 + 1e-9, `x origin vs center - S/2 (${q},${r} z${z})`);
+      assert.ok(Math.abs(w2.gy0 - (cy - (Math.sqrt(3) / 4) * S)) <= 0.5 + 1e-9, `y origin (${q},${r} z${z})`);
+    }
+  }
+});
