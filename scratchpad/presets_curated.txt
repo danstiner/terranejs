@@ -1,32 +1,3 @@
-Great Smoky Mtns National Park | Clingmans Dome @ (0.50,0.67) | tile 96 km | slack 2%/51% | COVER OK
-Great Smoky — Clingmans Dome | ratio retarget | 1:83333 -> 1:90909
-Zion National Park | Angels Landing @ (0.67,0.67) | tile 43 km | slack 13%/1% | COVER OK
-Zion — Canyon | ratio retarget | 1:71429 -> 1:83333
-Grand Canyon National Park | Mather Point @ (0.67,0.67) | tile 253 km | slack 0%/47% | COVER OK
-Grand Canyon — South Rim | ratio retarget | 1:111111 -> 1:121951
-Yellowstone National Park | Old Faithful @ (0.33,0.67) | tile 122 km | slack 2%/11% | COVER OK
-Yellowstone — Grand Canyon | ratio retarget | 1:153846 -> 1:169492
-Rocky Mountain National Park | Longs Peak @ (0.67,0.67) | tile 51 km | slack 26%/2% | COVER OK
-Rocky Mtn — Longs Peak | ratio retarget | 1:83333 -> 1:90909
-Yosemite National Park | Half Dome @ (0.50,0.67) | tile 85 km | slack 27%/0% | COVER OK
-Yosemite — Half Dome | ratio retarget | 1:58824 -> 1:66667
-Acadia National Park | Cadillac Mtn @ (0.67,0.50) | tile 15 km | slack 17%/3% | COVER OK
-Acadia — Cadillac Mtn | ratio retarget | 1:47619 -> 1:52632
-Olympic National Park | Mt Olympus @ (0.50,0.50) | tile 88 km | slack 0%/16% | COVER OK
-Olympic — Mt Olympus | ratio retarget | 1:83333 -> 1:90909
-Grand Teton National Park | Grand Teton @ (0.33,0.67) | tile 69 km | slack 33%/1% | COVER OK
-Grand Teton — Range | ratio retarget | 1:71429 -> 1:83333
-Glacier National Park | Logan Pass @ (0.67,0.33) | tile 110 km | slack 5%/7% | COVER OK
-Glacier — Logan Pass | ratio retarget | 1:107527 -> 1:117647
-Mt Rainier National Park | Columbia Crest @ (0.33,0.50) | tile 37 km | slack 1%/11% | COVER OK
-Crater Lake National Park | Crater center @ (0.50,0.50) | tile 39 km | slack 20%/0% | COVER OK
-Crater Lake — Caldera | ratio retarget | 1:58824 -> 1:66667
-Death Valley National Park | Badwater Basin @ (0.67,0.67) | tile 220 km | slack 28%/1% | COVER OK
-Death Valley — Badwater↔Telescope | ratio retarget | 1:158730 -> 1:175439
-Washington State | bbox center | tile 611 km
-King County, WA | bbox center | tile 116 km
-Mt Fuji | ratio retarget | 1:76923 -> 1:90909
-Matterhorn | ratio retarget | 1:66667 -> 1:76923
   { group: "US National Parks", name: "Great Smoky Mtns National Park", center: [35.7060,-83.4985], scale: 434783 },
   { group: "US National Parks", name: "Great Smoky — Clingmans Dome", center: [35.6100,-83.4800], scale: 90909 },
   { group: "US National Parks", name: "Zion National Park", center: [37.3336,-113.0281], scale: 196078 },
