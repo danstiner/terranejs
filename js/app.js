@@ -2,7 +2,7 @@ import { createStore } from "./state.js";
 import { PRESETS, DEFAULT_PRESET } from "./presets.js";
 import { initMap } from "./mapPicker.js";
 import { bboxExtentMeters, suggestScale, PITCH_MM, fmtMmPerKm } from "./fit.js";
-import { pickZoom, tileRangeForBBox, sourceZoom, globalXToLon, globalYToLat, printPitchMm } from "./tilemath.js";
+import { pickZoom, tileRangeForBBox, sourceZoom, globalXToLon, globalYToLat, latToGlobalY, printPitchMm } from "./tilemath.js";
 import { fetchMosaic } from "./terrain.js";
 import { resampleBilinear, gridRange, cropGrid } from "./resample.js";
 import { cellsBbox, cellWindows, CELL_CAP,
@@ -484,6 +484,11 @@ async function loadPreview() {
     // Built from the fetch-start snapshot `s` — the token guard above already
     // dropped any superseded load, so s/f are what this grid was fetched for.
     const [uS, uW, uN, uE] = f.bbox;
+    // preview grid rows are Mercator-uniform (see resample.js); map latitudes to
+    // rows through global y, not proportional latitude. z=0: the ratio is
+    // zoom-invariant. Shared by the cell spans and the hex masks below.
+    const gyN = latToGlobalY(uN, 0), gyS = latToGlobalY(uS, 0);
+    const rowOf = (lat) => ((latToGlobalY(lat, 0) - gyN) / (gyS - gyN)) * (gh - 1);
     const spans = s.cells.map((cell) => {
       // shape-aware footprint bbox: hex cells sit on the axial lattice, not the
       // square grid (single-cell cellsBbox === cellBbox for squares)
@@ -491,8 +496,8 @@ async function loadPreview() {
       return { cell,
         c0: Math.round(((cw2 - uW) / (uE - uW)) * (gw - 1)),
         c1: Math.round(((ce - uW) / (uE - uW)) * (gw - 1)),
-        r0: Math.round(((uN - cn) / (uN - uS)) * (gh - 1)),
-        r1: Math.round(((uN - cs) / (uN - uS)) * (gh - 1)) };
+        r0: Math.round(rowOf(cn)),
+        r1: Math.round(rowOf(cs)) };
     });
     const mask = new Uint8Array((gw - 1) * (gh - 1)).fill(1);
     // per-cell footprint stair masks at preview resolution (square: all-ones).
@@ -505,7 +510,8 @@ async function loadPreview() {
       const r0 = Math.max(0, sp.r0 - 1), r1 = Math.min(gh - 2, sp.r1);
       const c0 = Math.max(0, sp.c0 - 1), c1 = Math.min(gw - 2, sp.c1);
       for (let r = r0; r <= r1; r++) {
-        const lat = uN - ((uN - uS) * (r + 0.5)) / (gh - 1);
+        const gy = gyN + ((gyS - gyN) * (r + 0.5)) / (gh - 1);
+        const lat = globalYToLat(gy, 0);
         for (let c = c0; c <= c1; c++) {
           const lon = uW + ((uE - uW) * (c + 0.5)) / (gw - 1);
           m[r * (gw - 1) + c] = pointInPolygon([lat, lon], ring) ? 1 : 0;
