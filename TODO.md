@@ -1,5 +1,15 @@
 # TODO — tilejs
 
+## Considering
+
+- **Unprojected lat/lng sampling.** Everything currently works in web-mercator
+  (uniform Mercator lattice). Mercator inflates N-S scale with latitude — the
+  chosen 1:scale is exact only at the center lat, and tall layouts stretch.
+  Sampling + meshing in native geographic (lat/lng) coordinates would remove
+  that distortion for maximum accuracy. Cost: the map is no longer a uniform
+  flat Mercator rectangle (aspect + ground-scale vary across the tile) — a
+  non-flat map, which is acceptable.
+
 Shipped 2026-07-12: mm-per-km scale input; tile-first selection Plan 1 (square
 tiles end-to-end: cell store + picker, hard-coded preset seeds, per-cell
 lattice export, boundary flatten, Mercator trail mapping); raw-heightmap
