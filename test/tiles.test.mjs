@@ -247,12 +247,17 @@ test("hex stair masks: adjacent tiles never double-claim a global cell", () => {
         footprintCellMaskPx(r2, w2.gw, w2.gh, w2.gx0, w2.gy0));
       const ox0 = Math.max(wa.gx0, wb.gx0), ox1 = Math.min(wa.gx0 + wa.gw - 1, wb.gx0 + wb.gw - 1);
       const oy0 = Math.max(wa.gy0, wb.gy0), oy1 = Math.min(wa.gy0 + wa.gh - 1, wb.gy0 + wb.gh - 1);
-      let both = 0, cellsSeen = 0;
+      let both = 0, gaps = 0, cellsSeen = 0;
       for (let gy = oy0; gy < oy1; gy++) {
         for (let gx = ox0; gx < ox1; gx++) {
           const inA = ma[(gy - wa.gy0) * (wa.gw - 1) + (gx - wa.gx0)];
           const inB = mb[(gy - wb.gy0) * (wb.gw - 1) + (gx - wb.gx0)];
           if (inA && inB) both++;
+          // gap = cell inside a footprint per the reference test but unclaimed
+          if (!inA && !inB) {
+            const ctr = [gx + 0.5, gy + 0.5];
+            if (pointInPolygon(ctr, ra) || pointInPolygon(ctr, rb)) gaps++;
+          }
           cellsSeen++;
         }
       }
@@ -265,6 +270,7 @@ test("hex stair masks: adjacent tiles never double-claim a global cell", () => {
         assert.ok(cellsSeen > 100, `direction ${dq},${dr} z${z}: overlap region non-trivial`);
       }
       assert.equal(both, 0, `direction ${dq},${dr} z${z}: ${both} double-claimed cells`);
+      assert.equal(gaps, 0, `direction ${dq},${dr} z${z}: ${gaps} unclaimed footprint cells`);
       checked++;
     }
   }
@@ -282,6 +288,21 @@ test("hex stair solid: watertight, positive volume", () => {
   const solid = buildSolid(grid, win.gw, win.gh,
     { r0: 0, r1: win.gh - 1, c0: 0, c1: win.gw - 1 }, mask,
     { dx: 0.5, dy: 0.5, mmPerM: 0.01, emin: -220, exag: 1, base: 3 });
+  assert.ok(checkWatertight(solid).closed, "watertight");
+  assert.ok(signedVolume(solid) > 0, "positive volume");
+});
+
+test("circle stair solid: watertight, positive volume", () => {
+  const z = 10;
+  const { wins } = cellWindows(CENTER, SCALE, W, [[0, 0]], z, "circle");
+  const win = wins.get("0,0");
+  const ring = footprintPx(CENTER, SCALE, W, [0, 0], z, "circle");
+  const mask = footprintCellMaskPx(ring, win.gw, win.gh, win.gx0, win.gy0);
+  const grid = Float32Array.from({ length: win.gw * win.gh }, (_, i) =>
+    150 * Math.sin((i % win.gw) / 23) * Math.cos(Math.floor(i / win.gw) / 19));
+  const solid = buildSolid(grid, win.gw, win.gh,
+    { r0: 0, r1: win.gh - 1, c0: 0, c1: win.gw - 1 }, mask,
+    { dx: 0.5, dy: 0.5, mmPerM: 0.01, emin: -160, exag: 1, base: 3 });
   assert.ok(checkWatertight(solid).closed, "watertight");
   assert.ok(signedVolume(solid) > 0, "positive volume");
 });

@@ -18,7 +18,7 @@ import { samplePath, rasterizePath, profileAlong, smoothProfile, stampOffset,
 import { ThreeMFWriter } from "./threeMF.js";
 
 const store = createStore({
-  shape: "square", // Plan 2 adds hex + circle
+  shape: "square", // "square" | "hex" | "circle"
   center: null, // [lat, lon] of the origin cell, null until placed
   cells: [], // [[i,j],…]; [0,0] present whenever a layout exists
   scale: null, // 1:N
