@@ -94,7 +94,7 @@ export function buildPreviewSolid(grid, gridW, gridH, span, mask, geom) {
 
 // --- ear clipping (moved from the deleted clip.js; the flat-base
 // triangulation below is its only remaining caller) ---
-const EPS = 1e-9;
+const AREA2_EPS = 1e-9; // near-zero doubled-area cutoff, shared with baseTriangles
 const cross3 = (ax, ay, bx, by, cx, cy) => (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
 
 // simple-polygon ear clipping -> index triples
@@ -112,7 +112,7 @@ function earclip(ring) {
     for (let i = 0; i < idx.length; i++) {
       const ip = idx[(i - 1 + idx.length) % idx.length], ii = idx[i], inx = idx[(i + 1) % idx.length];
       const a = ring[ip], b = ring[ii], c = ring[inx];
-      if (cross3(a[0], a[1], b[0], b[1], c[0], c[1]) <= EPS) continue; // reflex/collinear
+      if (cross3(a[0], a[1], b[0], b[1], c[0], c[1]) <= AREA2_EPS) continue; // reflex/collinear
       let ear = true;
       for (const k of idx) {
         if (k === ip || k === ii || k === inx) continue;
@@ -129,7 +129,8 @@ function ptInTri(p, a, b, c) {
   const d1 = cross3(a[0], a[1], b[0], b[1], p[0], p[1]);
   const d2 = cross3(b[0], b[1], c[0], c[1], p[0], p[1]);
   const d3 = cross3(c[0], c[1], a[0], a[1], p[0], p[1]);
-  const neg = d1 < -EPS || d2 < -EPS || d3 < -EPS, pos = d1 > EPS || d2 > EPS || d3 > EPS;
+  const neg = d1 < -AREA2_EPS || d2 < -AREA2_EPS || d3 < -AREA2_EPS,
+    pos = d1 > AREA2_EPS || d2 > AREA2_EPS || d3 > AREA2_EPS;
   return !(neg && pos);
 }
 
@@ -222,7 +223,7 @@ function baseTriangles(loop, xy) {
   for (let i = 0, j = n - 1; i < n; j = i++) {
     const ax = ring[j][0], ay = ring[j][1];
     const t2 = (ring[i][0] - ax) * (cy - ay) - (ring[i][1] - ay) * (cx - ax);
-    if (t2 <= 1e-9) { ok = false; break; } // centroid not strictly left of edge
+    if (t2 <= AREA2_EPS) { ok = false; break; } // centroid not strictly left of edge
     fan.push(j, -1, i); // (a, centroid, b): −Z wound for a CCW ring
   }
   if (ok) return { extra: [cx, cy], tris: fan };
