@@ -248,3 +248,22 @@ test("trail profile reads terrain at the true latitude on a tall bbox (P2)", () 
   }
   assert.ok(worst < 0.5, `profile drifted from true latitude: worst ${worst}`);
 });
+
+test("rasterizePath: ds = halfW keeps a diagonal band gap-free (P3 bound)", () => {
+  // The disc-stamp is continuous only when sample spacing ds ≤ halfW. Sampling a
+  // 45° track at exactly halfW must leave no hole along the centerline.
+  const gw = 81, gh = 81, dx = 0.5, dy = 0.5;
+  const W = (gw - 1) * dx, H = (gh - 1) * dy;
+  const halfW = 0.5; // pathWmm 1.0 / 2
+  const { pts } = samplePath([[[0.1, 0.1], [0.9, 0.9]]], [0, 0, 1, 1], W, H, halfW);
+  const { mask } = rasterizePath(pts, gw, gh, dx, dy, halfW);
+  // walk the diagonal by nearest grid cell; each step must land on a masked cell
+  let steps = 0;
+  for (let t = 0; t <= 1; t += 0.01) {
+    const xmm = 0.1 * W + t * 0.8 * W, ymm = 0.1 * H + t * 0.8 * H;
+    const c = Math.round(xmm / dx), r = Math.round(gh - 1 - ymm / dy);
+    assert.equal(mask[r * gw + c], 1, `gap at t=${t.toFixed(2)} (r${r},c${c})`);
+    steps++;
+  }
+  assert.ok(steps > 50, "walked the whole track");
+});

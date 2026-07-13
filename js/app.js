@@ -130,7 +130,7 @@ function bakedSurface(s, rawGrid, gw, gh, f, waterGrid = rawGrid) {
   const oMask = s.waterDrop > 0 ? oceanMask(waterGrid, gw, gh, 0) : null; // sea level = 0, bathymetry-valid data
   let grid = bakeWater(s, rawGrid, oMask, k);
   const dx = f.widthMm / (gw - 1), dy = f.heightMm / (gh - 1);
-  const ctx = trailContext(s, grid, gw, gh, f, Math.max(dx, dy));
+  const ctx = trailContext(s, grid, gw, gh, f, Math.min(Math.max(dx, dy), s.pathWmm / 2));
   let pathMask = null, ribbon = null;
   if (ctx) {
     // floor the preview groove only for line continuity at 1–2 vertices
@@ -629,7 +629,8 @@ async function export3MF() {
     // trail sampled at the FINE pitch (elevations off the coarse grid): the
     // per-tile rasterization needs sample spacing ≤ halfW to stay gap-free
     const trail = trailContext(s, gridC, gwC, ghC,
-      { bbox: uniBbox, widthMm: uniW, heightMm: uniH, scale: s.scale }, Math.max(dx, dy));
+      { bbox: uniBbox, widthMm: uniW, heightMm: uniH, scale: s.scale },
+      Math.min(Math.max(dx, dy), s.pathWmm / 2));
     // shared z-frame min: bake the trail onto the coarse context grid exactly as
     // the tiles will, then take its true minimum. This captures the inlay groove
     // floor / inset cut / bump in every mode — no per-mode analytic patches, and
