@@ -34,18 +34,35 @@ test("bilinear reproduces a linear field exactly (pixel-center correct)", () => 
   const out = resampleBilinear(m, bbox, gw, gh);
   const [s, w, n, e] = bbox;
   let worst = 0;
+  const gyN = latToGlobalY(n, z), gyS = latToGlobalY(s, z);
   for (let r = 0; r < gh; r++) {
-    const lat = n - ((n - s) * r) / (gh - 1);
+    // rows uniform in global mercator y, not latitude (row 0 = north)
+    const cy = gyN + ((gyS - gyN) * r) / (gh - 1) - m.originGy - 0.5;
     for (let c = 0; c < gw; c++) {
       const lon = w + ((e - w) * c) / (gw - 1);
       // mosaic index of this sample (pixel-center): idx = global - origin - 0.5
       const cx = lonToGlobalX(lon, z) - m.originGx - 0.5;
-      const cy = latToGlobalY(lat, z) - m.originGy - 0.5;
       const expected = A * (cx + 0.5) + B * (cy + 0.5) + C;
       worst = Math.max(worst, Math.abs(out[r * gw + c] - expected));
     }
   }
   assert.ok(worst < 1e-3, `worst error ${worst}`);
+});
+
+test("rows are uniform in mercator y: linear field -> constant per-row delta", () => {
+  // elev = B*gy only. On mercator-uniform rows gy is linear in r, so the
+  // resampled column has a constant per-row delta. On lat-uniform rows gy(lat_r)
+  // is nonlinear in r over a tall bbox, so the delta varies -> this test fails.
+  const bbox = [30.0, -100.0, 38.0, -92.0]; // ~8° tall
+  const z = 8, B = 1;
+  const m = linearMosaic(z, bbox, 0, B, 0);
+  const gw = 3, gh = 20;
+  const out = resampleBilinear(m, bbox, gw, gh);
+  const col = (r) => out[r * gw]; // column 0
+  const d0 = col(1) - col(0);
+  let worst = 0;
+  for (let r = 1; r < gh - 1; r++) worst = Math.max(worst, Math.abs(col(r + 1) - col(r) - d0));
+  assert.ok(worst < 1e-3, `per-row delta not constant: worst ${worst}`);
 });
 
 test("row 0 is north, last row is south", () => {

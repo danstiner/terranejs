@@ -2,7 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { samplePath, rasterizePath, profileAlong, smoothProfile, stampOffset,
   stampInlay, ribbonGrid } from "../js/path.js";
-import { latToGlobalY } from "../js/tilemath.js";
+import { latToGlobalY, lonToGlobalX } from "../js/tilemath.js";
+import { resampleBilinear } from "../js/resample.js";
 import { cellOcean } from "../js/water.js";
 import { buildSolid } from "../js/mesh.js";
 import { checkWatertight } from "../js/validate.js";
@@ -200,4 +201,50 @@ test("samplePath: y follows Mercator, not linear latitude", () => {
   // ds larger than the track: only the first point is emitted -> pure Y probe
   const { pts } = samplePath([[[60.5, 0.2], [60.5, 0.8]]], bbox, W, H, 1000);
   assert.ok(Math.abs(pts[1] - yMid) < 1e-4, `trail lat maps through Mercator (${pts[1]} vs ${yMid})`);
+});
+
+// mosaic whose elevation is B*gy + C (varies with latitude only), for the
+// context-frame composition test below.
+function mercatorYMosaic(z, bbox, B, C) {
+  const gx = [lonToGlobalX(bbox[1], z), lonToGlobalX(bbox[3], z)];
+  const gy = [latToGlobalY(bbox[2], z), latToGlobalY(bbox[0], z)];
+  const originGx = Math.floor(Math.min(...gx)) - 2;
+  const originGy = Math.floor(Math.min(...gy)) - 2;
+  const width = Math.ceil(Math.max(...gx)) - originGx + 3;
+  const height = Math.ceil(Math.max(...gy)) - originGy + 3;
+  const data = new Float32Array(width * height);
+  for (let r = 0; r < height; r++)
+    for (let c = 0; c < width; c++) data[r * width + c] = B * (r + 0.5) + C;
+  return { data, width, height, originGx, originGy, z };
+}
+
+test("trail profile reads terrain at the true latitude on a tall bbox (P2)", () => {
+  // samplePath maps lat->mm through Mercator; profileAlong divides mm->row
+  // linearly. They compose to the true value only when the resampled grid rows
+  // are Mercator-uniform. On an ~8° bbox a lat-uniform grid drifts many pixels
+  // mid-extent; the Mercator grid recovers the exact field value.
+  const bbox = [30.0, -100.0, 38.0, -92.0];
+  const z = 8, B = 1, C = 500;
+  const m = mercatorYMosaic(z, bbox, B, C);
+  const gw = 8, gh = 60;
+  const grid = resampleBilinear(m, bbox, gw, gh);
+  const widthMm = 200, heightMm = 200; // frame scale arbitrary; same for both calls
+  const lonMid = (bbox[1] + bbox[3]) / 2;
+  const seg = [[37.5, lonMid], [30.5, lonMid]]; // vertical polyline spanning most of the bbox
+  const ds = 0.5;
+  const { pts } = samplePath([seg], bbox, widthMm, heightMm, ds);
+  const dx = widthMm / (gw - 1), dy = heightMm / (gh - 1);
+  const prof = profileAlong(grid, gw, gh, dx, dy, pts);
+  // analytic truth: latToGlobalY(lat,z) = latToGlobalY(lat,0)*2^z, and samplePath's
+  // Y is invertible from the sample's mm-north to its global y at z=0.
+  const gyN0 = latToGlobalY(bbox[2], 0), gyS0 = latToGlobalY(bbox[0], 0);
+  const scale = 2 ** z;
+  let worst = 0;
+  for (let j = 0; j < prof.length; j++) {
+    const ymm = pts[2 * j + 1];
+    const gy0 = gyS0 - (ymm / heightMm) * (gyS0 - gyN0);
+    const truth = B * (gy0 * scale - m.originGy) + C; // = B*(cyLocal+0.5)+C
+    worst = Math.max(worst, Math.abs(prof[j] - truth));
+  }
+  assert.ok(worst < 0.5, `profile drifted from true latitude: worst ${worst}`);
 });

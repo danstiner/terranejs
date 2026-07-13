@@ -1,8 +1,9 @@
 // Pure resampling: terrarium mosaic -> print grid (row 0 = north), bilinear.
 // The mosaic is web-mercator (uniform in global pixels); the output grid is
-// uniform in lon/lat. Longitude->x is linear, but latitude->mercator-y is not,
-// so precompute an exact per-row y and a linear per-col x. Pixel-center
-// convention: mosaic[i] is the sample at global pixel (origin+i+0.5).
+// uniform in those SAME global pixels (Mercator), matching the print lattice the
+// tiles are meshed on. lon->x and mercator-y->row are both linear, so the per-col
+// x and per-row y indices are plain linear ramps. Pixel-center convention:
+// mosaic[i] is the sample at global pixel (origin+i+0.5).
 import { lonToGlobalX, latToGlobalY } from "./tilemath.js";
 
 export function resampleBilinear(mosaic, [s, w, n, e], gridW, gridH) {
@@ -14,10 +15,11 @@ export function resampleBilinear(mosaic, [s, w, n, e], gridW, gridH) {
     const lon = gridW === 1 ? w : w + ((e - w) * c) / (gridW - 1);
     sx[c] = lonToGlobalX(lon, z) - originGx - 0.5;
   }
+  const gyN = latToGlobalY(n, z) - originGy - 0.5; // row 0 = north (smaller global y)
+  const gyS = latToGlobalY(s, z) - originGy - 0.5;
   const sy = new Float64Array(gridH);
   for (let r = 0; r < gridH; r++) {
-    const lat = gridH === 1 ? n : n - ((n - s) * r) / (gridH - 1); // row 0 = north
-    sy[r] = latToGlobalY(lat, z) - originGy - 0.5;
+    sy[r] = gridH === 1 ? gyN : gyN + ((gyS - gyN) * r) / (gridH - 1);
   }
 
   const clamp = (v, hi) => (v < 0 ? 0 : v > hi ? hi : v);
