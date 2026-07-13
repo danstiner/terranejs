@@ -3,9 +3,7 @@
 // remove it. Dragging the center marker moves the whole layout. Reports
 // { center, cells } patches; footprint geometry comes from the caller so the
 // picker never duplicates scale math.
-import { cellBbox, ghostCells } from "./tiles.js";
-
-const rectOf = ([s, w, n, e]) => [[s, w], [n, e]];
+import { cellRingLatLon, ghostCells } from "./tiles.js";
 
 export function initMap({ center, zoom, onPlace, onToggle, onMove }) {
   const map = L.map("map").setView(center, zoom);
@@ -26,14 +24,14 @@ export function initMap({ center, zoom, onPlace, onToggle, onMove }) {
       if (marker) { map.removeLayer(marker); marker = null; }
       if (!s.center || !s.cells.length) return;
       for (const cell of s.cells) {
-        const r = L.rectangle(rectOf(cellBbox(s.center, s.scale, s.tileWmm, cell)),
+        const r = L.polygon(cellRingLatLon(s.center, s.scale, s.tileWmm, cell, s.shape),
           { color: "#1976d2", weight: 2, fillOpacity: 0.08 });
         r.on("click", (e) => { L.DomEvent.stop(e); onToggle(cell, false); });
         r.addTo(map);
         cellLayers.push(r);
       }
-      for (const cell of ghostCells(s.cells)) {
-        const r = L.rectangle(rectOf(cellBbox(s.center, s.scale, s.tileWmm, cell)),
+      for (const cell of ghostCells(s.cells, s.shape)) {
+        const r = L.polygon(cellRingLatLon(s.center, s.scale, s.tileWmm, cell, s.shape),
           { color: "#90a4ae", weight: 1, dashArray: "6 6", fillOpacity: 0.02 });
         r.on("click", (e) => { L.DomEvent.stop(e); onToggle(cell, true); });
         r.addTo(map);

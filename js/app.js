@@ -5,7 +5,10 @@ import { bboxExtentMeters, suggestScale, PITCH_MM, fmtMmPerKm } from "./fit.js";
 import { pickZoom, tileRangeForBBox, sourceZoom, globalXToLon, globalYToLat, printPitchMm } from "./tilemath.js";
 import { fetchMosaic } from "./terrain.js";
 import { resampleBilinear, gridRange, cropGrid } from "./resample.js";
-import { cellBbox, cellsBbox, cellWindows, CELL_CAP, vertexMask, insideMin, bakeFlatten } from "./tiles.js";
+import { cellsBbox, cellWindows, CELL_CAP, vertexMask, insideMin, bakeFlatten,
+  cellRingLatLon, footprintPx, footprintCellMaskPx, connectedToOrigin, pruneToOrigin,
+  HEX_H } from "./tiles.js";
+import { cellMask } from "./polyclip.js";
 import { buildPreviewSolid, buildSolid, buildTrailShell } from "./mesh.js";
 import { oceanMask, oceanMaskSeeded, cellOcean, erodeMask, recessedGrid,
   offsetGrid } from "./water.js";
@@ -172,7 +175,7 @@ const map = initMap({
     } else {
       if (cell[0] === 0 && cell[1] === 0) return; // origin holds the center
       const rest = s.cells.filter(([i, j]) => !(i === cell[0] && j === cell[1]));
-      if (!connectedToOrigin(rest)) {
+      if (!connectedToOrigin(rest, s.shape)) {
         $("progress").textContent = "that tile bridges the layout — remove outer tiles first";
         return;
       }
@@ -181,21 +184,6 @@ const map = initMap({
   },
   onMove: (center) => store.set({ center }),
 });
-
-// BFS over 4-neighbors from [0,0]; layouts must stay one connected piece
-function connectedToOrigin(cells) {
-  const sel = new Set(cells.map(([i, j]) => `${i},${j}`));
-  if (!sel.has("0,0")) return false;
-  const seen = new Set(["0,0"]), stack = [[0, 0]];
-  while (stack.length) {
-    const [i, j] = stack.pop();
-    for (const [ni, nj] of [[i + 1, j], [i - 1, j], [i, j + 1], [i, j - 1]]) {
-      const k = `${ni},${nj}`;
-      if (sel.has(k) && !seen.has(k)) { seen.add(k); stack.push([ni, nj]); }
-    }
-  }
-  return seen.size === sel.size;
-}
 
 // --- presets ---------------------------------------------------------------
 const preset = $("preset");
@@ -297,6 +285,16 @@ $("pathW").addEventListener("input", (e) => store.set({ pathWmm: Number(e.target
 $("pathH").addEventListener("input", (e) => store.set({ pathHmm: Number(e.target.value) }));
 
 // --- print settings --------------------------------------------------------
+$("shape").addEventListener("change", (e) => {
+  const shape = e.target.value;
+  const s = store.get();
+  // circle is single-tile; other switches keep only cells the new adjacency
+  // still connects to the origin
+  const cells = !s.cells.length ? s.cells
+    : shape === "circle" ? [[0, 0]]
+    : pruneToOrigin(s.cells, shape);
+  store.set({ shape, cells });
+});
 $("scale").addEventListener("input", (e) => {
   // guard the converted value: v<=0/NaN and exponent typos (2e400 -> scale 0,
   // 1e-320 -> scale Infinity) must not reach the store
@@ -324,10 +322,10 @@ $("export").addEventListener("click", export3MF);
 
 // --- preview state ---------------------------------------------------------
 let preview = null; // three.js view, lazily created
-let pv = null; // { grid, waterGrid, gw, gh, f, mask, spans } cached mosaic+resample; survives exag/base
+let pv = null; // { grid, waterGrid, gw, gh, f, mask, spans, masks } cached mosaic+resample; survives exag/base
 let pvKey = null; // fit-affecting inputs; changing them invalidates pv
 
-const keyOf = (s) => JSON.stringify([s.center, s.cells, s.scale, s.tileWmm]);
+const keyOf = (s) => JSON.stringify([s.shape, s.center, s.cells, s.scale, s.tileWmm]);
 
 // terrain auto-reloads (debounced) when the fetched-grid inputs change;
 // exag/base/water only rebuild the mesh from the cached grid.
@@ -362,7 +360,7 @@ function detailLabel(s, f, di) {
   const zSrc = sourceZoom(f.bbox, cLat, f.scale, EXPORT_MAX_TILES);
   const z = Math.max(1, zSrc - (3 - di));
   const pitch = printPitchMm(cLat, z, f.scale);
-  const tris = 2 * f.nCells * (s.tileWmm / pitch) ** 2;
+  const tris = 2 * f.nCells * f.areaF * (s.tileWmm / pitch) ** 2;
   const mb = (tris * 11) / 1e6;
   const t = tris >= 1e6 ? `${(tris / 1e6).toFixed(1)}M` : `${Math.round(tris / 1e3)}K`;
   return `${pitch.toFixed(2)} mm/px · ~${t} tris · ~${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB`;
@@ -371,11 +369,12 @@ function detailLabel(s, f, di) {
 // Derived layout constants — the old fit() collapses to this: per-tile print
 // size is tileWmm by decree, count is |cells|, only ground size derives.
 function layoutFit(s) {
-  const bbox = cellsBbox(s.center, s.scale, s.tileWmm, s.cells);
+  const bbox = cellsBbox(s.center, s.scale, s.tileWmm, s.cells, s.shape);
   const { realW, realH } = bboxExtentMeters(bbox);
   const widthMm = (realW * 1000) / s.scale, heightMm = (realH * 1000) / s.scale;
   return { bbox, realW, realH, scale: s.scale, widthMm, heightMm,
     tileWmm: s.tileWmm, nCells: s.cells.length,
+    areaF: s.shape === "hex" ? (3 * Math.sqrt(3)) / 8 : s.shape === "circle" ? Math.PI / 4 : 1,
     groundM: Math.max(10, (PITCH_MM * s.scale) / 1000) };
 }
 
@@ -385,6 +384,7 @@ function renderSettings(s, baked) {
   const box = $("settings");
   if (!s.center || !s.cells.length || !s.scale) { box.hidden = true; return; }
   box.hidden = false;
+  $("shape").value = s.shape;
   if ($("scale") !== document.activeElement) $("scale").value = fmtMmPerKm(1e6 / s.scale);
   $("exagVal").textContent = s.exag.toFixed(1);
   $("baseVal").textContent = s.base.toFixed(1);
@@ -425,7 +425,8 @@ function renderSettings(s, baked) {
     chip("scale", `${fmtMmPerKm(1e6 / f.scale)} mm = 1 km`) +
     chip("tile", `≈ ${tileKm} km`) +
     chip("tiles", `${f.nCells}${f.nCells > 16 ? ' <span class="warn">(a lot!)</span>' : ""}`) +
-    chip("/tile", `${s.tileWmm}×${s.tileWmm} mm`) +
+    chip("/tile", s.shape === "hex" ? `${s.tileWmm}×${Math.round(s.tileWmm * HEX_H)} mm hex`
+      : s.shape === "circle" ? `⌀${s.tileWmm} mm` : `${s.tileWmm}×${s.tileWmm} mm`) +
     chip("sampling", `~${f.groundM.toFixed(1)} m`) +
     chip("material", massLine);
 }
@@ -440,16 +441,18 @@ function estimateMassG(s, baked) {
   const mmPerM = 1000 / f.scale;
   const cellArea = (f.widthMm / (gw - 1)) * (f.heightMm / (pv.gh - 1));
   let vol = 0; // mm³
-  // per-cell spans; every grid cell inside a span is printed, so no mask check
-  for (const { r0, r1, c0, c1 } of pv.spans) {
+  // per-cell spans; hex/circle print only their footprint stair mask
+  pv.spans.forEach(({ r0, r1, c0, c1 }, idx) => {
+    const fm = pv.masks ? pv.masks[idx] : null;
     for (let r = r0; r < r1; r++) {
       for (let c = c0; c < c1; c++) {
+        if (fm && !fm[r * (gw - 1) + c]) continue;
         const avg = (grid[r * gw + c] + grid[r * gw + c + 1] +
           grid[(r + 1) * gw + c] + grid[(r + 1) * gw + c + 1]) / 4;
         vol += cellArea * (s.base + (avg - min) * mmPerM * s.exag);
       }
     }
-  }
+  });
   const total = (vol / 1000) * PLA_DENSITY * MASS_FACTOR;
   return { total, perTile: total / pv.f.nCells };
 }
@@ -497,7 +500,9 @@ async function loadPreview() {
     // dropped any superseded load, so s/f are what this grid was fetched for.
     const [uS, uW, uN, uE] = f.bbox;
     const spans = s.cells.map((cell) => {
-      const [cs, cw2, cn, ce] = cellBbox(s.center, s.scale, s.tileWmm, cell);
+      // shape-aware footprint bbox: hex cells sit on the axial lattice, not the
+      // square grid (single-cell cellsBbox === cellBbox for squares)
+      const [cs, cw2, cn, ce] = cellsBbox(s.center, s.scale, s.tileWmm, [cell], s.shape);
       return { cell,
         c0: Math.round(((cw2 - uW) / (uE - uW)) * (gw - 1)),
         c1: Math.round(((ce - uW) / (uE - uW)) * (gw - 1)),
@@ -505,7 +510,11 @@ async function loadPreview() {
         r1: Math.round(((uN - cs) / (uN - uS)) * (gh - 1)) };
     });
     const mask = new Uint8Array((gw - 1) * (gh - 1)).fill(1);
-    pv = { grid, waterGrid, gw, gh, f, mask, spans };
+    // per-cell footprint stair masks at preview resolution (square: all-ones).
+    // Each span meshes only its own footprint — hex bboxes overlap neighbors.
+    const masks = s.shape === "square" ? null : s.cells.map((cell) =>
+      cellMask(cellRingLatLon(s.center, s.scale, s.tileWmm, cell, s.shape), f.bbox, gw, gh));
+    pv = { grid, waterGrid, gw, gh, f, mask, spans, masks };
     pvKey = keyOf(s);
     $("progress").textContent = upsampled
       ? `z${z} — note: sampling finer than the data supports (interpolated)`
@@ -536,12 +545,17 @@ function rebuildTiles(baked) {
   const gapX = 0.14 * f.tileWmm, gapY = 0.14 * f.tileWmm;
 
   const tiles = [];
-  for (const { cell: [ci, cj], r0, r1, c0, c1 } of pv.spans) {
-    tiles.push(buildPreviewSolid(grid, gw, gh, { r0, r1, c0, c1 }, mask, {
-      dx, dy, offX: ci * gapX, offY: -cj * gapY, oceanMask: oMask, pathMask,
+  pv.spans.forEach((sp, idx) => {
+    // explode offsets scale with the shape's unit center position
+    const [ci, cj] = sp.cell;
+    const [ux, uy] = s.shape === "hex"
+      ? [ci * 0.75, -(2 * cj + ci) * (Math.sqrt(3) / 4)]
+      : [ci, -cj]; // square & circle
+    tiles.push(buildPreviewSolid(grid, gw, gh, sp, pv.masks ? pv.masks[idx] : mask, {
+      dx, dy, offX: ux * gapX, offY: uy * gapY, oceanMask: oMask, pathMask,
       mmPerM, emin: min, erange, exag: s.exag, base: s.base,
     }));
-  }
+  });
   preview.setTiles(tiles);
 }
 
@@ -564,7 +578,7 @@ async function export3MF() {
     const z = Math.max(1, zSrc - (3 - di));
     // shared lattice: every cell's window quantizes to the same global pixel
     // grid, adjacent cells share their boundary index — seams read identical data
-    const { spanPx, wins, union } = cellWindows(s.center, s.scale, s.tileWmm, s.cells, z);
+    const { spanPx, wins, union } = cellWindows(s.center, s.scale, s.tileWmm, s.cells, z, s.shape);
     const dx = s.tileWmm / spanPx, dy = dx; // Mercator is conformal: square cells
     const mmPerM = 1000 / s.scale;
     const k = mmPerM * s.exag;
@@ -656,15 +670,25 @@ async function export3MF() {
 
     const writer = new ThreeMFWriter();
     const gapX = 0.14 * s.tileWmm, gapY = 0.14 * s.tileWmm;
-    const cellJs = s.cells.map(([, j]) => j);
-    const minJ = Math.min(...cellJs), maxJ = Math.max(...cellJs);
-    // normalize placements to the layout's NW cell: negative build-plate
-    // coordinates are 3MF-legal but trip "outside bed" warnings in slicers
-    const minI = Math.min(...s.cells.map(([i]) => i));
-    const placeX = (ci) => (ci - minI) * (s.tileWmm + gapX);
-    const rowY = (cj) => -(cj - minJ) * (s.tileWmm + gapY);
-    // separate pieces sit in mirrored blocks below the deepest tile row
-    const belowY = (cj, block) => rowY(cj) - (s.tileWmm + gapY) * (maxJ - minJ + 1) * (block + 1);
+    // unit center positions in print mm (before normalization): hex axial
+    // packs at (0.75q, (2r+q)·√3/4) tile-pitches; square/circle on the unit grid
+    const pitchX = s.tileWmm + gapX, pitchY = s.tileWmm + gapY;
+    const posOf = ([i2, j2]) => s.shape === "hex"
+      ? [i2 * 0.75 * pitchX, -(2 * j2 + i2) * (Math.sqrt(3) / 4) * pitchY]
+      : [i2 * pitchX, -j2 * pitchY];
+    const posAll = s.cells.map(posOf);
+    const minPX = Math.min(...posAll.map((p) => p[0]));
+    const maxPY = Math.max(...posAll.map((p) => p[1]));
+    const minPY = Math.min(...posAll.map((p) => p[1]));
+    // normalize to the layout's NW cell: negative build-plate coordinates are
+    // 3MF-legal but trip "outside bed" warnings in slicers
+    const placeAt = (cell2) => { const [x, y] = posOf(cell2); return [x - minPX, y - maxPY]; };
+    // separate pieces sit in mirrored blocks below the whole layout
+    const layoutSpanY = maxPY - minPY + pitchY;
+    const belowAt = (cell2, block) => {
+      const [x, y] = placeAt(cell2);
+      return [x, y - layoutSpanY * (block + 1)];
+    };
     let tris = 0;
     const add = async (name, solid, x, y) => {
       tris += solid.indices.length / 3;
@@ -685,7 +709,15 @@ async function export3MF() {
       const span = { r0: win.gy0 - pr0, r1: win.gy0 + win.gh - 1 - pr0,
         c0: win.gx0 - pc0, c1: win.gx0 + win.gw - 1 - pc0 };
       const cw = gwT - 1;
-      const mask = new Uint8Array(cw * (ghT - 1)).fill(1); // full footprint — no region clip
+      let mask;
+      if (s.shape === "square") {
+        mask = new Uint8Array(cw * (ghT - 1)).fill(1); // full footprint
+      } else {
+        // stair mask decided in global px: deterministic across tiles
+        mask = footprintCellMaskPx(
+          footprintPx(s.center, s.scale, s.tileWmm, cell, z, s.shape),
+          gwT, ghT, pc0, pr0);
+      }
 
       // defense-in-depth: zSrc's sourceZoom() call already clamps the whole
       // union bbox to EXPORT_MAX_TILES at z <= zSrc, so this one cell's window
@@ -778,7 +810,7 @@ async function export3MF() {
       const solid = buildSolid(grid, gwT, ghT, span, mask,
         { dx, dy, mmPerM, emin, exag: s.exag, base: s.base });
       n++;
-      await add(`tile_i${ci}_j${cj}`, solid, placeX(ci), rowY(cj));
+      await add(`tile_i${ci}_j${cj}`, solid, ...placeAt(cell));
 
       // water insert for this tile: printed top follows the ocean floor
       // (depth·scale above the drop), flat face at z=0 is the sea surface;
@@ -787,6 +819,7 @@ async function export3MF() {
       if (wantWater && oMaskT) {
         const rings = Math.max(1, Math.ceil(WATER_CLEAR_MM / dx)); // shore clearance
         const oceanCells = erodeMask(cellOcean(oMaskT, gwT, ghT), cw, ghT - 1, rings);
+        if (s.shape !== "square") for (let i2 = 0; i2 < oceanCells.length; i2++) oceanCells[i2] &= mask[i2];
         const oc = countIn(oceanCells, span, cw);
         if (oc > 0) {
           const depthFlip = new Float32Array(gwT * ghT);
@@ -803,7 +836,7 @@ async function export3MF() {
             { r0: ghT - 1 - span.r1, r1: ghT - 1 - span.r0, c0: span.c0, c1: span.c1 },
             oceanCellsFlip, { dx, dy, mmPerM, emin: 0, exag: s.exag, base: s.waterDrop });
           nw++;
-          await add(`water_i${ci}_j${cj}`, wsolid, placeX(ci), belowY(cj, 0));
+          await add(`water_i${ci}_j${cj}`, wsolid, ...belowAt(cell, 0));
         }
       }
 
@@ -815,7 +848,7 @@ async function export3MF() {
           const psolid = buildSolid(ribbon, gwT, ghT, span, pathCells,
             { dx, dy, mmPerM: 1, emin: 0, exag: 1, base: 0 });
           np++;
-          await add(`path_i${ci}_j${cj}`, psolid, placeX(ci), belowY(cj, 1));
+          await add(`path_i${ci}_j${cj}`, psolid, ...belowAt(cell, 1));
         }
       }
 
@@ -828,7 +861,7 @@ async function export3MF() {
           const tsolid = buildTrailShell(grid, gwT, ghT, span, overlayCells,
             { dx, dy, mmPerM, emin, exag: s.exag }, s.pathHmm);
           nt++;
-          await add(`trail_i${ci}_j${cj}`, tsolid, placeX(ci), belowY(cj, 1));
+          await add(`trail_i${ci}_j${cj}`, tsolid, ...belowAt(cell, 1));
         }
       }
     }
