@@ -22,7 +22,7 @@ const store = createStore({
   center: null, // [lat, lon] of the origin cell, null until placed
   cells: [], // [[i,j],…]; [0,0] present whenever a layout exists
   scale: null, // 1:N
-  tileWmm: 250, // print size of one tile (largest dimension)
+  tileWmm: 220, // print size of one tile (largest dimension); fits a Prusa Core One bed
   boundary: null, // optional park outline (reference + flatten)
   flattenOutside: false,
   exag: 1.0,
