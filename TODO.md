@@ -9,14 +9,6 @@ default tile width 220 mm (Prusa Core One).
 
 Shipped 2026-07-13: park boundaries + flatten-outside removed; presets
 curated to feature-anchored single 220 mm tiles; evergreen docs consolidated
-at docs/specs/.
-
-- [ ] P2 inlay-mode profile on tall layouts: trail POINTS map through Mercator
-      (fixed), but profileAlong / ocean seeds / z-floor still read the
-      lat-linear context grid — mm-scale groove-height error for layouts many
-      tiles tall. Root fix: Mercator-uniform context sampling (pixel-locked
-      context grid).
-- [ ] P3 preview trail band can gap on wide layouts: preview grid caps at 320
-      px so ds grows with layout width past halfW; export unaffected. Fix
-      direction: decouple the trail rasterization ds from the 320 px preview
-      cap (rasterize at halfW-bounded ds).
+at docs/specs/. Mercator-uniform context sampling (inlay profile / ocean
+seeds / z-frame no longer drift on tall layouts); trail sample ds bounded by
+halfW (no preview/export band gaps).

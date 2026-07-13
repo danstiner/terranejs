@@ -50,8 +50,8 @@ export function floorMmPerKm(mm) {
 export const fmtMmPerKm = (v) => String(parseFloat(v.toPrecision(3)));
 
 // Scale that makes the piece's long side ~targetLongMm. The 240 default is the
-// original one-bed target the presets were baked against (see the TODO rebake
-// item); the GPX call site passes a tileWmm-derived target explicitly.
+// original one-bed target the presets were baked against; the GPX call site
+// passes a tileWmm-derived target explicitly.
 export function suggestScale(realW, realH, targetLongMm = 240) {
   const longM = Math.max(realW, realH);
   return 1e6 / floorMmPerKm((1000 * targetLongMm) / longM);

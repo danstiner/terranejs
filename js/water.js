@@ -26,7 +26,7 @@ export function cellOcean(vmask, gw, gh) {
   return out;
 }
 
-// Copy of the elevation grid with ocean vertices flattened to a single recessed
+// Copy of the elevation grid with ocean vertices lowered to a single recessed
 // sea-surface value; land untouched. Feeding this to the existing mesh
 // builders yields a flat sunken ocean with no new mesh code. The caller picks
 // oceanSurfElev = level − dropMm/(mmPerM·exag) so the print-z drop is exactly dropMm.

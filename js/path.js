@@ -13,9 +13,9 @@ import { latToGlobalY } from "./tilemath.js";
 // marks each segment's first sample so smoothing never crosses segment breaks.
 export function samplePath(segments, [s, w, n, e], widthMm, heightMm, ds) {
   const X = (lon) => ((lon - w) / (e - w)) * widthMm;
-  // y through Mercator, not linear lat: the tile lattice is Mercator-uniform,
-  // and lat-linear mapping drifts with layout extent² (mm-scale within a few
-  // stacked tiles, worse as layouts grow tall)
+  // y through Mercator, not linear lat: the tile lattice AND the resampled
+  // context grid are both Mercator-uniform, so the trail points and the terrain
+  // profile they sample share one frame at any layout extent
   const gyS = latToGlobalY(s, 0), gyN = latToGlobalY(n, 0);
   const Y = (lat) => ((gyS - latToGlobalY(lat, 0)) / (gyS - gyN)) * heightMm;
   const pts = [], segStarts = [];
