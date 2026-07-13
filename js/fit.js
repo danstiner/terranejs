@@ -39,7 +39,7 @@ export function bboxExtentMeters([s, w, n, e]) {
 
 // Floor to 2 significant figures in the mm-per-km domain. Suggestions round
 // DOWN so the fitted piece can only shrink below target — nearest-rounding
-// could overshoot the 250 mm bed and split a fresh region into two tiles.
+// could overshoot the tile size and split a fresh region into two tiles.
 export function floorMmPerKm(mm) {
   if (!Number.isFinite(mm) || mm <= 0) return 1;
   const mag = 10 ** (Math.floor(Math.log10(mm)) - 1);
@@ -49,8 +49,9 @@ export function floorMmPerKm(mm) {
 // UI formatter for mm-per-km: <=3 significant figures, trailing zeros stripped.
 export const fmtMmPerKm = (v) => String(parseFloat(v.toPrecision(3)));
 
-// Scale that makes the piece's long side ~targetLongMm (default 240 -> just
-// under a 250 bed, one tile) — the sensible starting scale for a fresh region.
+// Scale that makes the piece's long side ~targetLongMm. The 240 default is the
+// original one-bed target the presets were baked against (see the TODO rebake
+// item); the GPX call site passes a tileWmm-derived target explicitly.
 export function suggestScale(realW, realH, targetLongMm = 240) {
   const longM = Math.max(realW, realH);
   return 1e6 / floorMmPerKm((1000 * targetLongMm) / longM);
