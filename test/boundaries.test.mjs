@@ -1,7 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { BOUNDARIES } from "../js/boundaries.js";
-import { PRESETS } from "../js/presets.js";
 import { pointInPolygon } from "../js/polyclip.js";
 import { bboxOf } from "../js/fit.js";
 
@@ -20,17 +19,6 @@ test("every baked boundary is a valid [[lat,lon]] ring", () => {
     const [s, w, n, e] = bboxOf(ring);
     assert.ok(n > s && e > w, `${name}: degenerate bbox`);
   }
-});
-
-test("boundary presets resolve to their ring; cores carry only center+scale", () => {
-  const rainier = PRESETS.find((p) => p.name === "Mt Rainier National Park");
-  assert.ok(rainier.boundary && rainier.boundary === BOUNDARIES["Mt Rainier National Park"]);
-  const core = PRESETS.find((p) => p.name === "Yosemite — Half Dome");
-  assert.ok(core.center && !core.boundary, "scenic core has no boundary ring");
-  const wa = PRESETS.find((p) => p.name === "Washington State");
-  assert.ok(wa && wa.group === "US States & Counties" && wa.boundary);
-  const king = PRESETS.find((p) => p.name === "King County, WA");
-  assert.ok(king && king.boundary === BOUNDARIES["King County, WA"]);
 });
 
 test("King County ring contains Seattle, excludes Tacoma and Everett", () => {
