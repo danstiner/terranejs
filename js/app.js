@@ -682,8 +682,7 @@ async function export3MF() {
       const { mask: pmC, sIdx: siC } = rasterizePath(trail.pts, gwC, ghC, dxC, dyC, trail.halfW);
       ({ grid: stampedC } = stampTrail(s, gridC, trail, pmC, siC));
     }
-    const emin = gridRange(stampedC).min;
-    const emax = gridRange(stampedC).max;
+    const { min: emin, max: emax } = gridRange(stampedC);
     // deepest vertex we allow before the printed wall would fall under MIN_WALL_MM
     const floorGrid = emin + (Math.min(s.base, MIN_WALL_MM) - s.base) / k;
 
