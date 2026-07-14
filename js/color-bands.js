@@ -84,18 +84,10 @@ export function prusaColorChangeXML(changes) {
 }
 
 // The base band's color as #RRGGBB — the segment below the first color change
-// previews in the loaded filament, so we set that filament to the base band.
+// previews in the loaded filament, so the readout tells the user which filament
+// (and shade) to load first. (Setting it via an embedded PrusaSlicer config was
+// tried and dropped: PrusaSlicer reconciles filament colour against the active
+// preset on Open Project, so a portable standalone config is ignored.)
 export function baseColorHex(emin, thresholds) {
   return bandHex(BAND_COLORS[baseBand(emin, thresholds)]);
-}
-
-// PrusaSlicer project config (Metadata/Slic3r_PE.config) setting the starting
-// filament colour, so the base previews in the base band color instead of the
-// user's Filament 1. Format mirrors a real saved project: "; key = value"
-// comment-style lines (PrusaSlicer reuses its G-code config serializer, and
-// strips the "; " on read). extruder_colour is left empty upstream, so
-// filament_colour drives the preview. PrusaSlicer registers no content type for
-// this part; it reads it by path.
-export function prusaFilamentConfig(hex) {
-  return `; filament_colour = ${hex}\n`;
 }
