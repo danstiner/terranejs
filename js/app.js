@@ -382,13 +382,14 @@ function renderBandReadout(s, baked) {
   const changes = colorChanges(thr, frame);
   const first = BAND_NAMES[baseBand(baked.min, thr)];
   const list = changes.length
-    ? changes.map((c) => `Z ${c.z.toFixed(1)} mm → ${BAND_NAMES[c.band]}`).join(" · ")
+    ? changes.map((c) => `Z ${c.z.toFixed(1)} mm → ${BAND_NAMES[c.band]}`).join(" · ") + " (approx.)"
     : "no changes (single band)";
   el.textContent =
     `center ${cLat.toFixed(1)}° → treeline ${Math.round(thr[1])} m, ` +
     `snowline ${Math.round(thr[3])} m · load ${first} first · ${list}`;
 
-  const sep = s.waterSeparate || s.tracks.length > 0;
+  // only separately-printed pieces get mis-banded; bump/inset stamp into terrain
+  const sep = s.waterSeparate || (s.tracks.length > 0 && (s.pathMode === "inlay" || s.pathMode === "overlay"));
   const warn = $("bandWarn");
   warn.hidden = !(s.embedColorChanges && sep);
   warn.textContent = "Color changes apply to every object on the plate by height — "
