@@ -4,16 +4,16 @@
     {
       "id": 74,
       "subject": "Task 1: Flatten the ocean bake and insert",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Delete `offsetGrid`, collapse `bakeWater` to always flat-recess, replace the export water-insert bathymetry molding with a flat slab, and rewrite the insert tests (with a non-tautological registration test).\n\n**Files:**\n- Modify: `tilejs/js/water.js` (delete `offsetGrid`, lines 61-69)\n- Modify: `tilejs/js/app.js` (import 13-14; `bakeWater` 72-84; insert build 792-818)\n- Modify: `tilejs/test/water.test.mjs` (import 3-4; `offsetGrid` test + insert section 115-202)\n\n**Acceptance Criteria:**\n- [ ] `offsetGrid` no longer exists in `js/water.js` and is not imported anywhere.\n- [ ] `bakeWater` returns `recessedGrid(rawGrid, oMask, -s.waterDrop / k)` for any ocean mask (no `insertMode` branch).\n- [ ] The export water insert is built from a zero grid via `buildSolid(slab, …, {emin:0, base:s.waterDrop})` — no `depthFlip`, flip, or `waterT` reference in the insert block.\n- [ ] Insert tests assert: watertight; every vertex z=0 or z=waterDrop; slab thickness + measured terrain recess floor reaches sea level (real meshes).\n- [ ] Detection regressions remain and pass.\n\n**Verify:** `cd tilejs && node --test 'test/*.test.mjs'` → all pass, 0 failures.\n\n```json:metadata\n{\"files\": [\"tilejs/js/water.js\", \"tilejs/js/app.js\", \"tilejs/test/water.test.mjs\"], \"verifyCommand\": \"cd tilejs && node --test 'test/*.test.mjs'\", \"acceptanceCriteria\": [\"offsetGrid deleted and unimported (grep empty)\", \"bakeWater always returns recessedGrid(rawGrid, oMask, -waterDrop/k)\", \"insert built from zero grid via buildSolid {emin:0, base:waterDrop}, no depthFlip/flip, waterT unreferenced in insert block\", \"insert tests: watertight, every vertex z=0 or z=DROP, slab+recessFloor reaches seaLevel from real meshes\", \"detection regressions remain and pass\"], \"modelTier\": \"standard\"}\n```"
     },
     {
       "id": 75,
       "subject": "Task 2: Reword stale water comments and the UI hint",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [74],
       "description": "**Goal:** Update comments and the user-facing water hint that still describe bathymetry depth / the flip, which the flat-ocean change made false.\n\n**Files:**\n- Modify: `tilejs/js/app.js` (`WATER_ZOOM_MAX` comment ~49-52, and detection comments at the `bathymetry` sites)\n- Modify: `tilejs/index.html` (water hint ~74-77)\n\n**Acceptance Criteria:**\n- [ ] The `WATER_ZOOM_MAX` comment describes z≤10 as the detection floor, not \"insert depths.\"\n- [ ] No code comment claims the insert follows the ocean floor or \"flips into the recess\"; no comment implies bathymetry depth is used.\n- [ ] The `index.html` water hint describes a flat blue slab that drops into the recess as printed (no flip).\n- [ ] Suite still passes (comment/text-only change).\n\n**Verify:** `cd tilejs && node --test 'test/*.test.mjs'` → all pass; `grep -n \"ocean floor\\|flips into\\|flips north-south\\|real bathymetry\" tilejs/js/app.js tilejs/index.html` → no matches.\n\n```json:metadata\n{\"files\": [\"tilejs/js/app.js\", \"tilejs/index.html\"], \"verifyCommand\": \"cd tilejs && node --test 'test/*.test.mjs'\", \"acceptanceCriteria\": [\"WATER_ZOOM_MAX comment frames z10 as the detection floor, not insert depths\", \"no comment claims the insert follows the ocean floor or flips into the recess\", \"index.html hint = flat blue slab that drops in as printed (no flip)\", \"suite still passes; grep for 'ocean floor|flips into|flips north-south|real bathymetry' in app.js/index.html returns nothing\"], \"modelTier\": \"mechanical\"}\n```"
     }
   ],
-  "lastUpdated": "2026-07-13T00:00:00Z"
+  "lastUpdated": "2026-07-13T19:40:00Z"
 }
