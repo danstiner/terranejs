@@ -24,8 +24,8 @@ test("ThreeMFWriter: embeds the color-change part when changes are set", async (
   const bytes = await w.finish();
   const text = asText(bytes);
   assert.ok(text.includes("Prusa_Slicer_custom_gcode_per_print_z.xml"));
-  assert.ok(text.includes("custom_gcodes_per_layer"));
-  assert.ok(text.includes('top_z="6.400"'));
+  assert.ok(text.includes("custom_gcodes_per_print_z")); // XML root (plural gcodes)
+  assert.ok(text.includes('print_z="6.400"'));
 });
 
 test("ThreeMFWriter: setColorChanges([]) embeds no part", async () => {
@@ -35,5 +35,5 @@ test("ThreeMFWriter: setColorChanges([]) embeds no part", async () => {
   const bytes = await w.finish();
   const text = asText(bytes);
   assert.ok(!text.includes("Prusa_Slicer_custom_gcode_per_print_z.xml"));
-  assert.ok(!text.includes("custom_gcodes_per_layer"));
+  assert.ok(!text.includes("custom_gcodes_per_print_z"));
 });
