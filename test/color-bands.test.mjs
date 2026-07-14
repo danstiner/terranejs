@@ -68,3 +68,18 @@ test("colorChanges: coincident thresholds keep the HIGHER band (treeline==0)", (
   assert.equal(ch[0].band, 2);
   assert.deepEqual(ch[0].color, BAND_COLORS[2]);
 });
+
+test("bandThresholds: tundra sits +400 m above the treeline when unclamped", () => {
+  const [, tree, tundra] = bandThresholds(0);
+  assert.equal(tree, 3800);
+  assert.equal(tundra, 4200); // 3800 + 400, still below snowline 5000
+});
+
+test("colorChanges: high-latitude quad-tie collapses to one top-band change", () => {
+  const thr = bandThresholds(80);
+  assert.deepEqual(thr, [0, 0, 0, 0]); // ≥75°: all thresholds coincide at 0
+  const ch = colorChanges(thr, { emin: -1, base: 6, mmPerM: 1, exag: 2, zmax: 1e9 });
+  assert.equal(ch.length, 1);
+  assert.equal(ch[0].band, 4); // collapse keeps the highest band (white)
+  assert.deepEqual(ch[0].color, BAND_COLORS[4]);
+});

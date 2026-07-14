@@ -40,9 +40,11 @@ export function baseBand(emin, thresholds) {
   return b;
 }
 
-// Color changes to fire, ascending, for thresholds strictly inside (emin, emax).
-// frame: { emin, base, mmPerM, exag, zmax }. Coincident changes keep the HIGHER
-// band (thresholds ascend) so a squeezed band collapses cleanly.
+// Color changes to fire, ascending — for thresholds whose print-Z lands in
+// (base, zmax). z = base + (t - emin)·mmPerM·exag; band = i+1. Assumes K>0
+// (exag>0; it comes from a 0.5–4 slider). Coincident changes keep the HIGHER
+// band; in this module coincidences are exact ties (identical t), so anchoring
+// the merge to prev.z is exact.
 export function colorChanges(thresholds, frame) {
   const { emin, base, mmPerM, exag, zmax } = frame;
   const K = mmPerM * exag;
