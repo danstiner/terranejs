@@ -45,9 +45,10 @@ const PATH_CLEAR_MM = 0.15;
 const MIN_WALL_MM = 1.0;
 const WATER_CLEAR_MM = 0.4; // shore-edge clearance: tile pad + insert erode radius
 
-// terrarium carries real bathymetry only at low zooms (probed 2026-07: Puget
-// Sound min −248 m at z10; +0.5–2 m land-DEM junk at z11). Water classification
-// and insert depths must never read finer than this.
+// z≤10 is the deepest zoom whose ocean is a clean, consistently-negative signal.
+// Above it, land DEMs (SRTM/NED) overwrite coastal water with a 0/positive sea-
+// surface fill (probed 2026-07: Puget Sound −248 m at z10, ~0 at z11+), so ocean
+// DETECTION must never read finer than this. Depth is discarded (flat recess).
 const WATER_ZOOM_MAX = 10;
 
 const EXPORT_COARSE_DIM = 1200; // whole-region context grid (ocean seeds, trail, z-frame)
@@ -123,7 +124,7 @@ function stampTrail(s, grid, ctx, mask, sIdx) {
 // export streams the same steps per print tile.
 function bakedSurface(s, rawGrid, gw, gh, f, waterGrid = rawGrid) {
   const k = (1000 / f.scale) * s.exag; // print mm per grid unit
-  const oMask = s.waterDrop > 0 ? oceanMask(waterGrid, gw, gh, 0) : null; // sea level = 0, bathymetry-valid data
+  const oMask = s.waterDrop > 0 ? oceanMask(waterGrid, gw, gh, 0) : null; // sea level = 0, on the z≤10 detection view
   let grid = bakeWater(s, rawGrid, oMask, k);
   const dx = f.widthMm / (gw - 1), dy = f.heightMm / (gh - 1);
   const ctx = trailContext(s, grid, gw, gh, f, Math.min(Math.max(dx, dy), s.pathWmm / 2));
@@ -466,9 +467,9 @@ async function loadPreview() {
     });
     if (token !== loadToken) return; // a newer load supersedes this one
     const grid = resampleBilinear(mosaic, f.bbox, gw, gh);
-    // small coastal regions preview at z>WATER_ZOOM_MAX, where bathymetry is
-    // land-DEM junk; fetch the coarse mosaic unconditionally so raising
-    // waterDrop later doesn't need a reload (it's 1-4 tiles for these regions)
+    // small coastal regions preview at z>WATER_ZOOM_MAX, where the geometry grid's
+    // water is a land-DEM 0-fill; fetch the coarse detection mosaic unconditionally
+    // so raising waterDrop later doesn't need a reload (1-4 tiles for these regions)
     let waterGrid = grid;
     if (zW !== z) {
       const mosaicW = await fetchMosaic(f.bbox, zW, {});
@@ -610,7 +611,7 @@ async function export3MF() {
       onProgress: (d, t) => { $("progress").textContent = `context pass: fetching ${d}/${t}…`; },
     });
     const rawC = resampleBilinear(mosaicC, uniBbox, gwC, ghC);
-    // water reads from a coarser mosaic when zC is finer than bathymetry-valid;
+    // ocean detection reads from a coarser mosaic when zC is finer than z≤10;
     // reuse mosaicC (no extra fetch) when it's already coarse enough
     const zW = Math.min(zC, WATER_ZOOM_MAX);
     let mosaicWater = mosaicC;
@@ -715,7 +716,7 @@ async function export3MF() {
       $("progress").textContent = `${label}: meshing…`;
       await new Promise((r) => setTimeout(r, 0)); // let the message paint
 
-      // ocean: flood the bathymetry view of this window from coarse-mask
+      // ocean: flood the z≤10 detection view of this window from coarse-mask
       // seeds (edge-connectivity is global; the geometry grid has no valid
       // water signal at z>WATER_ZOOM_MAX)
       let oMaskT = null, waterT = null;
