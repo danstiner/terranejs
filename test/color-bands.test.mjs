@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { BAND_COLORS, bandThresholds, bandOf, baseBand, colorChanges, prusaColorChangeXML }
+import { BAND_COLORS, bandThresholds, bandOf, baseBand, colorChanges, prusaColorChangeXML, baseColorHex }
   from "../js/color-bands.js";
 
 test("bandThresholds: ascending + correctly ordered at every latitude", () => {
@@ -82,6 +82,13 @@ test("colorChanges: high-latitude quad-tie collapses to one top-band change", ()
   assert.equal(ch.length, 1);
   assert.equal(ch[0].band, 4); // collapse keeps the highest band (white)
   assert.deepEqual(ch[0].color, BAND_COLORS[4]);
+});
+
+test("baseColorHex: base band color as #RRGGBB", () => {
+  const thr = [0, 1000, 1400, 2000];
+  assert.equal(baseColorHex(-1.5, thr), "#295c8c"); // sub-sea base → blue water
+  assert.equal(baseColorHex(0, thr), "#477a47");    // sea-level land → green forest
+  assert.equal(baseColorHex(1200, thr), "#999e61"); // starts in tundra
 });
 
 test("prusaColorChangeXML: one <code> per change, ColorChange type, hex color, M600", () => {

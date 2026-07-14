@@ -10,11 +10,28 @@ const mesh = { // one degenerate triangle is enough to exercise the writer
 // The color-change part name must appear in the zip bytes only when changes given.
 const asText = (bytes) => new TextDecoder("latin1").decode(bytes);
 
-test("ThreeMFWriter: no color-change part by default", async () => {
+test("ThreeMFWriter: no color-change or config part by default", async () => {
   const w = new ThreeMFWriter();
   await w.addObject("t", mesh, 0, 0);
-  const bytes = await w.finish();
-  assert.ok(!asText(bytes).includes("custom_gcode_per_print_z"));
+  const text = asText(await w.finish());
+  assert.ok(!text.includes("custom_gcode_per_print_z"));
+  assert.ok(!text.includes("Slic3r_PE.config"));
+});
+
+test("ThreeMFWriter: embeds the base filament colour config when set", async () => {
+  const w = new ThreeMFWriter();
+  w.setFilamentColor("#295b8c");
+  await w.addObject("t", mesh, 0, 0);
+  const text = asText(await w.finish());
+  assert.ok(text.includes("Metadata/Slic3r_PE.config"));
+  assert.ok(text.includes("; filament_colour = #295b8c"));
+});
+
+test("ThreeMFWriter: setFilamentColor(null) embeds no config part", async () => {
+  const w = new ThreeMFWriter();
+  w.setFilamentColor(null);
+  await w.addObject("t", mesh, 0, 0);
+  assert.ok(!asText(await w.finish()).includes("Slic3r_PE.config"));
 });
 
 test("ThreeMFWriter: embeds the color-change part when changes are set", async () => {

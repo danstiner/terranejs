@@ -15,7 +15,7 @@ import { parseGPX, trackBbox } from "./gpx.js";
 import { samplePath, rasterizePath, profileAlong, smoothProfile, stampOffset,
   stampInlay, ribbonGrid } from "./path.js";
 import { ThreeMFWriter } from "./threeMF.js";
-import { bandThresholds, baseBand, colorChanges } from "./color-bands.js";
+import { bandThresholds, baseBand, colorChanges, baseColorHex } from "./color-bands.js";
 
 const store = createStore({
   shape: "square", // "square" | "hex" | "circle"
@@ -697,10 +697,10 @@ async function export3MF() {
     const writer = new ThreeMFWriter();
     if (s.colorBands && s.embedColorChanges) {
       const cbLat = (f.bbox[0] + f.bbox[2]) / 2;
+      const thr = bandThresholds(cbLat);
       const zmax = s.base + (emax - emin) * k; // k = mmPerM*exag, already defined above
-      writer.setColorChanges(colorChanges(bandThresholds(cbLat), {
-        emin, base: s.base, mmPerM, exag: s.exag, zmax,
-      }));
+      writer.setColorChanges(colorChanges(thr, { emin, base: s.base, mmPerM, exag: s.exag, zmax }));
+      writer.setFilamentColor(baseColorHex(emin, thr)); // base segment previews in the base band
     }
     const gapX = 0.14 * s.tileWmm, gapY = 0.14 * s.tileWmm;
     // unit center positions in print mm (before normalization): hex axial
