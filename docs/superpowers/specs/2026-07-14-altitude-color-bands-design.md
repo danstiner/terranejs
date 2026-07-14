@@ -89,6 +89,14 @@ export function bandOf(value, thresholds) {
   return b;
 }
 
+// Base-plate / first-loaded-filament band. A threshold ≤ emin cannot fire a
+// mid-print change (it would sit at the base), so it folds into the base band.
+export function baseBand(emin, thresholds) {
+  let b = 0;
+  for (const t of thresholds) if (t <= emin) b++;
+  return b;
+}
+
 // Color-change list both the readout and the embed consume. Returns the changes
 // you ENTER, ascending, in (base, zmax). frame: { emin, base, mmPerM, exag, zmax }.
 export function colorChanges(thresholds, frame) {
@@ -168,9 +176,11 @@ const changes = s.colorBands
     `embedColorChanges`, disabled/hidden unless `colorBands` is on.
   - A readout element showing, refreshed with the layout:
     `center 46.9° → treeline 2140 m, snowline 3110 m`, the **first-loaded
-    filament** color (`BAND_COLORS[bandOf(emin, thresholds)]` — the band the base
+    filament** color (`BAND_COLORS[baseBand(emin, thresholds)]` — the band the base
     plate sits in, e.g. blue with ocean recess, green for an all-land alpine tile),
     and the change list, e.g. `Z 6.4 mm → tundra · Z 9.1 mm → grey · Z 12.1 mm → white`.
+    `baseBand` folds thresholds `≤ emin` into the base band (unlike `bandOf`'s
+    strict point rule), so a sea-level `emin == 0` tile reports green, not blue.
   - **When `embedColorChanges` is on and the layout has separate pieces**
     (`waterSeparate`, or a separate/inlay/overlay trail), show a one-line warning:
     color changes apply to *everything on the plate* by height, so slice the
