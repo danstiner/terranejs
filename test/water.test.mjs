@@ -153,14 +153,23 @@ test("water insert: every vertex is at z=0 (base) or z=DROP (top)", () => {
 });
 
 test("water insert: slab thickness + measured recess floor reaches sea level", () => {
-  const { gw, gh, dx, dy, e, oMask, solid } = slabFixture();
   // slab thickness, measured from the slab mesh
-  const sp = solid.positions;
+  const sp = slabFixture().solid.positions;
   let sMin = Infinity, sMax = -Infinity;
   for (let i = 2; i < sp.length; i += 3) { sMin = Math.min(sMin, sp[i]); sMax = Math.max(sMax, sp[i]); }
   const slabThk = sMax - sMin;
 
-  // build the TERRAIN solid the export builds: flat recess via recessedGrid
+  // terrain grid: west sea (recessed) + one land vertex pinned at sea level
+  // (0 m). That vertex is interior and ringed by +10 m land, so the ≤0 ocean
+  // flood can't reach it — it stays land, and its printed top z reads sea level.
+  const gw = 5, gh = 6, dx = 1, dy = 1;
+  const e = new Float32Array(gw * gh).fill(10);
+  for (let r = 0; r < gh; r++) { e[r * gw + 0] = -100; e[r * gw + 1] = -50; }
+  const seaR = 2, seaC = 3;
+  e[seaR * gw + seaC] = 0; // sea-level marker
+  const oMask = oceanMask(e, gw, gh, 0);
+  assert.equal(oMask[seaR * gw + seaC], 0, "sea-level marker must stay land, not ocean");
+
   const baked = recessedGrid(e, oMask, -DROP / K);
   let emin = Infinity; for (const v of baked) emin = Math.min(emin, v);
   const TBASE = 5;
@@ -168,21 +177,29 @@ test("water insert: slab thickness + measured recess floor reaches sea level", (
     { r0: 0, r1: gh - 1, c0: 0, c1: gw - 1 },
     new Uint8Array((gw - 1) * (gh - 1)).fill(1),
     { dx, dy, mmPerM: MM_PER_M, emin, exag: EXAG, base: TBASE });
-  // recess-floor z = the lowest top-surface z, measured from the terrain mesh
-  // (top-surface z's are all > 0; the base plate sits at exactly 0)
+
+  // both z's read from real mesh vertices, so the assertion exercises the
+  // builder's base + (grid-emin)*mmPerM*exag scaling (not an identity):
+  // recess floor = lowest top-surface z; sea level = top z at the 0 m marker.
   const tz = terrain.positions;
-  let recessFloorZ = Infinity;
-  for (let i = 2; i < tz.length; i += 3) if (tz[i] > 1e-6) recessFloorZ = Math.min(recessFloorZ, tz[i]);
-  // sea level in the terrain's print frame (elevation 0)
-  const seaLevelZ = TBASE + (0 - emin) * K;
-  // a slab seated on the measured recess floor must top out at sea level
-  assert.ok(Math.abs((recessFloorZ + slabThk) - seaLevelZ) < 1e-4,
-    `recessFloor ${recessFloorZ} + slab ${slabThk} != seaLevel ${seaLevelZ}`);
+  const mx = (seaC - 0) * dx, my = ((gh - 1) - seaR) * dy; // marker world xy
+  let recessFloorZ = Infinity, seaZ = -Infinity;
+  for (let i = 0; i < tz.length; i += 3) {
+    const x = tz[i], y = tz[i + 1], z = tz[i + 2];
+    if (z > 1e-6) recessFloorZ = Math.min(recessFloorZ, z);
+    if (z > 1e-6 && Math.abs(x - mx) < 1e-6 && Math.abs(y - my) < 1e-6) seaZ = z;
+  }
+  // a slab of the measured thickness, seated on the measured recess floor,
+  // tops out exactly at the measured sea-level surface
+  assert.ok(Math.abs((recessFloorZ + slabThk) - seaZ) < 1e-4,
+    `recessFloor ${recessFloorZ} + slab ${slabThk} != seaZ ${seaZ}`);
 });
 
-// --- bathymetry-valid zoom regression (Puget Sound bug) --------------------
+// --- z10 detection-view regression (Puget Sound bug) ----------------------
+// Justify the retained z10 mask fetch: the flood must run on the clean z10
+// water view; on the fine geometry grid coastal water reads as junk/positive.
 
-test("water view: flood must run on bathymetry data, not the geometry grid", () => {
+test("water view: flood must run on the z10 detection view, not the geometry grid", () => {
   const gw = 12, gh = 6;
   // geometry grid as z11 serves it over Puget Sound: land-DEM junk, +1 m water
   const junk = new Float32Array(gw * gh).fill(1);
