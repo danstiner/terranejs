@@ -1,5 +1,17 @@
 # TODO — tilejs
 
+## Bugs
+
+- **Preview land colors shift when ocean drop changes.** Adjusting `waterDrop`
+  recolors the land hypsometric ramp (ocean stays constant `WATER` blue). The
+  ramp should be independent of recess depth. Confirmed cause: `bakeWater`
+  (`app.js:80`) recesses ocean by `waterDrop/k`, so `gridRange(grid).min` in
+  `bakedSurface` (`app.js:139`) drops and `erange` grows; `buildPreviewSolid`
+  then normalizes land as `ramp((grid[id]-emin)/erange)` (`mesh.js:81`) against
+  that moving window. Fix: key the ramp off a `waterDrop`-independent reference —
+  e.g. compute color min/range over land cells only (exclude the ocean mask), or
+  use the pre-recess raw grid for the ramp normalization.
+
 ## Considering
 
 - **Unprojected lat/lng sampling.** Everything currently works in web-mercator
