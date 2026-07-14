@@ -3,9 +3,14 @@
 // released incrementally; <build> items land at finish(). Falls back to a
 // stored (uncompressed) entry when CompressionStream is unavailable.
 import { crc32, buildZip } from "./zip.js";
+import { prusaColorChangeXML } from "./color-bands.js";
 
-const CONTENT_TYPES = `<?xml version="1.0" encoding="UTF-8"?>
-<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/></Types>`;
+const CT_HEAD = `<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/>`;
+const CT_TAIL = `</Types>`;
+const CGCODE_PART = "Metadata/Prusa_Slicer_custom_gcode_per_print_z.xml";
+const CGCODE_OVERRIDE =
+  `<Override PartName="/${CGCODE_PART}" ContentType="application/xml"/>`;
 
 const RELS = `<?xml version="1.0" encoding="UTF-8"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>`;
@@ -26,6 +31,7 @@ export class ThreeMFWriter {
     this.rawSize = 0;
     this.chunks = [];
     this.finished = false;
+    this.colorChanges = null;
     this.enc = new TextEncoder();
     this.method = typeof CompressionStream !== "undefined" ? 8 : 0;
     if (this.method === 8) {
@@ -47,6 +53,9 @@ export class ThreeMFWriter {
     }
     this.head = this._push(MODEL_HEAD);
   }
+
+  // Optional PrusaSlicer color-change-by-height metadata; embedded at finish().
+  setColorChanges(changes) { this.colorChanges = changes && changes.length ? changes : null; }
 
   async _push(text) {
     const bytes = this.enc.encode(text);
@@ -93,10 +102,12 @@ export class ThreeMFWriter {
       const data = this.enc.encode(text);
       return { name, data, crc: crc32(data), size: data.length, method: 0 };
     };
-    return buildZip([
-      entry("[Content_Types].xml", CONTENT_TYPES),
+    const entries = [
+      entry("[Content_Types].xml", CT_HEAD + (this.colorChanges ? CGCODE_OVERRIDE : "") + CT_TAIL),
       entry("_rels/.rels", RELS),
       { name: "3D/3dmodel.model", data: model, crc: this.crc, size: this.rawSize, method: this.method },
-    ]);
+    ];
+    if (this.colorChanges) entries.push(entry(CGCODE_PART, prusaColorChangeXML(this.colorChanges)));
+    return buildZip(entries);
   }
 }

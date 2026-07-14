@@ -683,6 +683,7 @@ async function export3MF() {
       ({ grid: stampedC } = stampTrail(s, gridC, trail, pmC, siC));
     }
     const emin = gridRange(stampedC).min;
+    const emax = gridRange(stampedC).max;
     // deepest vertex we allow before the printed wall would fall under MIN_WALL_MM
     const floorGrid = emin + (Math.min(s.base, MIN_WALL_MM) - s.base) / k;
 
@@ -694,6 +695,13 @@ async function export3MF() {
     const wantOverlay = trail && s.pathMode === "overlay";
 
     const writer = new ThreeMFWriter();
+    if (s.colorBands && s.embedColorChanges) {
+      const cbLat = (f.bbox[0] + f.bbox[2]) / 2;
+      const zmax = s.base + (emax - emin) * k; // k = mmPerM*exag, already defined above
+      writer.setColorChanges(colorChanges(bandThresholds(cbLat), {
+        emin, base: s.base, mmPerM, exag: s.exag, zmax,
+      }));
+    }
     const gapX = 0.14 * s.tileWmm, gapY = 0.14 * s.tileWmm;
     // unit center positions in print mm (before normalization): hex axial
     // packs at (0.75q, (2r+q)·√3/4) tile-pitches; square/circle on the unit grid

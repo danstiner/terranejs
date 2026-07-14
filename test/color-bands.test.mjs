@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { BAND_COLORS, bandThresholds, bandOf, baseBand, colorChanges }
+import { BAND_COLORS, bandThresholds, bandOf, baseBand, colorChanges, prusaColorChangeXML }
   from "../js/color-bands.js";
 
 test("bandThresholds: ascending + correctly ordered at every latitude", () => {
@@ -82,4 +82,18 @@ test("colorChanges: high-latitude quad-tie collapses to one top-band change", ()
   assert.equal(ch.length, 1);
   assert.equal(ch[0].band, 4); // collapse keeps the highest band (white)
   assert.deepEqual(ch[0].color, BAND_COLORS[4]);
+});
+
+test("prusaColorChangeXML: one layer per change, hex color, M600", () => {
+  const xml = prusaColorChangeXML([
+    { z: 6.4, band: 2, color: [0.60, 0.62, 0.38] },
+    { z: 9.1, band: 3, color: [0.55, 0.55, 0.55] },
+  ]);
+  const layers = xml.match(/<layer /g) || [];
+  assert.equal(layers.length, 2);
+  assert.match(xml, /top_z="6.400"/);
+  assert.match(xml, /top_z="9.100"/);
+  assert.match(xml, /color="#999e61"/); // 0.60,0.62,0.38 → 99 9e 61
+  assert.match(xml, /gcode="M600"/);
+  assert.match(xml, /<mode value="SingleExtruder"\/>/);
 });

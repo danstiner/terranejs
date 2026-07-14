@@ -64,3 +64,18 @@ export function colorChanges(thresholds, frame) {
   });
   return out;
 }
+
+const hex2 = (v) => Math.max(0, Math.min(255, Math.round(v * 255)))
+  .toString(16).padStart(2, "0");
+const bandHex = (rgb) => `#${hex2(rgb[0])}${hex2(rgb[1])}${hex2(rgb[2])}`;
+
+// PrusaSlicer color-change container (custom gcode per print z). Structure pinned
+// by the spike in the plan; type="2" = ColorChange. One <layer> per change.
+export function prusaColorChangeXML(changes) {
+  const layers = changes.map((c) =>
+    `<layer top_z="${c.z.toFixed(3)}" type="2" extruder="1" color="${bandHex(c.color)}" gcode="M600"/>`
+  ).join("");
+  return `<?xml version="1.0" encoding="UTF-8"?>\n` +
+    `<custom_gcodes_per_layer><plate><plate_idx value="0"/>` +
+    layers + `<mode value="SingleExtruder"/></plate></custom_gcodes_per_layer>`;
+}
