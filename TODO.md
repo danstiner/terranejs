@@ -10,6 +10,33 @@
   flat Mercator rectangle (aspect + ground-scale vary across the tile) — a
   non-flat map, which is acceptable.
 
+- **High-res bathymetry (real seafloor depth).** The flat-ocean recess
+  (2026-07-13) discards depth because terrarium seafloor exists only at z≤10 and
+  is too coarse/seamy to print. A later feature could restore real, print-worthy
+  depth from NOAA. Best data: CUDEM 1/9 arc-sec topobathy (~3 m, US coasts —
+  CONUS/AK/HI/PR). Access candidate: keyless NOAA ArcGIS ImageServer
+  `DEM_mosaics/DEM_global_mosaic` (F32, ~3 m nominal, global, EPSG:4326, mean
+  −1891 m) via `exportImage`. Downsides to design around: (a) not XYZ-PNG —
+  needs in-browser LERC/GeoTIFF decode, a new dependency vs the current
+  fetch-terrarium-PNG-no-build model; (b) "3 m" is nominal — true detail only
+  where lidar/CUDEM exists (US coasts); oversampled-coarse elsewhere, like
+  terrarium; (c) datum patchwork (MSL/EGM2008/NAVD88/MLLW/MLW by volume) vs
+  terrarium 0 = MSL → coastline offsets unless land+sea come from one topobathy
+  source; (d) CORS/keyless + gov-service reliability unverified (spike first).
+  Layers cleanly on flat-ocean: reuse the z10 detection mask, replace the flat
+  recess plane with sampled depth where covered, keep flat as the global
+  fallback.
+
+- **Cleaner water detection (sharper coast, drop the z10 fetch).** Detection
+  currently floods ≤0 on the z≤10 grid because coastal water is undetectable on
+  the fine grid (land DEMs overwrite it with a 0/positive sea-surface fill at
+  z≥11; probed 2026-07-13). A vector coastline / water-polygon source (OSM) or a
+  landcover raster (ESA WorldCover 10 m, JRC Global Surface Water) would give a
+  crisp, zoom-independent mask and remove the z10 fetch entirely. Blocker: a
+  keyless + CORS + tiled endpoint — OSM water polygons are un-tiled shapefiles,
+  vector-tile hosts usually need a key, and the rasters are COG/GeoTIFF, not XYZ
+  PNG. Independent of the flat-ocean bake (swaps only the mask source).
+
 Shipped 2026-07-12: mm-per-km scale input; tile-first selection Plan 1 (square
 tiles end-to-end: cell store + picker, hard-coded preset seeds, per-cell
 lattice export, boundary flatten, Mercator trail mapping); raw-heightmap
