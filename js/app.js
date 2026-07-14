@@ -581,6 +581,12 @@ function rebuildTiles(baked) {
   const mmPerM = 1000 / f.scale;
   const dx = f.widthMm / (gw - 1);
   const dy = f.heightMm / (gh - 1);
+  let bandsZ = null;
+  if (s.colorBands) {
+    const cLat = (f.bbox[0] + f.bbox[2]) / 2;
+    const K = mmPerM * s.exag;
+    bandsZ = bandThresholds(cLat).map((t) => s.base + (t - min) * K);
+  }
   const gapX = 0.14 * f.tileWmm, gapY = 0.14 * f.tileWmm;
 
   const tiles = [];
@@ -592,7 +598,7 @@ function rebuildTiles(baked) {
       : [ci, -cj]; // square & circle
     tiles.push(buildPreviewSolid(grid, gw, gh, sp, pv.masks ? pv.masks[idx] : mask, {
       dx, dy, offX: ux * gapX, offY: uy * gapY, oceanMask: oMask, pathMask,
-      mmPerM, emin: min, erange, exag: s.exag, base: s.base,
+      mmPerM, emin: min, erange, exag: s.exag, base: s.base, bandsZ,
     }));
   });
   preview.setTiles(tiles);

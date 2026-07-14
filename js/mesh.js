@@ -2,6 +2,8 @@
 // stair-clipped to the polygon via a cell footprint mask, plus the skirt +
 // base that close them into watertight export solids.
 
+import { bandOf, BAND_COLORS } from "./color-bands.js";
+
 // hypsometric ramp, t in [0,1] -> [r,g,b] 0..1
 const STOPS = [
   [0.0, [0.23, 0.42, 0.28]],
@@ -32,7 +34,7 @@ const PATH = [0.85, 0.3, 0.12]; // trail orange for a stamped GPX path
 // as a real print. span: {r0,r1,c0,c1}. geom: {dx,dy,offX,offY,mmPerM,emin,
 // erange,exag,base}. Returns typed arrays for a three.js BufferGeometry.
 export function buildPreviewSolid(grid, gridW, gridH, span, mask, geom) {
-  const { dx, dy, offX, offY, mmPerM, emin, erange, exag, base, oceanMask, pathMask } = geom;
+  const { dx, dy, offX, offY, mmPerM, emin, erange, exag, base, oceanMask, pathMask, bandsZ } = geom;
   const { r0, r1, c0, c1 } = span;
   const cw = gridW - 1;
   const N = gridW * gridH;
@@ -74,11 +76,20 @@ export function buildPreviewSolid(grid, gridW, gridH, span, mask, geom) {
     colors[q++] = col[0]; colors[q++] = col[1]; colors[q++] = col[2];
   };
 
+  const zOf = (id) => base + (grid[id] - emin) * mmPerM * exag;
   for (let i = 0; i < topTris.length; i += 3) {
+    let col;
+    if (bandsZ) {
+      // per-triangle flat band by centroid print-Z (mimics the horizontal M600 plane)
+      const cz = (zOf(topTris[i]) + zOf(topTris[i + 1]) + zOf(topTris[i + 2])) / 3;
+      col = BAND_COLORS[bandOf(cz, bandsZ)];
+    }
     for (let k = 0; k < 3; k++) {
       const id = topTris[i + k];
-      put(id, false, pathMask && pathMask[id] ? PATH
-        : oceanMask && oceanMask[id] ? WATER : ramp((grid[id] - emin) / erange));
+      put(id, false, bandsZ ? col
+        : pathMask && pathMask[id] ? PATH
+        : oceanMask && oceanMask[id] ? WATER
+        : ramp((grid[id] - emin) / erange));
     }
   }
   for (let i = 0; i < topTris.length; i += 3) {
