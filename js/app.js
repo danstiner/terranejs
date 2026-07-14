@@ -384,11 +384,9 @@ function renderBandReadout(s, baked) {
   const list = changes.length
     ? changes.map((c) => `Z ${c.z.toFixed(1)} mm → ${BAND_NAMES[c.band]}`).join(" · ") + " (approx.)"
     : "no changes (single band)";
-  // PrusaSlicer previews the base (below the first M600) in Filament 1's color,
-  // so surface the base band's shade for the user to set/load first.
   el.textContent =
     `center ${cLat.toFixed(1)}° → treeline ${Math.round(thr[1])} m, ` +
-    `snowline ${Math.round(thr[3])} m · load ${first} ${baseColorHex(baked.min, thr)} first · ${list}`;
+    `snowline ${Math.round(thr[3])} m · load ${first} first · ${list}`;
 
   // only separately-printed pieces get mis-banded; bump/inset stamp into terrain
   const sep = s.waterSeparate || (s.tracks.length > 0 && (s.pathMode === "inlay" || s.pathMode === "overlay"));
@@ -702,6 +700,7 @@ async function export3MF() {
       const thr = bandThresholds(cbLat);
       const zmax = s.base + (emax - emin) * k; // k = mmPerM*exag, already defined above
       writer.setColorChanges(colorChanges(thr, { emin, base: s.base, mmPerM, exag: s.exag, zmax }));
+      writer.setFilamentColor(baseColorHex(emin, thr)); // base segment previews in the base band
     }
     const gapX = 0.14 * s.tileWmm, gapY = 0.14 * s.tileWmm;
     // unit center positions in print mm (before normalization): hex axial
