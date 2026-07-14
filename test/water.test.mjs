@@ -1,7 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { oceanMask, oceanMaskSeeded, cellOcean, erodeMask, recessedGrid,
-  offsetGrid } from "../js/water.js";
+import { oceanMask, oceanMaskSeeded, cellOcean, erodeMask, recessedGrid } from "../js/water.js";
 import { buildSolid } from "../js/mesh.js";
 import { checkWatertight } from "../js/validate.js";
 
@@ -112,93 +111,73 @@ test("oceanMaskSeeded: a seed on land is ignored", () => {
   assert.ok(oceanMaskSeeded(e, gw, gh, seeds).every((v) => v === 0));
 });
 
-test("offsetGrid lowers only ocean vertices, keeps their relief", () => {
-  const elev = Float32Array.from([-10, 2, -30, 4]);
-  const vmask = Uint8Array.from([1, 0, 1, 0]);
-  const out = offsetGrid(elev, vmask, 5);
-  assert.deepEqual([...out], [-15, 2, -35, 4]);
-  assert.notEqual(out, elev, "returns a copy");
-});
-
-// --- separate water insert (bathymetry-backed, printed flat face down) ------
-// Replicates app.js's export construction on a small coastal grid and checks
-// the geometry contract: watertight; printed top z = drop + depth·mmPerM·exag;
-// and once flipped north-south the piece registers with the offset terrain
-// (insert top thickness == sea-level z − recessed-floor z at every vertex).
+// --- separate water insert (flat slab, printed flat face down) --------------
+// The insert fills the flat ocean recess to sea level: a constant-thickness
+// slab (thickness = waterDrop). Bathymetry is discarded, so there is no molded
+// underside and no north-south flip — flat top and bottom share the terrain's
+// XY frame, so the slab drops into the recess as printed.
 
 const DROP = 3, MM_PER_M = 0.01, EXAG = 2; // 1:100000, 2× exaggeration
 const K = MM_PER_M * EXAG;
 
-function insertFixture() {
+function slabFixture() {
   const gw = 5, gh = 6, dx = 1, dy = 1;
   const e = new Float32Array(gw * gh).fill(10);
-  // left two columns are open sea, depth growing southward (row-asymmetric)
-  for (let r = 0; r < gh; r++) { e[r * gw + 0] = -100 * (r + 1); e[r * gw + 1] = -50; }
+  // left two columns are open sea (edge-connected); their depth is irrelevant now
+  for (let r = 0; r < gh; r++) { e[r * gw + 0] = -100; e[r * gw + 1] = -50; }
   const oMask = oceanMask(e, gw, gh, 0);
-  const cells = cellOcean(oMask, gw, gh); // col-0 cells only (col-1 corners touch land)
-
-  // row-mirrored depth grid + cell mask, exactly as exportSTLs builds them
-  const depthFlip = new Float32Array(gw * gh);
-  for (let r = 0; r < gh; r++) {
-    for (let c = 0; c < gw; c++) depthFlip[(gh - 1 - r) * gw + c] = Math.max(0, -e[r * gw + c]);
-  }
-  const cw = gw - 1;
-  const cellsFlip = new Uint8Array(cw * (gh - 1));
-  for (let r = 0; r < gh - 1; r++) {
-    cellsFlip.set(cells.subarray(r * cw, (r + 1) * cw), (gh - 2 - r) * cw);
-  }
-  const solid = buildSolid(depthFlip, gw, gh,
-    { r0: 0, r1: gh - 1, c0: 0, c1: gw - 1 }, cellsFlip,
-    { dx, dy, mmPerM: MM_PER_M, emin: 0, exag: EXAG, base: DROP });
+  const cells = cellOcean(oMask, gw, gh); // col-0 cells only
+  const slab = new Float32Array(gw * gh); // flat top at sea level
+  const solid = buildSolid(slab, gw, gh,
+    { r0: 0, r1: gh - 1, c0: 0, c1: gw - 1 }, cells,
+    { dx, dy, mmPerM: 1, emin: 0, exag: 1, base: DROP });
   return { gw, gh, dx, dy, e, oMask, cells, solid };
 }
 
-// top-surface z by printed (x,y), extracted from the indexed mesh's vertices
-function topZ(solid) {
-  const P = solid.positions;
-  const z = new Map();
-  for (let i = 0; i < P.length; i += 3) {
-    if (P[i + 2] > 0) z.set(`${P[i]}_${P[i + 1]}`, P[i + 2]);
-  }
-  return z;
-}
-
-test("water insert: closed manifold", () => {
-  const { solid } = insertFixture();
+test("water insert: flat slab is a closed manifold", () => {
+  const { solid } = slabFixture();
   const w = checkWatertight(solid);
   assert.ok(w.closed, `unmatched edges: ${w.unmatched}`);
 });
 
-test("water insert: printed top = drop + depth·mmPerM·exag, min thickness = drop", () => {
-  const { gw, gh, dx, dy, e, solid } = insertFixture();
-  const z = topZ(solid);
-  // footprint = col-0 cells; printed y for source row r is (r − r0)·dy = r·dy
-  for (let r = 0; r < gh; r++) {
-    for (const c of [0, 1]) {
-      const got = z.get(`${c * dx}_${r * dy}`);
-      const want = DROP + Math.max(0, -e[r * gw + c]) * K;
-      assert.ok(Math.abs(got - want) < 1e-5, `(r${r},c${c}): ${got} vs ${want}`);
-    }
+test("water insert: every vertex is at z=0 (base) or z=DROP (top)", () => {
+  const { solid } = slabFixture();
+  const P = solid.positions;
+  let zmin = Infinity, zmax = -Infinity;
+  for (let i = 2; i < P.length; i += 3) {
+    const z = P[i];
+    assert.ok(Math.abs(z) < 1e-6 || Math.abs(z - DROP) < 1e-6, `z ${z} not 0 or ${DROP}`);
+    zmin = Math.min(zmin, z); zmax = Math.max(zmax, z);
   }
-  assert.ok(Math.min(...z.values()) >= DROP - 1e-5, "shore-edge thickness ≥ drop");
+  assert.equal(zmin, 0); assert.equal(zmax, DROP);
 });
 
-test("water insert: flipped piece registers with the offset terrain", () => {
-  const { gw: W, gh, dx, dy, e, oMask, solid } = insertFixture();
-  const z = topZ(solid);
-  const baked = offsetGrid(e, oMask, DROP / K); // terrain grid in insert mode
-  let emin = Infinity;
-  for (const v of baked) emin = Math.min(emin, v);
-  const seaZ = (0 - emin) * K; // sea-level height above the tile base
-  for (let r = 0; r < gh; r++) {
-    for (const c of [0, 1]) {
-      // flipping north-south sends printed (x, r·dy) to terrain (x, (gh−1−r)·dy);
-      // there the insert must fill from the recessed floor up to sea level
-      const thickness = z.get(`${c * dx}_${r * dy}`);
-      const gap = seaZ - (baked[r * W + c] - emin) * K;
-      assert.ok(Math.abs(thickness - gap) < 1e-5, `(r${r},c${c}): ${thickness} vs ${gap}`);
-    }
-  }
+test("water insert: slab thickness + measured recess floor reaches sea level", () => {
+  const { gw, gh, dx, dy, e, oMask, solid } = slabFixture();
+  // slab thickness, measured from the slab mesh
+  const sp = solid.positions;
+  let sMin = Infinity, sMax = -Infinity;
+  for (let i = 2; i < sp.length; i += 3) { sMin = Math.min(sMin, sp[i]); sMax = Math.max(sMax, sp[i]); }
+  const slabThk = sMax - sMin;
+
+  // build the TERRAIN solid the export builds: flat recess via recessedGrid
+  const baked = recessedGrid(e, oMask, -DROP / K);
+  let emin = Infinity; for (const v of baked) emin = Math.min(emin, v);
+  const TBASE = 5;
+  const terrain = buildSolid(baked, gw, gh,
+    { r0: 0, r1: gh - 1, c0: 0, c1: gw - 1 },
+    new Uint8Array((gw - 1) * (gh - 1)).fill(1),
+    { dx, dy, mmPerM: MM_PER_M, emin, exag: EXAG, base: TBASE });
+  // recess-floor z = the lowest top-surface z, measured from the terrain mesh
+  // (top-surface z's are all > 0; the base plate sits at exactly 0)
+  const tz = terrain.positions;
+  let recessFloorZ = Infinity;
+  for (let i = 2; i < tz.length; i += 3) if (tz[i] > 1e-6) recessFloorZ = Math.min(recessFloorZ, tz[i]);
+  // sea level in the terrain's print frame (elevation 0)
+  const seaLevelZ = TBASE + (0 - emin) * K;
+  // a slab seated on the measured recess floor must top out at sea level
+  assert.ok(Math.abs((recessFloorZ + slabThk) - seaLevelZ) < 1e-4,
+    `recessFloor ${recessFloorZ} + slab ${slabThk} != seaLevel ${seaLevelZ}`);
 });
 
 // --- bathymetry-valid zoom regression (Puget Sound bug) --------------------

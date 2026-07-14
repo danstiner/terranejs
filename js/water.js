@@ -58,16 +58,6 @@ export function oceanMaskSeeded(elev, gw, gh, seeds, levelM = 0) {
   return mask;
 }
 
-// Copy of the elevation grid with ocean vertices lowered by dropElev (elevation
-// units); land untouched. Keeps the ocean-floor relief — used by the separate-
-// insert mode, where the recess floor is real bathymetry and the insert fills
-// the drop back up to sea level.
-export function offsetGrid(elev, vmask, dropElev) {
-  const out = Float32Array.from(elev);
-  for (let i = 0; i < out.length; i++) if (vmask[i]) out[i] -= dropElev;
-  return out;
-}
-
 // Shrink a cell mask by `rings` cell-layers (for the water insert's fit
 // clearance): a cell survives only if it and all neighbours within `rings` are set.
 export function erodeMask(cellMask, cw, ch, rings = 1) {

@@ -10,8 +10,7 @@ import { cellsBbox, cellWindows, CELL_CAP,
   HEX_H } from "./tiles.js";
 import { pointInPolygon } from "./polyclip.js";
 import { buildPreviewSolid, buildSolid, buildTrailShell } from "./mesh.js";
-import { oceanMask, oceanMaskSeeded, cellOcean, erodeMask, recessedGrid,
-  offsetGrid } from "./water.js";
+import { oceanMask, oceanMaskSeeded, cellOcean, erodeMask, recessedGrid } from "./water.js";
 import { parseGPX, trackBbox } from "./gpx.js";
 import { samplePath, rasterizePath, profileAlong, smoothProfile, stampOffset,
   stampInlay, ribbonGrid } from "./path.js";
@@ -69,18 +68,15 @@ const countIn = (cells, sp, cw) => {
   return m;
 };
 
-// Ocean bake on any grid, given its ocean vertex mask. Plain mode recesses
-// open ocean to one sunken plane; insert mode keeps the ocean-floor relief,
-// lowered by the drop (exag-corrected so the print-z drop is exactly waterDrop).
+// Ocean bake: recess every ocean vertex to one flat plane, waterDrop mm below
+// sea level (exag-corrected so the print-z drop is exactly waterDrop). Bathymetry
+// is discarded — the geometry grid has no reliable coastal seafloor (land DEMs
+// overwrite it with a 0 sea-surface fill above z10) and z10 seafloor is too
+// coarse to print. Separate-insert mode fills this recess with a flat slab; the
+// terrain bake is identical in both modes.
 function bakeWater(s, rawGrid, oMask, k) {
   if (!oMask) return rawGrid;
-  // insert mode keeps ocean-floor relief (lowered by the drop) and needs a real
-  // ≥1 mm drop — the insert's shore-edge thickness. Every other case is a flat
-  // recess, so no state combination yields a bathymetry recess with no insert.
-  const insertMode = s.waterSeparate && s.waterDrop >= 1;
-  return insertMode
-    ? offsetGrid(rawGrid, oMask, s.waterDrop / k)
-    : recessedGrid(rawGrid, oMask, -s.waterDrop / k);
+  return recessedGrid(rawGrid, oMask, -s.waterDrop / k);
 }
 
 // Global trail context: uniform samples along all tracks (print mm) and, for
@@ -789,29 +785,19 @@ async function export3MF() {
       n++;
       await add(`tile_i${ci}_j${cj}`, solid, ...placeAt(cell));
 
-      // water insert for this tile: printed top follows the ocean floor
-      // (depth·scale above the drop), flat face at z=0 is the sea surface;
-      // prints flat face down, flips north-south into the recess, so its
-      // depth grid and cell mask are built row-mirrored within the window
+      // water insert for this tile: a flat slab that fills the flat recess to
+      // sea level (thickness = waterDrop). Prints as a separate (e.g. blue)
+      // piece; flat top and bottom share the terrain's XY frame, so it drops
+      // into the recess as printed — no molded underside, no north-south flip.
       if (wantWater && oMaskT) {
         const rings = Math.max(1, Math.ceil(WATER_CLEAR_MM / dx)); // shore clearance
         const oceanCells = erodeMask(cellOcean(oMaskT, gwT, ghT), cw, ghT - 1, rings);
         if (s.shape !== "square") for (let i2 = 0; i2 < oceanCells.length; i2++) oceanCells[i2] &= mask[i2];
-        const oc = countIn(oceanCells, span, cw);
-        if (oc > 0) {
-          const depthFlip = new Float32Array(gwT * ghT);
-          for (let r = 0; r < ghT; r++) {
-            for (let c = 0; c < gwT; c++) {
-              depthFlip[(ghT - 1 - r) * gwT + c] = Math.max(0, -waterT[r * gwT + c]);
-            }
-          }
-          const oceanCellsFlip = new Uint8Array(cw * (ghT - 1));
-          for (let r = 0; r < ghT - 1; r++) {
-            oceanCellsFlip.set(oceanCells.subarray(r * cw, (r + 1) * cw), (ghT - 2 - r) * cw);
-          }
-          const wsolid = buildSolid(depthFlip, gwT, ghT,
-            { r0: ghT - 1 - span.r1, r1: ghT - 1 - span.r0, c0: span.c0, c1: span.c1 },
-            oceanCellsFlip, { dx, dy, mmPerM, emin: 0, exag: s.exag, base: s.waterDrop });
+        if (countIn(oceanCells, span, cw) > 0) {
+          const slab = new Float32Array(gwT * ghT); // flat top at sea level
+          // zero grid: mmPerM/exag are inert; base is the slab thickness
+          const wsolid = buildSolid(slab, gwT, ghT, span, oceanCells,
+            { dx, dy, mmPerM: 1, emin: 0, exag: 1, base: s.waterDrop });
           nw++;
           await add(`water_i${ci}_j${cj}`, wsolid, ...belowAt(cell, 0));
         }
