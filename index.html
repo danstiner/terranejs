@@ -77,6 +77,18 @@
             flat and drops into the recess as-is.</p>
         </div>
 
+        <label class="row"><span>Altitude color bands</span>
+          <input id="colorBands" type="checkbox"></label>
+        <div id="bandOpts" hidden>
+          <label class="row"><span>Embed color changes in 3MF (PrusaSlicer)</span>
+            <input id="embedColorChanges" type="checkbox"></label>
+          <p class="hint" id="bandReadout"></p>
+          <p class="hint warn" id="bandWarn" hidden></p>
+          <p class="hint">Bands recolor the terrain top by altitude. Embedded
+            changes load only when the .3mf is opened as a <b>project</b> in
+            PrusaSlicer (not "import geometry").</p>
+        </div>
+
         <div id="trailOpts" hidden>
           <label>Trail (GPX)</label>
           <label for="pathMode">Render as</label>

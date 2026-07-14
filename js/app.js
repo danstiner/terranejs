@@ -15,6 +15,7 @@ import { parseGPX, trackBbox } from "./gpx.js";
 import { samplePath, rasterizePath, profileAlong, smoothProfile, stampOffset,
   stampInlay, ribbonGrid } from "./path.js";
 import { ThreeMFWriter } from "./threeMF.js";
+import { bandThresholds, baseBand, colorChanges } from "./color-bands.js";
 
 const store = createStore({
   shape: "square", // "square" | "hex" | "circle"
@@ -31,6 +32,8 @@ const store = createStore({
   pathWmm: 1.6, // trail width on the print
   pathHmm: 0.6, // bump height / inset depth
   exportDetail: 2, // zoom-ladder slider index 0..3 (3 = source zoom)
+  colorBands: false, // altitude filament color bands (M600 by height)
+  embedColorChanges: false, // also embed the changes in the exported 3MF (PrusaSlicer)
 });
 const DEFAULT_SCALE = 500000; // 2 mm = 1 km — first freeform click before any preset
 
@@ -303,6 +306,8 @@ $("waterSeparate").addEventListener("change", (e) => store.set({
   waterSeparate: e.target.checked,
   waterDrop: e.target.checked ? Math.max(1, store.get().waterDrop) : store.get().waterDrop,
 }));
+$("colorBands").addEventListener("change", (e) => store.set({ colorBands: e.target.checked }));
+$("embedColorChanges").addEventListener("change", (e) => store.set({ embedColorChanges: e.target.checked }));
 $("export").addEventListener("click", export3MF);
 
 // --- preview state ---------------------------------------------------------
@@ -362,6 +367,34 @@ function layoutFit(s) {
     groundM: Math.max(10, (PITCH_MM * s.scale) / 1000) };
 }
 
+const BAND_NAMES = ["water", "forest", "tundra", "rock", "snow"];
+
+// Readout for the altitude bands (approximate: preview frame, not the export frame).
+function renderBandReadout(s, baked) {
+  const el = $("bandReadout");
+  if (!baked) { el.textContent = "— loading…"; return; }
+  const f = layoutFit(s);
+  const cLat = (f.bbox[0] + f.bbox[2]) / 2;
+  const thr = bandThresholds(cLat);
+  const K = (1000 / f.scale) * s.exag;
+  const frame = { emin: baked.min, base: s.base, mmPerM: 1000 / f.scale, exag: s.exag,
+    zmax: s.base + (baked.max - baked.min) * K };
+  const changes = colorChanges(thr, frame);
+  const first = BAND_NAMES[baseBand(baked.min, thr)];
+  const list = changes.length
+    ? changes.map((c) => `Z ${c.z.toFixed(1)} mm → ${BAND_NAMES[c.band]}`).join(" · ")
+    : "no changes (single band)";
+  el.textContent =
+    `center ${cLat.toFixed(1)}° → treeline ${Math.round(thr[1])} m, ` +
+    `snowline ${Math.round(thr[3])} m · load ${first} first · ${list}`;
+
+  const sep = s.waterSeparate || s.tracks.length > 0;
+  const warn = $("bandWarn");
+  warn.hidden = !(s.embedColorChanges && sep);
+  warn.textContent = "Color changes apply to every object on the plate by height — "
+    + "slice separate inserts/trails in their own job.";
+}
+
 function renderSettings(s, baked) {
   $("readout").textContent = !s.center ? "No tiles placed." :
     `${s.cells.length} tile${s.cells.length === 1 ? "" : "s"} · center ${s.center[0].toFixed(4)}, ${s.center[1].toFixed(4)}`;
@@ -376,6 +409,10 @@ function renderSettings(s, baked) {
   $("waterDrop").value = s.waterDrop; // range thumb must snap to a clamped value, even while dragging
   $("waterOpts").hidden = s.waterDrop <= 0;
   $("waterSeparate").checked = s.waterSeparate;
+  $("colorBands").checked = s.colorBands;
+  $("bandOpts").hidden = !s.colorBands;
+  $("embedColorChanges").checked = s.embedColorChanges;
+  if (s.colorBands) renderBandReadout(s, baked);
 
   $("trailOpts").hidden = !s.tracks.length;
   if (s.tracks.length) {
