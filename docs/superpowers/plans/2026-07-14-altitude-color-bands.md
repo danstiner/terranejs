@@ -594,13 +594,7 @@ Expected: FAIL — `w.setColorChanges is not a function`.
 
 In `tilejs/js/threeMF.js`:
 
-Add the import at the top (after the `zip.js` import):
-
-```js
-import { prusaColorChangeXml as _unused } from "./color-bands.js"; // (see below)
-```
-
-Actually import the real name:
+Add the import at the top (after the `zip.js` import on line 5):
 
 ```js
 import { prusaColorChangeXML } from "./color-bands.js";
@@ -641,8 +635,6 @@ In `finish()`, replace the `return buildZip([...])` block (lines 96–100) with:
     if (this.colorChanges) entries.push(entry(CGCODE_PART, prusaColorChangeXML(this.colorChanges)));
     return buildZip(entries);
 ```
-
-Remove the stray `_unused` import line if it was added; keep only `import { prusaColorChangeXML } from "./color-bands.js";`.
 
 Run: `cd tilejs && node --test 'test/threemf-colorchange.test.mjs'` → PASS.
 
