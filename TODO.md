@@ -14,6 +14,8 @@
 
 ## Considering
 
+- Load color bands by default, explain what the current preview does and if we can just replace it with bands
+- Tweak color bands to look better, but maybe be a bit unrealistic. Mountains ideally would be gray just to be visible, even if most of them is below the treeline. Think a bit how to fudge this nicely
 - **Unprojected lat/lng sampling.** Everything currently works in web-mercator
   (uniform Mercator lattice). Mercator inflates N-S scale with latitude — the
   chosen 1:scale is exact only at the center lat, and tall layouts stretch.
