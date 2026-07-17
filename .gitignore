@@ -1,0 +1,8 @@
+/node_modules/
+.DS_Store
+
+# Local planning scratchpad
+/TODO.md
+
+# Superpowers skill state; a bit too detailed to bother tracking in source control
+/docs/superpowers/
