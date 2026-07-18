@@ -19,5 +19,7 @@
  * @typedef {{ positions: Float32Array, indices: Uint32Array }} Solid
  *   Indexed watertight mesh: xyz per vertex in `positions`, three vertex ids per
  *   triangle in `indices`, outward-wound.
+ * @typedef {{ r0: number, r1: number, c0: number, c1: number }} Span
+ *   Half-open grid-cell span: rows [r0,r1), columns [c0,c1) selecting a tile's cells.
  */
 export {};
