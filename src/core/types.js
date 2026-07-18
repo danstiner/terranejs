@@ -16,5 +16,8 @@
  *   by stiching several tiles together into a single "mosaic". `data` is a
  *   row-major width×height Float32Array of metres; (originGx,originGy) is the
  *   global pixel of data[0] (row 0 = north); z is the source zoom.
+ * @typedef {{ positions: Float32Array, indices: Uint32Array }} Solid
+ *   Indexed watertight mesh: xyz per vertex in `positions`, three vertex ids per
+ *   triangle in `indices`, outward-wound.
  */
 export {};
