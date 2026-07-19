@@ -3,12 +3,75 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>terranejs</title>
+  <title>terrane — topography print tiler</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+  <link rel="stylesheet" href="style.css">
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.module.js",
+      "three/examples/jsm/": "https://cdn.jsdelivr.net/npm/three@0.185.0/examples/jsm/",
+      "leaflet": "https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet-src.esm.js"
+    }
+  }
+  </script>
 </head>
 <body>
-  <main>
-    <h1>terranejs</h1>
-    <p>Wall-mountable 3D-printed topography tiles — under construction.</p>
-  </main>
+  <!-- left column: brand, map, controls — one scrolling column -->
+  <div id="left">
+    <header id="brand">
+      <h1>terrane</h1>
+      <p class="sub">Wall-mountable 3D-printed topography tiles.</p>
+    </header>
+
+    <div id="map"></div>
+    <p id="maphint" class="hint">Click to place a tile. Drag the marker to move it.</p>
+
+    <aside id="panel">
+      <section>
+        <div class="row"><strong>Region</strong></div>
+        <div id="readout" class="readout">No tile placed.</div>
+      </section>
+
+      <section id="settings" hidden>
+        <h2>Print settings</h2>
+
+        <label for="scale">Map scale</label>
+        <div class="row">
+          <span><input id="scale" type="number" min="0.01" step="any" value="4" class="num">&nbsp;mm&nbsp;=&nbsp;1&nbsp;km</span>
+        </div>
+        <p class="hint">Bigger number = bigger print, finer detail.</p>
+
+        <label for="exag">Vertical exaggeration: <span id="exagVal">1.0</span>&times;</label>
+        <input id="exag" type="range" min="0.5" max="4" step="0.1" value="1">
+
+        <label for="base">Base thickness: <span id="baseVal">6.0</span>&nbsp;mm</label>
+        <input id="base" type="range" min="1" max="10" step="0.5" value="6">
+
+        <details>
+          <summary>Advanced</summary>
+          <label for="tileW">Tile width (mm)</label>
+          <input id="tileW" type="number" min="50" step="5" value="200" class="num">
+          <p class="hint">Print size of the tile (largest dimension) — set it to
+            fit your printer's bed.</p>
+        </details>
+      </section>
+    </aside>
+  </div>
+
+  <!-- right column: 3D preview, then a results footer -->
+  <div id="right">
+    <div id="preview"></div>
+    <div id="results">
+      <div id="resultbar">
+        <p id="credits" class="hint">Elevation data © <a href="https://www.mapzen.com/rights" target="_blank" rel="noopener">Mapzen</a> and <a href="https://github.com/tilezen/joerd/blob/master/docs/attribution.md" target="_blank" rel="noopener">others</a>, hosted by <a href="https://registry.opendata.aws/terrain-tiles/" target="_blank" rel="noopener">AWS</a></p>
+        <span id="progress" class="hint">Click the map to place a tile.</span>
+        <button id="export" type="button" class="primary">Export 3MF</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="src/ui/app.js"></script>
 </body>
 </html>

@@ -102,28 +102,41 @@ export async function tileTo3mf(name, solid) {
   return writer.finish();
 }
 
-// Default export name: hemisphere-tagged center coordinates, so separate exports
-// get distinct, self-describing filenames (e.g. "terrane_tile_47.6035N_122.3294W").
-/**
- * @param {LatLon} center
- * @returns {string}
- */
-export function defaultTileName([lat, lon]) {
-  const ns = `${Math.abs(lat).toFixed(4)}${lat >= 0 ? "N" : "S"}`;
-  const ew = `${Math.abs(lon).toFixed(4)}${lon >= 0 ? "E" : "W"}`;
-  return `terrane_tile_${ns}_${ew}`;
-}
-
-// Browser entry: fetch the tile's terrarium mosaic, bake, and serialize. The only
-// networked step — untested under node (fetchMosaic guards its browser APIs).
+// Default export name: the parameters that define the tile — hemisphere-tagged
+// centre, print width, and map scale — so the filename fully describes the tile
+// that produced it (e.g. "terrane_tile_47.6035N_122.3294W_200mm_1to250000").
 /**
  * @param {TileSettings} settings
- * @param {{ z?: number, maxTiles?: number, name?: string }} [opts]
+ * @returns {string}
+ */
+export function defaultTileName({ center: [lat, lon], tileWmm, scale }) {
+  const ns = `${Math.abs(lat).toFixed(4)}${lat >= 0 ? "N" : "S"}`;
+  const ew = `${Math.abs(lon).toFixed(4)}${lon >= 0 ? "E" : "W"}`;
+  return `terrane_tile_${ns}_${ew}_${tileWmm}mm_1to${Math.round(scale)}`;
+}
+
+// Browser step: fetch the tile's terrarium mosaic and bake a validated solid.
+// The networked half of the pipeline — untested under node (fetchMosaic guards
+// its browser APIs). Shared by the live preview and the export. onProgress
+// forwards source-tile fetch progress (done, total) for a UI status line.
+/**
+ * @param {TileSettings} settings
+ * @param {{ z?: number, maxTiles?: number, onProgress?: (done: number, total: number) => void }} [opts]
+ * @returns {Promise<Solid>}
+ */
+export async function bakeSquareTile(settings, opts = {}) {
+  const plan = planSquareTile(settings, opts);
+  const mosaic = await fetchMosaic(plan.bbox, plan.z, { onProgress: opts.onProgress });
+  return bakeSquareTileSolid(mosaic, plan, settings);
+}
+
+// Browser entry: bake, then serialize to a downloadable .3mf blob.
+/**
+ * @param {TileSettings} settings
+ * @param {{ z?: number, maxTiles?: number, name?: string, onProgress?: (done: number, total: number) => void }} [opts]
  * @returns {Promise<Uint8Array>}
  */
 export async function exportSquareTile(settings, opts = {}) {
-  const plan = planSquareTile(settings, opts);
-  const mosaic = await fetchMosaic(plan.bbox, plan.z);
-  const solid = bakeSquareTileSolid(mosaic, plan, settings);
-  return tileTo3mf(opts.name ?? defaultTileName(settings.center), solid);
+  const solid = await bakeSquareTile(settings, opts);
+  return tileTo3mf(opts.name ?? defaultTileName(settings), solid);
 }

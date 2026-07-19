@@ -1,0 +1,79 @@
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+html { color-scheme: light dark; } /* dark-theme native form controls (number inputs, sliders) with the page */
+body {
+  display: flex;
+  height: 100vh;
+  font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  color: #1a1a1a;
+}
+
+/* left column: brand, map, and controls scroll together as one column */
+#left {
+  flex: 0 0 400px;
+  width: 400px;
+  overflow-y: auto;
+  border-right: 1px solid #ddd;
+  background: #fafafa;
+}
+#brand { padding: 14px 16px 12px; border-bottom: 1px solid #eee; }
+#map { height: 42vh; min-height: 260px; }
+#maphint { margin: 6px 16px 0; } /* tuck close under the map; panel padding gives space before Region */
+#panel { padding: 16px; }
+
+/* right column: 3D preview, then a results footer */
+#right { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+#preview { flex: 1; min-height: 0; background: #0e0e12; }
+#preview canvas { display: block; }
+#results { flex: 0 0 auto; padding: 10px 16px; border-top: 1px solid #ddd; background: #fafafa; }
+#resultbar { display: flex; align-items: center; gap: 16px; }
+/* progress fills the left; attribution sits at right, wrapping below when tight */
+#resultbar #progress { order: -1; flex: 1 1 auto; min-width: 0; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#resultbar #credits { flex: 0 1 auto; min-width: 0; margin: 0; text-align: right; line-height: 1.35; }
+#resultbar .primary { flex: 0 0 auto; width: auto; margin: 0; }
+
+#panel h1 { margin: 0; font-size: 20px; }
+#panel h2 { margin: 0 0 10px; font-size: 15px; }
+.sub { margin: 4px 0 0; color: #666; }
+
+section { margin-bottom: 20px; }
+label { display: block; font-weight: 600; margin-bottom: 4px; }
+select { width: 100%; padding: 6px; }
+.hint { margin: 8px 0 0; font-size: 12px; color: #888; }
+
+input[type="range"] { width: 100%; }
+input.num { width: 72px; padding: 4px; }
+#scale { width: 96px; padding: 4px; }
+details { margin: 12px 0; }
+summary { cursor: pointer; color: #555; }
+
+.row { display: flex; justify-content: space-between; align-items: center; }
+button {
+  padding: 4px 10px; border: 1px solid #bbb; border-radius: 4px;
+  background: #fff; cursor: pointer;
+}
+button:hover { background: #f0f0f0; }
+button.primary {
+  padding: 8px 14px; background: #2d6cdf; border-color: #2d6cdf;
+  color: #fff; font-weight: 600; white-space: nowrap;
+}
+button.primary:hover { background: #2a61c6; }
+button.primary:disabled { background: #9bb4de; border-color: #9bb4de; cursor: default; }
+
+.readout {
+  margin-top: 8px; padding: 8px; font: 12px/1.5 ui-monospace, monospace;
+  background: #fff; border: 1px solid #e0e0e0; border-radius: 4px;
+  white-space: pre-wrap; word-break: break-word;
+}
+
+@media (prefers-color-scheme: dark) {
+  body { color: #e8e8e8; }
+  #left { border-right-color: #333; background: #1c1c1e; }
+  #brand { border-bottom-color: #333; }
+  #results { background: #1c1c1e; border-top-color: #333; }
+  .sub, .hint, summary { color: #999; }
+  button { background: #2c2c2e; border-color: #444; color: #e8e8e8; }
+  button:hover { background: #3a3a3c; }
+  .readout { background: #111; border-color: #333; }
+  #credits a, #credits a:visited { color: #7fb0ff; } /* UA default blue is ~1.8:1 on the dark footer — fails WCAG */
+}
