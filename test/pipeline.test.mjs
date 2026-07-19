@@ -109,10 +109,16 @@ test("pipeline: fixed region → validated watertight printable .3mf (milestone)
   }
 });
 
-test("defaultTileName: hemisphere-tagged center coordinates", () => {
-  assert.equal(defaultTileName([47.6035, -122.3294]), "terrane_tile_47.6035N_122.3294W");
-  assert.equal(defaultTileName([-33.8688, 151.2093]), "terrane_tile_33.8688S_151.2093E");
-  assert.equal(defaultTileName([0, 0]), "terrane_tile_0.0000N_0.0000E");
-  // rounds to 4 decimals and pads a whole-number degree
-  assert.equal(defaultTileName([47, 5.123456]), "terrane_tile_47.0000N_5.1235E");
+test("defaultTileName: encodes center, width, and scale", () => {
+  const g = { base: 6, exag: 1 }; // geom fields the name ignores
+  assert.equal(
+    defaultTileName({ center: [47.6035, -122.3294], tileWmm: 200, scale: 250000, ...g }),
+    "terrane_tile_47.6035N_122.3294W_200mm_1to250000");
+  assert.equal(
+    defaultTileName({ center: [-33.8688, 151.2093], tileWmm: 150, scale: 100000, ...g }),
+    "terrane_tile_33.8688S_151.2093E_150mm_1to100000");
+  // rounds coords to 4 decimals, pads a whole-number degree, rounds scale to an int
+  assert.equal(
+    defaultTileName({ center: [47, 5.123456], tileWmm: 100, scale: 250000.7, ...g }),
+    "terrane_tile_47.0000N_5.1235E_100mm_1to250001");
 });
