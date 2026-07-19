@@ -34,6 +34,12 @@ export function latToGlobalY(lat, z) {
   return y * 256 * 2 ** z;
 }
 
+// Web Mercator's latitude limit (±85.0511°): the projection diverges toward the
+// poles, so the world square truncates here and no source tiles exist beyond it.
+// Callers must keep bboxes within ±MAX_MERCATOR_LAT.
+/** @type {number} */
+export const MAX_MERCATOR_LAT = Math.atan(Math.sinh(Math.PI)) / D2R;
+
 // Zoom whose pixel ground-resolution ≈ the target sample step (match the
 // print's detail to the data).
 /**
