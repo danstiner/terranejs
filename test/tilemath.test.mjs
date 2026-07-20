@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   groundResolution, lonToGlobalX, latToGlobalY, globalXToLon, globalYToLat,
-  printPitchMm, sourceZoom, tileRangeForBBox, PITCH_FLOOR_MM,
+  printPitchMm, sourceZoom, sourceTileRange, PITCH_FLOOR_MM,
 } from "../src/core/tilemath.js";
 
 test("globalXToLon/globalYToLat invert the forward maps", () => {
@@ -38,8 +38,8 @@ test("sourceZoom: tile budget clamps the zoom down", () => {
   const bbox = /** @type {import("../src/core/types.js").BBox} */ ([47.1, -122.5, 47.8, -121.1]);
   const z = sourceZoom(bbox, 47.45, 70500, 12);
   assert.ok(z < 14);
-  assert.ok(tileRangeForBBox(bbox, z).count <= 12);
-  assert.ok(z === 1 || tileRangeForBBox(bbox, z + 1).count > 12);
+  assert.ok(sourceTileRange(bbox, z).count <= 12);
+  assert.ok(z === 1 || sourceTileRange(bbox, z + 1).count > 12);
 });
 
 test("sourceZoom: caps at the pyramid max", () => {

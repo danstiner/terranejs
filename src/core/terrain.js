@@ -2,12 +2,12 @@
 // Browser-only APIs (fetch, createImageBitmap, OffscreenCanvas, document) are
 // referenced only inside function bodies, so this module still imports under
 // node for the pure decode tests.
-import { tileRangeForBBox } from "./tilemath.js";
+import { sourceTileRange } from "./tilemath.js";
 
 /** @typedef {import("./types.js").BBox} BBox */
 /** @typedef {import("./types.js").Mosaic} Mosaic */
 
-const TILE = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png";
+const SOURCE_TILE_URL = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png";
 
 // Terrarium encoding: elevation_m = (R*256 + G + B/256) - 32768.
 // https://github.com/tilezen/joerd/blob/master/docs/formats.md#terrarium
@@ -51,8 +51,8 @@ function ctx2d() {
  * @param {number} z
  * @returns {Promise<Uint8ClampedArray>}
  */
-async function fetchTilePixels(x, y, z) {
-  const url = TILE.replace("{z}", String(z)).replace("{x}", String(x)).replace("{y}", String(y));
+async function fetchSourceTile(x, y, z) {
+  const url = SOURCE_TILE_URL.replace("{z}", String(z)).replace("{x}", String(x)).replace("{y}", String(y));
   const res = await fetch(url, { mode: "cors", cache: "force-cache" });
   if (!res.ok) throw new Error(`tile ${z}/${x}/${y}: HTTP ${res.status}`);
   // colorSpaceConversion/premultiplyAlpha "none": keep the raw PNG bytes exact —
@@ -120,7 +120,7 @@ export function mosaicTiles({ tx0, tx1, ty0, ty1 }, z) {
  */
 export async function fetchMosaic(bbox, z, { concurrency = 4, onProgress } = {}) {
   const world = 2 ** z;
-  const { tx0, tx1, ty0: ry0, ty1: ry1 } = tileRangeForBBox(bbox, z);
+  const { tx0, tx1, ty0: ry0, ty1: ry1 } = sourceTileRange(bbox, z);
   // Longitude wraps (handled in mosaicTiles); latitude does not, so clamp y to valid
   // rows — the resampler's edge-clamp covers the sub-pixel shortfall at the cap.
   const ty0 = Math.max(0, ry0), ty1 = Math.min(world - 1, ry1);
@@ -135,7 +135,7 @@ export async function fetchMosaic(bbox, z, { concurrency = 4, onProgress } = {})
 
   await mapLimit(mosaicTiles({ tx0, tx1, ty0, ty1 }, z), concurrency,
     async ({ x, y, ox, oy }) => {
-      const elev = decodeTerrarium(await fetchTilePixels(x, y, z));
+      const elev = decodeTerrarium(await fetchSourceTile(x, y, z));
       for (let r = 0; r < 256; r++) {
         const dst = (oy + r) * width + ox;
         data.set(elev.subarray(r * 256, r * 256 + 256), dst);
