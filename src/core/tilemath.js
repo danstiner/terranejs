@@ -57,7 +57,7 @@ export function pickZoom(resM, latDeg, maxZoom = 15) {
  * @param {number} [haloPx]
  * @returns {{ tx0: number, tx1: number, ty0: number, ty1: number, z: number, count: number }}
  */
-export function tileRangeForBBox([s, w, n, e], z, haloPx = 1) {
+export function sourceTileRange([s, w, n, e], z, haloPx = 1) {
   const gx0 = lonToGlobalX(w, z), gx1 = lonToGlobalX(e, z);
   const gyN = latToGlobalY(n, z), gyS = latToGlobalY(s, z); // north = smaller y
   const px0 = Math.floor(Math.min(gx0, gx1) - haloPx);
@@ -111,16 +111,16 @@ export const PITCH_FLOOR_MM = 0.05;
  * @param {BBox} bbox
  * @param {number} latDeg
  * @param {number} scale
- * @param {number} maxTiles
+ * @param {number} maxSourceTiles
  * @param {number} [floorMm]
  * @param {number} [maxZoom]
  * @returns {number}
  */
-export function sourceZoom(bbox, latDeg, scale, maxTiles,
+export function sourceZoom(bbox, latDeg, scale, maxSourceTiles,
   floorMm = PITCH_FLOOR_MM, maxZoom = 15) {
   let z = 1;
   while (z < maxZoom && printPitchMm(latDeg, z, scale) > floorMm) z++;
   // z floors at 1: with a pathological budget the invariant can't be met
-  while (z > 1 && tileRangeForBBox(bbox, z).count > maxTiles) z--;
+  while (z > 1 && sourceTileRange(bbox, z).count > maxSourceTiles) z--;
   return z;
 }
