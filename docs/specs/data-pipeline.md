@@ -1,0 +1,128 @@
+# Data Pipeline
+
+terranejs turns a region you pick on a map into a wall-mountable,
+3D-printed topography tile: a physical relief square whose surface height
+tracks the real terrain, scaled down to fit a print bed. This is the
+end-to-end path from raw elevation data to a slicer-ready model file.
+
+```mermaid
+flowchart LR
+    A[Source tiles<br/>elevation-tiles-prod] --> B[Decode<br/>terrarium PNG → metres]
+    B --> C[Mosaic<br/>stitched elevation raster]
+    C --> D[Resample<br/>print sample grid]
+    D --> E[Mesh<br/>watertight solid]
+    E --> F[Validate<br/>watertight + volume]
+    F --> G[Export<br/>3MF file]
+
+    S1[Map scale] -.-> E
+    S2[Vertical exaggeration] -.-> E
+    S3[Base thickness] -.-> E
+```
+
+## Key terms
+
+- **Source tile** — one 256×256-pixel elevation PNG from the data source,
+  addressed by Web Mercator zoom/x/y, like a map tile.
+- **Mosaic** — the single elevation raster produced by decoding and
+  stitching together every source tile covering the region.
+- **Grid** — the regular lattice of sample points, sized to the chosen
+  print, that the mesh is actually built from (not the mosaic's raw pixel
+  grid).
+- **Tile** (the product) — the physical 3D-printed square this whole
+  pipeline produces. Not to be confused with a *source tile*.
+
+## 1. Data source
+
+Elevation comes from the AWS Terrain Tiles dataset — the public
+`elevation-tiles-prod` S3 bucket — serving Tilezen/Joerd's
+terrarium-encoded PNG tiles, addressed as standard Web Mercator z/x/y
+tiles. Each pixel's red, green, and blue channels encode one elevation
+sample in metres (`elevation = R×256 + G + B/256 − 32768`); decoding a
+tile means reading its pixels and applying that formula.
+
+The dataset's terms require visible attribution of its upstream sources
+(SRTM, GMTED2010, and others, blended per region) — any deployment of
+terranejs must credit them.
+
+## 2. Choosing detail
+
+Printers have a practical resolution floor — consumer machines can't
+reliably repeat much finer than about 0.05 mm — so elevation data more
+detailed than that floor, once projected through the print's scale, buys
+nothing but bigger downloads and slower meshing. terranejs picks the
+shallowest source zoom level whose ground resolution, at the chosen map
+scale, lands at or below that floor, capped by the source's deepest
+available zoom and by a tile-count budget so a very large region degrades
+to a coarser zoom instead of fetching thousands of tiles.
+
+## 3. Fetch + assemble
+
+Given the region and the chosen zoom, terranejs works out which source
+tiles cover it, fetches them concurrently, decodes each to metres, and
+stitches the results into one elevation raster in a shared pixel space —
+the **mosaic**. This is the raw material every later stage samples from.
+
+## 4. Resample
+
+The mesh isn't built straight from mosaic pixels — it's built from the
+print's own sample grid, a lattice sized to the tile's footprint and map
+scale. terranejs snaps that grid to whole mosaic pixels, so each grid point
+lands on exactly one pixel: resampling reduces to a direct read, and
+adjacent tiles that share an edge sample identical seam data by
+construction.
+
+## 5. Mesh
+
+The elevation grid becomes a watertight 3D solid with three parts: a
+raised **top surface** following the elevation grid, **side walls**
+closing the gap between that surface's outer edge and the base, and a
+flat **base** underneath.
+
+Three settings shape the result:
+
+- **Map scale** (1:N) — how many real-world metres one print millimetre
+  represents; sets both the tile's footprint size and how much the
+  elevation range shrinks.
+- **Vertical exaggeration** — a multiplier on relief height only,
+  independent of the horizontal scale, so terrain that would otherwise be
+  imperceptibly shallow at print size reads clearly.
+- **Base thickness** — flat stock added below the lowest point of the
+  terrain, so thin edges stay structurally sound and the tile has a flat
+  back to mount.
+
+## 6. Validate
+
+Before export, the solid is checked for two things a slicer requires:
+that it's **watertight** (a fully closed surface, with no gaps) and that
+it has **positive volume** (not degenerate or inside-out). A tile that
+fails either check is rejected rather than handed to a slicer that can't
+make sense of it.
+
+## 7. Export
+
+The validated solid is written out as a **3MF** file — a standard,
+ZIP-based 3D model container that slicer software reads to generate
+printer instructions. Export is monochrome for now: one uncolored solid
+per tile.
+
+## 8. Preview + UI
+
+The website wraps this pipeline in an interactive loop: pick a region on
+a map (Leaflet), adjust print settings, watch a live 3D preview
+(three.js) re-bake and re-render as you go, then export — which reruns
+the same pipeline once more and downloads the resulting 3MF.
+
+The pipeline itself is headless — it lives in `src/core/`, has no DOM
+dependency, and is testable outside a browser. The browser-facing pieces
+(map, preview, settings controls, the page itself) live in `src/ui/` and
+never bake anything themselves; they only call into the core pipeline and
+render what it returns.
+
+## 9. Coordinate model
+
+Geometry throughout this pipeline is computed in **Web Mercator**, a flat
+projection of the Earth — not a curved or true-Earth model. Web Mercator
+cannot represent the poles, so its coverage stops at roughly ±85° latitude;
+a region reaching beyond that band has no source tiles and is rejected up
+front rather than exported. A curved-shell, true-Earth coordinate model is a
+potential future feature.
