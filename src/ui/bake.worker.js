@@ -37,6 +37,7 @@ async function handle({ gen, settings, maxTiles, format, name }) {
       cache.push(hit);
       if (cache.length > CACHE_MAX) cache.shift();
     }
+    post({ gen, baking: true }); // all tiles in hand → meshing + validation (synchronous, blocks the worker)
     const solid = bakeSquareTileSolid(hit.mosaic, plan, settings);
     if (format === "3mf") {
       const bytes = await tileTo3mf(name ?? "tile", solid);
@@ -52,6 +53,7 @@ async function handle({ gen, settings, maxTiles, format, name }) {
 
 // Serialize jobs: each message fully settles before the next starts, so the cache is
 // never written by two overlapping jobs. handle() swallows its own errors, so the
-// chain never rejects; the trailing catch is belt-and-suspenders.
+// chain never rejects; the trailing catch guards a post() that itself throws (log,
+// don't silently drop, so a lost job is at least visible in the console).
 let queue = Promise.resolve();
-self.onmessage = ({ data }) => { queue = queue.then(() => handle(data)).catch(() => {}); };
+self.onmessage = ({ data }) => { queue = queue.then(() => handle(data)).catch((e) => { console.error("bake worker:", e); }); };
