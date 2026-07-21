@@ -35,6 +35,8 @@ body {
 #resultbar #progress { order: -1; flex: 1 1 auto; min-width: 0; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #resultbar #credits { flex: 0 1 auto; min-width: 0; margin: 0; text-align: right; line-height: 1.35; }
 #resultbar .primary { flex: 0 0 auto; width: auto; margin: 0; }
+#resultbar #ghlink { flex: 0 0 auto; display: inline-flex; align-items: center; color: #666; }
+#resultbar #ghlink:hover { color: #1a1a1a; }
 
 #panel h2 { margin: 0 0 10px; font-size: 15px; }
 .sub { margin: 4px 0 0; color: #666; }
@@ -79,4 +81,6 @@ button.primary:disabled { background: #9bb4de; border-color: #9bb4de; cursor: de
   button:hover { background: #3a3a3c; }
   .readout { background: #111; border-color: #333; }
   #credits a, #credits a:visited { color: #7fb0ff; } /* UA default blue is ~1.8:1 on the dark footer — fails WCAG */
+  #resultbar #ghlink { color: #999; }
+  #resultbar #ghlink:hover { color: #e8e8e8; }
 }
