@@ -6,7 +6,7 @@ import { createStore } from "./store.js";
 import { initMap } from "./map.js";
 import { initPreview } from "./preview.js";
 import { wireControls } from "./controls.js";
-import { defaultTileName } from "../core/pipeline.js";
+import { defaultTileName, planSquareTile } from "../core/pipeline.js";
 
 /**
  * @typedef {{
@@ -64,6 +64,26 @@ let previewSettings = null;
 let exportName = "";
 let previewDeferred = false; // a preview requested during an export; run once the export finishes
 
+// Resting status after the detailed preview lands: the resolution (real metres per
+// grid sample) and rough triangle count of what's on screen vs what Export will
+// bake at the full print budget — so the preview-vs-print gap is legible. Both are
+// planned with the same pure planSquareTile the worker uses; no fetch, no bake.
+/** @param {TileSettings} settings @returns {string} */
+function detailSummary(settings) {
+  /** @param {number} maxTiles */
+  const part = (maxTiles) => {
+    const { gw, gh } = planSquareTile(settings, { maxTiles });
+    const gsd = (settings.tileWmm * settings.scale) / (1000 * gw); // real metres between mesh vertices
+    const tris = (gw * gh * 2) / 1e6;                              // ≈ top-surface triangles, millions
+    return `${gsd >= 10 ? Math.round(gsd) : gsd.toFixed(1)} m/vertex, ~${tris.toFixed(1)}M triangles`;
+  };
+  try {
+    return `Preview: ${part(CRISP)}  ·  Export: ${part(EXPORT)}`;
+  } catch {
+    return ""; // e.g. a tile past the Mercator limit — leave the line blank
+  }
+}
+
 worker.onmessage = ({ data }) => {
   if (data.gen === exportGen) { // export channel
     const btn = /** @type {HTMLButtonElement} */ ($("export"));
@@ -89,7 +109,7 @@ worker.onmessage = ({ data }) => {
     worker.postMessage({ gen: previewGen, settings: previewSettings, maxTiles: CRISP, format: "mesh" });
   } else {
     previewPhase = "idle";
-    setProgress("");
+    setProgress(previewSettings ? detailSummary(previewSettings) : "");
   }
 };
 
