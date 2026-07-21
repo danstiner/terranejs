@@ -16,9 +16,13 @@ body {
   border-right: 1px solid #ddd;
   background: #fafafa;
 }
-#brand { padding: 14px 16px 12px; border-bottom: 1px solid #eee; }
+/* wordmark + its definition on one baseline row: the definition floats to the
+   right of the h1 and wraps within its own column rather than under the wordmark */
+#brand { padding: 14px 16px 12px; border-bottom: 1px solid #eee; display: flex; align-items: baseline; gap: 10px; }
+#brand h1 { margin: 0; }
+#brand .sub { margin: 0; flex: 1; min-width: 0; }
 #map { height: 42vh; min-height: 260px; }
-#maphint { margin: 6px 16px 0; } /* tuck close under the map; panel padding gives space before Region */
+#maphint { margin: 6px 0 0; } /* just under the map; panel padding already aligns it with the section content */
 #panel { padding: 16px; }
 
 /* right column: 3D preview, then a results footer */
@@ -32,7 +36,6 @@ body {
 #resultbar #credits { flex: 0 1 auto; min-width: 0; margin: 0; text-align: right; line-height: 1.35; }
 #resultbar .primary { flex: 0 0 auto; width: auto; margin: 0; }
 
-#panel h1 { margin: 0; font-size: 20px; }
 #panel h2 { margin: 0 0 10px; font-size: 15px; }
 .sub { margin: 4px 0 0; color: #666; }
 

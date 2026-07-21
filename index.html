@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>terrane — topography print tiler</title>
+  <title>terrane — topographic tiles for 3D printing</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
         integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
   <link rel="stylesheet" href="style.css">
@@ -22,15 +22,16 @@
   <div id="left">
     <header id="brand">
       <h1>terrane</h1>
-      <p class="sub">Wall-mountable 3D-printed topography tiles.</p>
+      <p class="sub">tə-ˈrān — a fragment of the earth's crust that broke off its original tectonic plate and fused to another continent.</p>
     </header>
-
-    <div id="map"></div>
-    <p id="maphint" class="hint">Click to place a tile. Drag the marker to move it.</p>
 
     <aside id="panel">
       <section>
         <div class="row"><strong>Region</strong></div>
+
+        <div id="map"></div>
+        <p id="maphint" class="hint">Click to place a tile. Drag the marker to move it.</p>
+
         <div id="readout" class="readout">No tile placed.</div>
       </section>
 
