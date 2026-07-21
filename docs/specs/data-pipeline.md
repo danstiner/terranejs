@@ -55,6 +55,10 @@ scale, lands at or below that floor, capped by the source's deepest
 available zoom and by a tile-count budget so a very large region degrades
 to a coarser zoom instead of fetching thousands of tiles.
 
+The live preview goes coarser still: the screen shows far less detail than the
+print, so a smaller tile budget bakes a faster, lighter mesh that looks identical
+on-screen. Only the exported model uses the full budget.
+
 ## 3. Fetch + assemble
 
 Given the region and the chosen zoom, terranejs works out which source
@@ -107,16 +111,21 @@ per tile.
 
 ## 8. Preview + UI
 
-The website wraps this pipeline in an interactive loop: pick a region on
-a map (Leaflet), adjust print settings, watch a live 3D preview
-(three.js) re-bake and re-render as you go, then export — which reruns
-the same pipeline once more and downloads the resulting 3MF.
+The website wraps this pipeline in an interactive loop: pick a region on a map
+(Leaflet), adjust print settings, watch a live 3D preview (three.js) re-bake and
+re-render as you go, then export — which reruns the same pipeline at full print
+resolution and downloads the resulting 3MF. The preview bakes at a lower,
+viewport-matched detail level than the export, and lands in two passes: a coarse
+mesh almost immediately, then a sharper one a moment later.
 
 The pipeline itself is headless — it lives in `src/core/`, has no DOM
 dependency, and is testable outside a browser. The browser-facing pieces
 (map, preview, settings controls, the page itself) live in `src/ui/` and
 never bake anything themselves; they only call into the core pipeline and
-render what it returns.
+render what it returns. That baking runs on a background worker thread — which also computes the
+per-vertex normals the preview needs for lighting, so nothing meshes them on the
+main thread — leaving the interface responsive even while a tile is built, and
+letting the sharper pass carry more detail without stalling the page.
 
 ## 9. Coordinate model
 
