@@ -4,6 +4,7 @@
 // knows nothing about preview vs export vs fast vs crisp; that policy lives in
 // app.js. `format` is an output selector, not render policy. One job at a time.
 import { planSquareTile, bakeSquareTileSolid, tileTo3mf } from "../core/pipeline.js";
+import { vertexNormals } from "../core/normals.js";
 import { fetchMosaic } from "../core/terrain.js";
 
 /** @typedef {import("../core/types.js").Mosaic} Mosaic */
@@ -43,8 +44,11 @@ async function handle({ gen, settings, maxTiles, format, name }) {
       const bytes = await tileTo3mf(name ?? "tile", solid);
       post({ gen, bytes }, [bytes.buffer]);
     } else {
-      post({ gen, positions: solid.positions, indices: solid.indices },
-        [solid.positions.buffer, solid.indices.buffer]);
+      // Normals for the lit preview, computed here so the main thread never meshes
+      // them. Only the mesh path needs them — a slicer derives its own from 3mf.
+      const normals = vertexNormals(solid.positions, solid.indices);
+      post({ gen, positions: solid.positions, indices: solid.indices, normals },
+        [solid.positions.buffer, solid.indices.buffer, normals.buffer]);
     }
   } catch (err) {
     post({ gen, error: err instanceof Error ? err.message : String(err) });
