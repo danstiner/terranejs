@@ -12,14 +12,16 @@ import { MAX_MERCATOR_LAT } from "../core/tilemath.js";
 const ORIGIN = [0, 0];
 
 /**
- * @param {{ center: LatLon, zoom: number, onPlace: (c: LatLon) => void, onMove: (c: LatLon) => void }} opts
+ * @param {{ start: { center: LatLon, scale: number, tileWmm: number }, onPlace: (c: LatLon) => void, onMove: (c: LatLon) => void }} opts
+ *   `start` frames the initial view — the map is created without one, so
+ *   focus(start) below sets it before any layer draws.
  */
-export function initMap({ center, zoom, onPlace, onMove }) {
+export function initMap({ start, onPlace, onMove }) {
   // Keep the picker inside the Web Mercator coverage band (±85.05°) — a tile
   // can't be placed where there's no elevation data.
   const map = L.map("map", {
     maxBounds: [[-MAX_MERCATOR_LAT, -180], [MAX_MERCATOR_LAT, 180]], maxBoundsViscosity: 1,
-  }).setView(center, zoom);
+  });
   L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom: 19,
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
@@ -32,7 +34,18 @@ export function initMap({ center, zoom, onPlace, onMove }) {
 
   map.on("click", (e) => onPlace([e.latlng.lat, e.latlng.lng]));
 
+  // Fly the view to frame a tile's footprint (initial paint + every preset
+  // select). Builds bounds straight from the cell ring, so it never depends on
+  // setLayout having drawn the polygon yet.
+  /** @param {{ center: LatLon, scale: number, tileWmm: number }} s */
+  const focus = (s) => {
+    const ring = cellRingLatLon(s.center, s.scale, s.tileWmm, ORIGIN, "square");
+    map.fitBounds(L.latLngBounds(ring), { padding: [20, 20] });
+  };
+  focus(start); // establish the initial view (map was created without one)
+
   return {
+    focus,
     // Redraw the placed tile + drag marker from store state (idempotent).
     /** @param {{ center: LatLon | null, scale: number, tileWmm: number }} s */
     setLayout(s) {
