@@ -49,7 +49,7 @@ export function initPreview(container) {
   };
   loop();
 
-  /** @param {Solid[]} solids */
+  /** @param {{ positions: Float32Array, indices: Uint32Array, normals: Float32Array }[]} solids */
   function setTiles(solids) {
     for (const c of group.children) {
       const m = /** @type {THREE.Mesh} */ (c);
@@ -64,7 +64,7 @@ export function initPreview(container) {
       const g = new THREE.BufferGeometry();
       g.setAttribute("position", new THREE.BufferAttribute(s.positions, 3));
       g.setIndex(new THREE.BufferAttribute(s.indices, 1));
-      g.computeVertexNormals();
+      g.setAttribute("normal", new THREE.BufferAttribute(s.normals, 3));
       g.computeBoundingBox();
       if (g.boundingBox) box.union(g.boundingBox);
       group.add(new THREE.Mesh(g, new THREE.MeshStandardMaterial({

@@ -24,7 +24,7 @@ const RAINIER = [46.8523, -121.7603]; // default placement: Mount Rainier summit
 // already pixel-dense on screen, and a small tile budget keeps the bake fast.
 // Export uses the full print resolution. See docs/specs/data-pipeline.md §2.
 const FAST = 4;     // ~2×2 tiles → ~512px grid → sub-10ms bake (instant relief)
-const CRISP = 36;   // ~6×6 tiles → ~1536px grid → viewport-sharp (~1–2s)
+const CRISP = 64;   // ~8×8 tiles → ~2048px grid → viewport-sharp on zoom; fetch-bound, so kept modest
 const EXPORT = 300; // full print resolution (core's default tile budget)
 
 const store = createStore(/** @type {AppState} */ ({
@@ -82,7 +82,7 @@ worker.onmessage = ({ data }) => {
   if (data.progress) { setProgress(`${mode} — fetching terrain ${data.progress.done}/${data.progress.total}`); return; }
   if (data.baking) { setProgress(`${mode} — baking…`); return; }
   if (data.error) { setProgress(`Preview failed: ${data.error}`); previewPhase = "idle"; return; }
-  preview.setTiles([{ positions: data.positions, indices: data.indices }]);
+  preview.setTiles([{ positions: data.positions, indices: data.indices, normals: data.normals }]);
   if (previewPhase === "fast") {
     previewPhase = "crisp"; // fast relief is up; refine to viewport-sharp
     setProgress("Detailed preview…");
