@@ -6,6 +6,7 @@
 import { planSquareTile, bakeSquareTileSolid, tileTo3mf } from "../core/pipeline.js";
 import { vertexNormals } from "../core/normals.js";
 import { fetchMosaic } from "../core/terrain.js";
+import { BAND_COLORS, BAND_NAMES, BOUNDARY_NAMES, bandThresholds, baseBand, colorChanges, baseColorHex } from "../core/colors.js";
 
 /** @typedef {import("../core/types.js").Mosaic} Mosaic */
 /** @typedef {import("../core/pipeline.js").TileSettings} TileSettings */
@@ -24,8 +25,8 @@ const post = /** @type {(msg: unknown, transfer?: Transferable[]) => void} */ (
 const cache = [];
 const CACHE_MAX = 4;
 
-/** @param {{ gen: number, settings: TileSettings, maxTiles: number, format: "mesh" | "3mf", name?: string }} data */
-async function handle({ gen, settings, maxTiles, format, name }) {
+/** @param {{ gen: number, settings: TileSettings, maxTiles: number, format: "mesh" | "3mf", name?: string, color?: boolean }} data */
+async function handle({ gen, settings, maxTiles, format, name, color }) {
   try {
     const plan = planSquareTile(settings, { maxTiles });
     const key = JSON.stringify([settings.center, settings.scale, settings.tileWmm, plan.z]);
@@ -39,15 +40,32 @@ async function handle({ gen, settings, maxTiles, format, name }) {
       if (cache.length > CACHE_MAX) cache.shift();
     }
     post({ gen, baking: true }); // all tiles in hand → meshing + validation (synchronous, blocks the worker)
-    const solid = bakeSquareTileSolid(hit.mosaic, plan, settings);
+    const { solid, emin, emax } = bakeSquareTileSolid(hit.mosaic, plan, settings);
+    // Latitude-adjusted color changes for THIS bake's frame. Shared by the preview
+    // (returned as `bands`) and, later, the export embed. K>0 since exag ∈ [0.5,4].
+    const thresholds = bandThresholds(settings.center[0]);
+    const K = plan.mmPerM * settings.exag;
+    const frame = { emin, base: settings.base, mmPerM: plan.mmPerM, exag: settings.exag, zmax: settings.base + (emax - emin) * K };
+    // Enrich each change with its boundary line + elevation for the preview legend
+    // (the shader and export use only z + color, so the extra fields are harmless there).
+    const changes = colorChanges(thresholds, frame).map((c) => ({
+      ...c, elev: Math.round(thresholds[c.band - 1]), boundary: BOUNDARY_NAMES[c.band - 1],
+    }));
     if (format === "3mf") {
-      const bytes = await tileTo3mf(name ?? "tile", solid);
+      const bytes = await tileTo3mf(name ?? "tile", solid, color ? changes : undefined);
       post({ gen, bytes }, [bytes.buffer]);
     } else {
       // Normals for the lit preview, computed here so the main thread never meshes
       // them. Only the mesh path needs them — a slicer derives its own from 3mf.
       const normals = vertexNormals(solid.positions, solid.indices);
-      post({ gen, positions: solid.positions, indices: solid.indices, normals },
+      const bb = baseBand(emin, thresholds);
+      const bands = {
+        changes,
+        baseColor: BAND_COLORS[bb],
+        baseHex: baseColorHex(emin, thresholds),
+        baseName: BAND_NAMES[bb],
+      };
+      post({ gen, positions: solid.positions, indices: solid.indices, normals, bands },
         [solid.positions.buffer, solid.indices.buffer, normals.buffer]);
     }
   } catch (err) {

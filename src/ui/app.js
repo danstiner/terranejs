@@ -8,6 +8,7 @@ import { initPreview } from "./preview.js";
 import { wireControls } from "./controls.js";
 import { defaultTileName, planSquareTile } from "../core/pipeline.js";
 import { PRESETS, DEFAULT_PRESET } from "./presets.js";
+import { BAND_NAMES } from "../core/colors.js";
 
 /**
  * @typedef {{
@@ -89,6 +90,23 @@ function detailSummary(settings) {
   }
 }
 
+/**
+ * @param {{ changes: { z: number, band: number, color: [number, number, number], elev: number, boundary: string }[],
+ *           baseName: string, baseHex: string }} bands
+ */
+function renderLegend(bands) {
+  /** @param {[number, number, number]} rgb */
+  const hex = (rgb) => "#" + rgb.map((v) => Math.max(0, Math.min(255, Math.round(v * 255))).toString(16).padStart(2, "0")).join("");
+  /** @param {string} c @param {string} label */
+  const row = (c, label) => `<li><span class="sw" style="background:${c}"></span><span>${label}</span></li>`;
+  // Base filament first, then each M600 change in print order (ascending Z). Heights are
+  // approximate — the legend uses the preview bake's frame, not the export's (data-pipeline.md §8).
+  const rows = [row(bands.baseHex, `${bands.baseName} — base, no pause`)];
+  for (const c of bands.changes)
+    rows.push(row(hex(c.color), `${BAND_NAMES[c.band]} — Z ${c.z.toFixed(1)} mm (${c.boundary} · ${c.elev} m)`));
+  $("bandLegend").innerHTML = `<ul class="bands">${rows.join("")}</ul>`;
+}
+
 worker.onmessage = ({ data }) => {
   if (data.gen === exportGen) { // export channel
     const btn = /** @type {HTMLButtonElement} */ ($("export"));
@@ -107,7 +125,8 @@ worker.onmessage = ({ data }) => {
   if (data.progress) { setProgress(`${mode} — fetching terrain ${data.progress.done}/${data.progress.total}`); return; }
   if (data.baking) { setProgress(`${mode} — baking…`); return; }
   if (data.error) { setProgress(`Preview failed: ${data.error}`); previewPhase = "idle"; return; }
-  preview.setTiles([{ positions: data.positions, indices: data.indices, normals: data.normals }]);
+  preview.setTiles([{ positions: data.positions, indices: data.indices, normals: data.normals, bands: data.bands }]);
+  renderLegend(data.bands);
   if (previewPhase === "fast") {
     previewPhase = "crisp"; // fast relief is up; refine to viewport-sharp
     setProgress("Detailed preview…");
@@ -199,7 +218,10 @@ $("export").addEventListener("click", () => {
   exportGen = ++gen;
   exportName = defaultTileName(settings); // lat/lng/width/scale → describes the tile
   setProgress("Export…");
-  worker.postMessage({ gen: exportGen, settings, maxTiles: EXPORT, format: "3mf", name: exportName });
+  worker.postMessage({
+    gen: exportGen, settings, maxTiles: EXPORT, format: "3mf", name: exportName,
+    color: /** @type {HTMLInputElement} */ ($("colorExport")).checked,
+  });
 });
 
 /**
