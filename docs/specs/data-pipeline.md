@@ -106,10 +106,33 @@ make sense of it.
 
 The validated solid is written out as a **3MF** file — a standard,
 ZIP-based 3D model container that slicer software reads to generate
-printer instructions. Export is monochrome for now: one uncolored solid
-per tile.
+printer instructions. Export is monochrome by default: one uncolored
+solid per tile — with an option to embed altitude color-change
+instructions (§8) for a color-banded print.
 
-## 8. Preview + UI
+## 8. Color bands (altitude)
+
+Terrain is shaded into a few discrete altitude bands — water, forest,
+tundra, rock, snow — whose boundaries track the timberline and snowline.
+Those lines fall with latitude (a tropical peak stays green far higher than
+an arctic one), so the bands adjust to where a tile sits on the globe. The
+preview always shows them, colored by **print height**: because a tile's
+height *is* scaled elevation, each band boundary is a fixed print-Z, and
+everything below it — top surface, walls, and base — reads in that band's
+color.
+
+That same fact makes the bands printable on a single-extruder machine.
+Export stays monochrome by default, but the color-changes option writes each
+band boundary as a filament-change-by-height instruction (a PrusaSlicer
+color change / `M600`) at its print-Z; the operator swaps filament at those
+heights to get an altitude-banded print with no multi-material hardware. So the
+changes actually load, the coloured `.3mf` is written as a minimal PrusaSlicer
+*project* (a settings-free config stub) — PrusaSlicer only reads colour changes
+from a file it recognises as a project, not a bare geometry import. The band
+model lives in `src/core/colors.js` and is deliberately approximate — a
+good-enough hypsometric look, not a climate dataset.
+
+## 9. Preview + UI
 
 The website wraps this pipeline in an interactive loop: pick a region on a map
 (Leaflet), adjust print settings, watch a live 3D preview (three.js) re-bake and
@@ -127,7 +150,7 @@ per-vertex normals the preview needs for lighting, so nothing meshes them on the
 main thread — leaving the interface responsive even while a tile is built, and
 letting the sharper pass carry more detail without stalling the page.
 
-## 9. Coordinate model
+## 10. Coordinate model
 
 Geometry throughout this pipeline is computed in **Web Mercator**, a flat
 projection of the Earth — not a curved or true-Earth model. Web Mercator
