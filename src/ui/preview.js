@@ -8,8 +8,8 @@ import { MAX_CHANGES } from "../core/colors.js";
 /** @typedef {import("../core/types.js").Solid} Solid */
 /** @typedef {import("../core/colors.js").ColorChange} ColorChange */
 /**
- * @typedef {{ changes: ColorChange[], baseColor: [number,number,number], baseHex: string, snowline: number }} Bands
- *   worker payload for the mesh path; applyBands reads changes+baseColor, the app legend reads baseHex+snowline.
+ * @typedef {{ changes: ColorChange[], baseColor: [number,number,number], baseHex: string, baseName: string }} Bands
+ *   worker payload for the mesh path; applyBands reads changes+baseColor, the app legend reads baseHex+baseName.
  */
 
 // A lit terrain material that recolors by print-height: everything below a change's
