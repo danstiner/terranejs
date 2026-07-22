@@ -66,7 +66,7 @@ function mosaicFor(plan) {
 
 test("bakeSquareTileSolid: validated closed-manifold, positive-volume solid", () => {
   const plan = planSquareTile(SETTINGS, { z: 10 });
-  const solid = bakeSquareTileSolid(mosaicFor(plan), plan, SETTINGS);
+  const { solid } = bakeSquareTileSolid(mosaicFor(plan), plan, SETTINGS);
   assert.ok(checkWatertight(solid).closed, "baked solid is watertight");
   assert.ok(signedVolume(solid) > 0, "baked solid is positive-volume (outward)");
   // top surface has one vertex per grid sample; more vertices come from the base.
@@ -85,7 +85,7 @@ test("bakeSquareTileSolid: throws on a degenerate (empty) solid rather than emit
 test("pipeline: fixed region → validated watertight printable .3mf (milestone)", async () => {
   const plan = planSquareTile(SETTINGS, { z: 10 });
   assert.ok(plan.gw > 10 && plan.gw < 200, `window ${plan.gw}×${plan.gh} sane for a test`);
-  const solid = bakeSquareTileSolid(mosaicFor(plan), plan, SETTINGS);
+  const { solid } = bakeSquareTileSolid(mosaicFor(plan), plan, SETTINGS);
   const bytes = await tileTo3mf("tile_r0_c0", solid);
 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "terranejs-pipe-"));

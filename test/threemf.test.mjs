@@ -7,6 +7,7 @@ import path from "node:path";
 import cp from "node:child_process";
 import { crc32, buildZip, ThreeMFWriter } from "../src/core/threemf.js";
 import { checkWatertight } from "../src/core/validate.js";
+import { prusaColorChangeXML } from "../src/core/colors.js";
 
 /** @typedef {import("../src/core/types.js").Solid} Solid */
 
@@ -200,4 +201,26 @@ test("3MF: the emitted .3mf unzips to a valid OPC package (system unzip)", async
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("3mf embeds the custom-gcode part with pinned content when color changes are set", async () => {
+  const w = new ThreeMFWriter();
+  /** @type {import("../src/core/colors.js").ColorChange[]} */
+  const changes = [{ z: 10, band: 1, color: [0.28, 0.48, 0.28] }];
+  w.setColorChanges(changes);
+  await w.addObject("t", quad(), 0, 0);
+  const zip = readZip(await w.finish());
+  const part = zip["Metadata/Prusa_Slicer_custom_gcode_per_print_z.xml"];
+  assert.ok(part, "custom-gcode part present");
+  assert.ok(zip["Metadata/Slic3r_PE.config"], "project-config stub present (so PrusaSlicer treats it as a project, not a geometry import)");
+  assert.equal(new TextDecoder().decode(part.data), prusaColorChangeXML(changes));
+  assert.match(new TextDecoder().decode(zip["[Content_Types].xml"].data),
+    /<Override PartName="\/Metadata\/Prusa_Slicer_custom_gcode_per_print_z\.xml" ContentType="application\/xml"\/>/);
+});
+
+test("no color changes -> exactly the three base parts, unchanged order", async () => {
+  const w = new ThreeMFWriter();
+  await w.addObject("t", quad(), 0, 0);
+  assert.deepEqual(Object.keys(readZip(await w.finish())),
+    ["[Content_Types].xml", "_rels/.rels", "3D/3dmodel.model"]);
 });
