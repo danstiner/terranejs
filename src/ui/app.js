@@ -18,12 +18,12 @@ import { BAND_NAMES } from "../core/colors.js";
  */
 /** @typedef {import("../core/pipeline.js").TileSettings} TileSettings */
 
-// Preview detail is matched to the viewport, not the print: a ~1536px grid is
-// already pixel-dense on screen, and a small tile budget keeps the bake fast.
-// Export uses the full print resolution. See docs/specs/data-pipeline.md §2.
-const FAST = 4;     // ~2×2 tiles → ~512px grid → sub-10ms bake (instant relief)
-const CRISP = 64;   // ~8×8 tiles → ~2048px grid → viewport-sharp on zoom; fetch-bound, so kept modest
-const EXPORT = 300; // full print resolution (core's default tile budget)
+// Max source-tile budget per bake, one per quality tier (passed as `maxTiles`). Preview
+// detail is scaled to the viewport, not the print — a small tile budget keeps the bake
+// fast; export uses the full print resolution. See docs/specs/data-pipeline.md §2.
+const FAST_MAX_TILES = 4;      // ~2×2 tiles → fast sub-10ms bake for user feedback
+const CRISP_MAX_TILES = 36;    // ~6×6 tiles → enough detail for an unzoomed ~1500px viewport
+const EXPORT_MAX_TILES = 300;  // full print resolution (core's default tile budget)
 
 const store = createStore(/** @type {AppState} */ ({
   center: DEFAULT_PRESET.center, scale: DEFAULT_PRESET.scale, tileWmm: 200, base: 6, exag: 1,
@@ -84,7 +84,7 @@ function detailSummary(settings) {
     return `${gsd >= 10 ? Math.round(gsd) : gsd.toFixed(1)} m/vertex, ~${tris.toFixed(1)}M triangles`;
   };
   try {
-    return `Preview: ${part(CRISP)}  ·  Export: ${part(EXPORT)}`;
+    return `Preview: ${part(CRISP_MAX_TILES)}  ·  Export: ${part(EXPORT_MAX_TILES)}`;
   } catch {
     return ""; // e.g. a tile past the Mercator limit — leave the line blank
   }
@@ -130,7 +130,7 @@ worker.onmessage = ({ data }) => {
   if (previewPhase === "fast") {
     previewPhase = "crisp"; // fast relief is up; refine to viewport-sharp
     setProgress("Detailed preview…");
-    worker.postMessage({ gen: previewGen, settings: previewSettings, maxTiles: CRISP, format: "mesh" });
+    worker.postMessage({ gen: previewGen, settings: previewSettings, maxTiles: CRISP_MAX_TILES, format: "mesh" });
   } else {
     previewPhase = "idle";
     setProgress(previewSettings ? detailSummary(previewSettings) : "");
@@ -146,7 +146,7 @@ worker.onerror = (e) => {
 };
 
 // Debounced fetch+bake → preview whenever the tile or its geom changes. Coarse
-// (FAST) first for instant relief, then CRISP swaps in. Superseded runs' replies
+// (FAST_MAX_TILES) first for instant relief, then CRISP_MAX_TILES swaps in. Superseded runs' replies
 // are dropped by generation, so a slow bake for an old tile never clobbers a newer.
 let timer = 0;
 // A preview started mid-export would clobber the export's status line and just
@@ -162,7 +162,7 @@ function loadPreview() {
   previewGen = ++gen;
   previewPhase = "fast";
   setProgress("Quick preview…");
-  worker.postMessage({ gen: previewGen, settings: previewSettings, maxTiles: FAST, format: "mesh" });
+  worker.postMessage({ gen: previewGen, settings: previewSettings, maxTiles: FAST_MAX_TILES, format: "mesh" });
 }
 
 store.subscribe((s) => {
@@ -219,7 +219,7 @@ $("export").addEventListener("click", () => {
   exportName = defaultTileName(settings); // lat/lng/width/scale → describes the tile
   setProgress("Export…");
   worker.postMessage({
-    gen: exportGen, settings, maxTiles: EXPORT, format: "3mf", name: exportName,
+    gen: exportGen, settings, maxTiles: EXPORT_MAX_TILES, format: "3mf", name: exportName,
     color: /** @type {HTMLInputElement} */ ($("colorExport")).checked,
   });
 });
