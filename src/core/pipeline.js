@@ -6,6 +6,7 @@ import { cellsBbox, cellWindows } from "./layout.js";
 import { sourceZoom, MAX_MERCATOR_LAT } from "./tilemath.js";
 import { cropGrid, gridRange } from "./resample.js";
 import { buildSolid } from "./mesh.js";
+import { recessMasked } from "./ocean.js";
 import { checkWatertight, signedVolume } from "./validate.js";
 import { ThreeMFWriter } from "./threemf.js";
 import { fetchMosaic } from "./terrain.js";
@@ -18,9 +19,12 @@ import { fetchMosaic } from "./terrain.js";
 /** @typedef {import("./types.js").Mosaic} Mosaic */
 /** @typedef {import("./types.js").Solid} Solid */
 /**
- * @typedef {{ center: LatLon, scale: number, tileWmm: number, base: number, exag: number }} TileSettings
+ * @typedef {{ center: LatLon, scale: number, tileWmm: number, base: number, exag: number,
+ *   ocean?: import("./ocean.js").OceanMode, oceanMm?: number, colorLiftMm?: number }} TileSettings
  *   center = [lat,lon] of the tile; scale = 1:N; tileWmm = print size of the tile
- *   edge; base = base-plate thickness (mm); exag = vertical exaggeration.
+ *   edge; base = base-plate thickness (mm); exag = vertical exaggeration; ocean = how
+ *   sub-sea-level samples are handled (default bathymetric); oceanMm = recess/shift
+ *   amount in print mm.
  */
 /**
  * @typedef {{ z: number, bbox: BBox, window: Window, span: Span, gw: number, gh: number, dx: number, dy: number, mmPerM: number }} TilePlan
@@ -74,14 +78,21 @@ export function planSquareTile(settings, { z, maxTiles = 300 } = {}) {
 // z-frame needed); emax lets callers place altitude color-change heights. Throws
 // rather than emit a mesh that isn't a positive-volume closed manifold.
 /**
+ * `oceanMask` (from a coarse detection bake) recesses the masked vertices instead of the
+ * threshold clamp — used by Recessed/Flat, whose sea can't be found in this fine grid.
  * @param {Mosaic} mosaic
  * @param {TilePlan} plan
- * @param {{ base: number, exag: number }} settings
+ * @param {{ base: number, exag: number, ocean?: import("./ocean.js").OceanMode, oceanMm?: number }} settings
+ * @param {Uint8Array} [oceanMask]
  * @returns {{ solid: Solid, emin: number, emax: number }}
  */
-export function bakeSquareTileSolid(mosaic, plan, { base, exag }) {
+export function bakeSquareTileSolid(mosaic, plan, { base, exag, ocean, oceanMm = 0 }, oceanMask) {
   const { window, span, gw, gh, dx, dy, mmPerM } = plan;
   const grid = cropGrid(mosaic, window);
+  // A pre-computed detection mask clamps exactly the ocean vertices to one flat floor:
+  // Flat flushes them to 0, Recessed steps them oceanMm below the coast. No mask
+  // (bathymetric, or detection not run) → the raw grid is left untouched.
+  if (oceanMask) recessMasked(grid, oceanMask, ocean === "flat" ? 0 : -oceanMm / (mmPerM * exag));
   const { min: emin, max: emax } = gridRange(grid);
   const mask = new Uint8Array((gw - 1) * (gh - 1)).fill(1); // full square footprint
   const solid = buildSolid(grid, gw, gh, span, mask, { dx, dy, mmPerM, emin, exag, base });
@@ -89,6 +100,42 @@ export function bakeSquareTileSolid(mosaic, plan, { base, exag }) {
   if (!wt.closed) throw new Error(`pipeline: non-watertight solid (${wt.unmatched} unmatched edges)`);
   if (signedVolume(solid) <= 0) throw new Error("pipeline: non-positive-volume (inside-out) solid");
   return { solid, emin, emax };
+}
+
+// 3×3 cell block centred on the origin — the padded region for ocean detection. Padding
+// (1 tile-width each side) pushes the flood seeds out to a true land/sea boundary, so an
+// inland sub-sea basin that only clips the tile edge (Death Valley) stays land. See
+// docs/specs/data-sources.md.
+/** @type {Cell[]} */
+const DETECT_PAD_CELLS = [
+  [-1, -1], [0, -1], [1, -1],
+  [-1, 0], [0, 0], [1, 0],
+  [-1, 1], [0, 1], [1, 1],
+];
+
+// Pure: settings + coarse zoom → padded fetch bbox, the padded pixel window, and the
+// centre cell's offset+size inside it (to crop the tile mask back out after flooding).
+// Throws past the Mercator cap (the pad can exceed it even when the tile itself doesn't) —
+// the caller falls back to unpadded detection there. NOTE: like the coarse detect fetch it
+// replaces, this doesn't cap the padded area's source-tile count; OCEAN_DETECT_ZOOM_MAX caps
+// the zoom, so the 9× area stays bounded in practice.
+/**
+ * @param {TileSettings} settings
+ * @param {number} zc  coarse detection zoom (≤ OCEAN_DETECT_ZOOM_MAX)
+ * @returns {{ z: number, bbox: BBox, union: Window, cx0: number, cy0: number, gwTile: number, ghTile: number }}
+ */
+export function planDetect({ center, scale, tileWmm }, zc) {
+  const bbox = cellsBbox(center, scale, tileWmm, DETECT_PAD_CELLS, "square");
+  const [s, , n] = bbox;
+  // The padded span extends a tile-width beyond the tile, so it can cross ±85.0511° even
+  // when the tile clears planSquareTile's guard. Reject → caller falls back to unpadded.
+  if (!(s >= -MAX_MERCATOR_LAT && n <= MAX_MERCATOR_LAT)) {
+    throw new Error("planDetect: padded detection span exceeds the Web Mercator limit");
+  }
+  const { wins, union } = cellWindows(center, scale, tileWmm, DETECT_PAD_CELLS, zc, "square");
+  const o = wins.get("0,0");
+  if (!o) throw new Error("planDetect: origin cell window missing");
+  return { z: zc, bbox, union, cx0: o.gx0 - union.gx0, cy0: o.gy0 - union.gy0, gwTile: o.gw, ghTile: o.gh };
 }
 
 // One solid → a single-object .3mf blob (tile placed at the plate origin).

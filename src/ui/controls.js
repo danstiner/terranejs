@@ -33,4 +33,19 @@ export function wireControls(store) {
     const v = num(e);
     if (Number.isFinite(v) && v >= 50) store.set({ tileWmm: v });
   });
+  el("ocean").addEventListener("change", (e) => {
+    const v = /** @type {import("../core/ocean.js").OceanMode} */ (
+      /** @type {HTMLSelectElement} */ (e.target).value);
+    store.set({ ocean: v });
+  });
+  el("oceanMm").addEventListener("input", (e) => {
+    const v = num(e);
+    store.set({ oceanMm: v });
+    el("oceanMmVal").textContent = v.toFixed(2);
+  });
+  el("colorLift").addEventListener("input", (e) => {
+    const v = num(e);
+    store.set({ colorLiftMm: v });
+    el("colorLiftVal").textContent = v.toFixed(3);
+  });
 }
