@@ -7,7 +7,7 @@ end-to-end path from raw elevation data to a slicer-ready model file.
 
 ```mermaid
 flowchart LR
-    A[Source tiles<br/>elevation-tiles-prod] --> B[Decode<br/>terrarium PNG → metres]
+    A[Source tiles<br/>Re:Earth terrarium] --> B[Decode<br/>terrarium PNG → metres]
     B --> C[Mosaic<br/>stitched elevation raster]
     C --> D[Resample<br/>print sample grid]
     D --> E[Mesh<br/>watertight solid]
@@ -33,16 +33,13 @@ flowchart LR
 
 ## 1. Data source
 
-Elevation comes from the AWS Terrain Tiles dataset — the public
-`elevation-tiles-prod` S3 bucket — serving Tilezen/Joerd's
-terrarium-encoded PNG tiles, addressed as standard Web Mercator z/x/y
-tiles. Each pixel's red, green, and blue channels encode one elevation
-sample in metres (`elevation = R×256 + G + B/256 − 32768`); decoding a
-tile means reading its pixels and applying that formula.
-
-The dataset's terms require visible attribution of its upstream sources
-(SRTM, GMTED2010, and others, blended per region) — any deployment of
-terranejs must credit them.
+Elevation and water extent come from **Re:Earth Terrain** (Mapterhorn),
+terrarium-encoded PNG tiles addressed as standard Web Mercator z/x/y tiles.
+Each pixel's red, green, and blue channels encode one elevation sample in
+metres (`elevation = R×256 + G + B/256 − 32768`); decoding a tile means
+reading its pixels and applying that formula. Full source details, the
+watermask tile, and attribution are in
+[`data-sources.md`](data-sources.md).
 
 ## 2. Choosing detail
 
@@ -74,6 +71,28 @@ scale. terranejs snaps that grid to whole mosaic pixels, so each grid point
 lands on exactly one pixel: resampling reduces to a direct read, and
 adjacent tiles that share an edge sample identical seam data by
 construction.
+
+## 4a. Water handling
+
+Water (ocean + lakes) is masked from the Re:Earth **watermask** tile, fetched
+at the same bbox and zoom as the elevation mosaic — pixel-aligned, so no
+detection or flood-fill is needed:
+
+1. Fetch the watermask mosaic and threshold its alpha channel (`alpha > 127`
+   = water) to a mask over the fine bake grid directly.
+2. Clamp the masked vertices to one flat floor: **Recessed** → `−recessMm/K`
+   (a shelf below the coast, the default), **Flat** → `0` (flush at sea
+   level).
+
+Lakes recess the same as the ocean — the mask doesn't distinguish them.
+Inland land below sea level (e.g. Death Valley) is unmasked, so it's
+preserved as real terrain.
+
+Colour is unchanged (§8): `emin` follows the floor so the base band is
+water. Recessed's shelf sits `recessMm` below the coast, so the blue-water
+colour split is independent of slicer layer height. Flat is flush, so its
+water→land colour pause is offset a little print-Z above the water layer to
+keep the flush water blue.
 
 ## 5. Mesh
 
