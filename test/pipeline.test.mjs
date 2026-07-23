@@ -30,11 +30,11 @@ test("planSquareTile: deterministic window + geom at a fixed zoom", () => {
 
 test("planSquareTile: auto-zoom picks the deepest useful source zoom", () => {
   const plan = planSquareTile(SETTINGS); // omit z → sourceZoom auto-picks
-  assert.ok(Number.isInteger(plan.z) && plan.z >= 1 && plan.z <= 15, `z ${plan.z}`);
-  // "deepest useful" = print pitch at or under the floor, else clamped to the z15 cap.
+  assert.ok(Number.isInteger(plan.z) && plan.z >= 1 && plan.z <= 14, `z ${plan.z}`);
+  // "deepest useful" = print pitch at or under the floor, else clamped to the z14 cap.
   const atFloor = printPitchMm(0, plan.z, SETTINGS.scale) <= PITCH_FLOOR_MM;
-  assert.ok(atFloor || plan.z === 15, "reaches the pitch floor or the pyramid cap");
-  assert.ok(plan.z === 15 || printPitchMm(0, plan.z - 1, SETTINGS.scale) > PITCH_FLOOR_MM,
+  assert.ok(atFloor || plan.z === 14, "reaches the pitch floor or the pyramid cap");
+  assert.ok(plan.z === 14 || printPitchMm(0, plan.z - 1, SETTINGS.scale) > PITCH_FLOOR_MM,
     "one zoom shallower would exceed the floor");
   assert.ok(plan.dx > 0 && Number.isFinite(plan.gw) && plan.gw > 1, "coherent plan");
 });
@@ -107,6 +107,26 @@ test("pipeline: fixed region → validated watertight printable .3mf (milestone)
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("bakeSquareTileSolid: recessed & flat masks clamp emin to the floor, stay watertight", () => {
+  const plan = planSquareTile(SETTINGS, { z: 10 }); // 41×41, ramp elevations 500..700 m
+  const mosaic = mosaicFor(plan);
+  const mask = new Uint8Array(plan.gw * plan.gh); // mask the left half as ocean
+  for (let r = 0; r < plan.gh; r++)
+    for (let c = 0; c < plan.gw >> 1; c++) mask[r * plan.gw + c] = 1;
+  const K = plan.mmPerM * SETTINGS.exag;
+
+  const rec = bakeSquareTileSolid(mosaic, plan, { ...SETTINGS, ocean: "recessed", oceanMm: 2 }, mask);
+  assert.ok(checkWatertight(rec.solid).closed, "recessed solid watertight");
+  assert.ok(signedVolume(rec.solid) > 0, "recessed solid positive volume");
+  // grid is Float32Array-backed, so emin carries float32 rounding (~1.5e-6 at this magnitude) — 1e-6 is too tight.
+  assert.ok(Math.abs(rec.emin - -2 / K) < 1e-4, `recessed emin = -recessMm/K (got ${rec.emin})`);
+
+  const flat = bakeSquareTileSolid(mosaic, plan, { ...SETTINGS, ocean: "flat", oceanMm: 2 }, mask);
+  assert.ok(checkWatertight(flat.solid).closed, "flat solid watertight");
+  assert.ok(signedVolume(flat.solid) > 0, "flat solid positive volume");
+  assert.equal(flat.emin, 0, "flat emin = 0");
 });
 
 test("defaultTileName: encodes center, width, and scale", () => {

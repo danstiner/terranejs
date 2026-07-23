@@ -73,6 +73,27 @@ export function initPreview(container) {
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   container.appendChild(renderer.domElement);
 
+  // Hover elevation probe (user aid): raycast the surface under the cursor and
+  // invert its print-Z back to metres. Ocean is clamped, so in recess/flat modes the
+  // sea reads as the flat floor; switch to bathymetric to probe the raw coastal DEM.
+  if (!container.style.position) container.style.position = "relative";
+  const probe = document.createElement("div");
+  probe.style.cssText = "position:absolute;right:8px;bottom:8px;padding:3px 7px;font:12px/1.3 ui-monospace,monospace;" +
+    "color:#e8e8e8;background:rgba(0,0,0,0.55);border-radius:4px;pointer-events:none;display:none;";
+  container.appendChild(probe);
+  const raycaster = new THREE.Raycaster();
+  const pointer = new THREE.Vector2();
+  /** @type {{ emin: number, base: number, mmPerM: number, exag: number } | null} */
+  let frame = null;
+  let probeDirty = false; // set on pointer move; one raycast per frame, then cleared
+  renderer.domElement.addEventListener("pointermove", (e) => {
+    const r = renderer.domElement.getBoundingClientRect();
+    pointer.x = ((e.clientX - r.left) / r.width) * 2 - 1;
+    pointer.y = -((e.clientY - r.top) / r.height) * 2 + 1;
+    probeDirty = true;
+  });
+  renderer.domElement.addEventListener("pointerleave", () => { probe.style.display = "none"; });
+
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x0e0e12);
 
@@ -102,12 +123,29 @@ export function initPreview(container) {
   const loop = () => {
     raf = requestAnimationFrame(loop);
     controls.update();
+    if (probeDirty && frame && group.children.length) {
+      raycaster.setFromCamera(pointer, camera);
+      const hit = raycaster.intersectObjects(group.children, false)[0];
+      if (hit) {
+        const localZ = hit.point.z - group.position.z; // group only translates → undo it
+        const elev = frame.emin + (localZ - frame.base) / (frame.mmPerM * frame.exag);
+        probe.textContent = `${elev.toFixed(1)} m`; // interpolated across the hit triangle, not rounded
+        probe.style.display = "block";
+      } else {
+        probe.style.display = "none";
+      }
+      probeDirty = false;
+    }
     renderer.render(scene, camera);
   };
   loop();
 
-  /** @param {{ positions: Float32Array, indices: Uint32Array, normals: Float32Array, bands: Bands }[]} solids */
-  function setTiles(solids) {
+  /**
+   * @param {{ positions: Float32Array, indices: Uint32Array, normals: Float32Array, bands: Bands }[]} solids
+   * @param {{ emin: number, base: number, mmPerM: number, exag: number } | null} [probeFrame]
+   */
+  function setTiles(solids, probeFrame = null) {
+    frame = probeFrame;
     for (const c of group.children) {
       const m = /** @type {THREE.Mesh} */ (c);
       m.geometry.dispose();

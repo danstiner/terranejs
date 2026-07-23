@@ -48,7 +48,7 @@ export const MAX_MERCATOR_LAT = Math.atan(Math.sinh(Math.PI)) / D2R;
  * @param {number} [maxZoom]
  * @returns {{ z: number, pxM: number, upsampled: boolean }}
  */
-export function pickZoom(resM, latDeg, maxZoom = 15) {
+export function pickZoom(resM, latDeg, maxZoom = 14) {
   const ideal = Math.log2((C * Math.cos(latDeg * D2R)) / resM);
   const z = Math.max(0, Math.min(maxZoom, Math.round(ideal)));
   const pxM = groundResolution(latDeg, z);
@@ -112,7 +112,7 @@ export function printPitchMm(latDeg, z, scale) {
 export const PITCH_FLOOR_MM = 0.05;
 
 // Deepest useful export zoom: shallowest z whose print pitch is at or below
-// the floor, clamped to the pyramid max and the whole-region tile budget.
+// the floor, clamped to the source pyramid max (Mapterhorn z14) and the whole-region tile budget.
 /**
  * @param {BBox} bbox
  * @param {number} latDeg
@@ -123,7 +123,7 @@ export const PITCH_FLOOR_MM = 0.05;
  * @returns {number}
  */
 export function sourceZoom(bbox, latDeg, scale, maxSourceTiles,
-  floorMm = PITCH_FLOOR_MM, maxZoom = 15) {
+  floorMm = PITCH_FLOOR_MM, maxZoom = 14) {
   let z = 1;
   while (z < maxZoom && printPitchMm(latDeg, z, scale) > floorMm) z++;
   // z floors at 1: with a pathological budget the invariant can't be met
