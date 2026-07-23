@@ -3,12 +3,12 @@
 // optional .3mf) and posts the result back, transferring the buffers zero-copy. It
 // knows nothing about preview vs export vs fast vs crisp; that policy lives in
 // app.js. `format` is an output selector, not render policy. One job at a time.
-import { planSquareTile, bakeSquareTileSolid, tileTo3mf } from "../core/pipeline.js";
+import { planSquareTile, planDetect, bakeSquareTileSolid, tileTo3mf } from "../core/pipeline.js";
 import { vertexNormals } from "../core/normals.js";
 import { fetchMosaic } from "../core/terrain.js";
 import { cropGrid } from "../core/resample.js";
 import { BAND_COLORS, BAND_NAMES, BOUNDARY_NAMES, bandThresholds, baseBand, colorChanges, baseColorHex } from "../core/colors.js";
-import { seaLevelColorLineM, oceanMaskFlood, upsampleMask, OCEAN_DETECT_ZOOM_MAX } from "../core/ocean.js";
+import { seaLevelColorLineM, oceanMaskFlood, upsampleMask, cropMask, OCEAN_DETECT_ZOOM_MAX } from "../core/ocean.js";
 
 /** @typedef {import("../core/types.js").Mosaic} Mosaic */
 /** @typedef {import("../core/pipeline.js").TileSettings} TileSettings */
@@ -48,15 +48,30 @@ async function handle({ gen, settings, maxTiles, format, name, color }) {
     const mosaic = await getMosaic(plan.bbox, plan.z, key, (done, total) => post({ gen, progress: { done, total } }));
 
     // Recessed and Flat both find the sea on a coarse z≤10 grid — the fine grid is
-    // fill-contaminated above z10 — then flood-fill + upsample an ocean mask. Recessed
-    // recesses the mask below the coast; Flat flushes it to 0. docs/specs/data-sources.md.
+    // fill-contaminated above z10 — via a padded flood-fill (planDetect: 1 tile-width each
+    // side, so tile-edge basins stay land), then crop the centre tile and upsample.
+    // docs/specs/data-sources.md.
     let oceanMask;
     if (settings.ocean === "recessed" || settings.ocean === "flat") {
-      const planC = planSquareTile(settings, { z: Math.min(plan.z, OCEAN_DETECT_ZOOM_MAX) });
-      const keyC = JSON.stringify([settings.center, settings.scale, settings.tileWmm, planC.z]);
-      const mosaicC = await getMosaic(planC.bbox, planC.z, keyC);
-      const maskC = oceanMaskFlood(cropGrid(mosaicC, planC.window), planC.gw, planC.gh, 0);
-      oceanMask = upsampleMask(maskC, planC.gw, planC.gh, plan.gw, plan.gh);
+      const zc = Math.min(plan.z, OCEAN_DETECT_ZOOM_MAX);
+      try {
+        const pd = planDetect(settings, zc);
+        const keyC = JSON.stringify([settings.center, settings.scale, settings.tileWmm, pd.z, "pad3"]);
+        const mosaicC = await getMosaic(pd.bbox, pd.z, keyC);
+        const maskP = oceanMaskFlood(cropGrid(mosaicC, pd.union), pd.union.gw, pd.union.gh, 0);
+        const maskC = cropMask(maskP, pd.union.gw, pd.union.gh, pd.cx0, pd.cy0, pd.gwTile, pd.ghTile);
+        oceanMask = upsampleMask(maskC, pd.gwTile, pd.ghTile, plan.gw, plan.gh);
+      } catch (e) {
+        // Padded detection unavailable (e.g. the pad crosses the ±85° Mercator limit near the
+        // poles) — fall back to unpadded single-tile detection. The enclosed-basin protection
+        // padding buys is moot at those latitudes. Warn so a real padded-path bug stays visible.
+        console.warn("ocean detection: padded path failed, using unpadded fallback:", e);
+        const planC = planSquareTile(settings, { z: zc });
+        const keyC = JSON.stringify([settings.center, settings.scale, settings.tileWmm, planC.z]);
+        const mosaicC = await getMosaic(planC.bbox, planC.z, keyC);
+        const maskC = oceanMaskFlood(cropGrid(mosaicC, planC.window), planC.gw, planC.gh, 0);
+        oceanMask = upsampleMask(maskC, planC.gw, planC.gh, plan.gw, plan.gh);
+      }
     }
 
     post({ gen, baking: true }); // all tiles in hand → meshing + validation (synchronous, blocks the worker)

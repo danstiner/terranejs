@@ -102,6 +102,42 @@ export function bakeSquareTileSolid(mosaic, plan, { base, exag, ocean, oceanMm =
   return { solid, emin, emax };
 }
 
+// 3×3 cell block centred on the origin — the padded region for ocean detection. Padding
+// (1 tile-width each side) pushes the flood seeds out to a true land/sea boundary, so an
+// inland sub-sea basin that only clips the tile edge (Death Valley) stays land. See
+// docs/specs/data-sources.md.
+/** @type {Cell[]} */
+const DETECT_PAD_CELLS = [
+  [-1, -1], [0, -1], [1, -1],
+  [-1, 0], [0, 0], [1, 0],
+  [-1, 1], [0, 1], [1, 1],
+];
+
+// Pure: settings + coarse zoom → padded fetch bbox, the padded pixel window, and the
+// centre cell's offset+size inside it (to crop the tile mask back out after flooding).
+// Throws past the Mercator cap (the pad can exceed it even when the tile itself doesn't) —
+// the caller falls back to unpadded detection there. NOTE: like the coarse detect fetch it
+// replaces, this doesn't cap the padded area's source-tile count; OCEAN_DETECT_ZOOM_MAX caps
+// the zoom, so the 9× area stays bounded in practice.
+/**
+ * @param {TileSettings} settings
+ * @param {number} zc  coarse detection zoom (≤ OCEAN_DETECT_ZOOM_MAX)
+ * @returns {{ z: number, bbox: BBox, union: Window, cx0: number, cy0: number, gwTile: number, ghTile: number }}
+ */
+export function planDetect({ center, scale, tileWmm }, zc) {
+  const bbox = cellsBbox(center, scale, tileWmm, DETECT_PAD_CELLS, "square");
+  const [s, , n] = bbox;
+  // The padded span extends a tile-width beyond the tile, so it can cross ±85.0511° even
+  // when the tile clears planSquareTile's guard. Reject → caller falls back to unpadded.
+  if (!(s >= -MAX_MERCATOR_LAT && n <= MAX_MERCATOR_LAT)) {
+    throw new Error("planDetect: padded detection span exceeds the Web Mercator limit");
+  }
+  const { wins, union } = cellWindows(center, scale, tileWmm, DETECT_PAD_CELLS, zc, "square");
+  const o = wins.get("0,0");
+  if (!o) throw new Error("planDetect: origin cell window missing");
+  return { z: zc, bbox, union, cx0: o.gx0 - union.gx0, cy0: o.gy0 - union.gy0, gwTile: o.gw, ghTile: o.gh };
+}
+
 // One solid → a single-object .3mf blob (tile placed at the plate origin).
 /**
  * @param {string} name

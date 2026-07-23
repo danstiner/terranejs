@@ -89,3 +89,19 @@ export function upsampleMask(maskC, gwc, ghc, gw, gh) {
 export function recessMasked(grid, mask, floor) {
   for (let i = 0; i < grid.length; i++) if (mask[i]) grid[i] = floor;
 }
+
+/**
+ * Extract a `cw×ch` sub-mask at offset `(cx0, cy0)` from a `gw×gh` mask — used to crop a
+ * padded-detection mask down to the tile's centre cell. Pure.
+ * @param {Uint8Array} mask @param {number} gw @param {number} gh
+ * @param {number} cx0 @param {number} cy0 @param {number} cw @param {number} ch
+ * @returns {Uint8Array}
+ */
+export function cropMask(mask, gw, gh, cx0, cy0, cw, ch) {
+  if (cx0 < 0 || cy0 < 0 || cx0 + cw > gw || cy0 + ch > gh) throw new Error("cropMask: window outside mask");
+  const out = new Uint8Array(cw * ch);
+  for (let r = 0; r < ch; r++)
+    for (let c = 0; c < cw; c++)
+      out[r * cw + c] = mask[(cy0 + r) * gw + (cx0 + c)];
+  return out;
+}
