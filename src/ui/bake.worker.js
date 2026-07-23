@@ -6,7 +6,9 @@
 import { planSquareTile, bakeSquareTileSolid, tileTo3mf } from "../core/pipeline.js";
 import { vertexNormals } from "../core/normals.js";
 import { fetchMosaic } from "../core/terrain.js";
+import { cropGrid } from "../core/resample.js";
 import { BAND_COLORS, BAND_NAMES, BOUNDARY_NAMES, bandThresholds, baseBand, colorChanges, baseColorHex } from "../core/colors.js";
+import { seaLevelColorLineM, oceanMaskFlood, upsampleMask, OCEAN_DETECT_ZOOM_MAX } from "../core/ocean.js";
 
 /** @typedef {import("../core/types.js").Mosaic} Mosaic */
 /** @typedef {import("../core/pipeline.js").TileSettings} TileSettings */
@@ -23,28 +25,50 @@ const post = /** @type {(msg: unknown, transfer?: Transferable[]) => void} */ (
 // current tile's fast/crisp/export zooms with room to spare.
 /** @type {{ key: string, mosaic: Mosaic }[]} */
 const cache = [];
-const CACHE_MAX = 4;
+const CACHE_MAX = 5; // fast/crisp/export zooms + a coarse ocean-detection zoom
+
+/** Fetch (or reuse) the decoded mosaic for a bbox+zoom, keyed by the fetch-affecting params.
+ * @param {import("../core/types.js").BBox} bbox @param {number} z @param {string} key
+ * @param {(done: number, total: number) => void} [onProgress] @returns {Promise<Mosaic>} */
+async function getMosaic(bbox, z, key, onProgress) {
+  let hit = cache.find((c) => c.key === key);
+  if (!hit) {
+    hit = { key, mosaic: await fetchMosaic(bbox, z, { onProgress }) };
+    cache.push(hit);
+    if (cache.length > CACHE_MAX) cache.shift();
+  }
+  return hit.mosaic;
+}
 
 /** @param {{ gen: number, settings: TileSettings, maxTiles: number, format: "mesh" | "3mf", name?: string, color?: boolean }} data */
 async function handle({ gen, settings, maxTiles, format, name, color }) {
   try {
     const plan = planSquareTile(settings, { maxTiles });
     const key = JSON.stringify([settings.center, settings.scale, settings.tileWmm, plan.z]);
-    let hit = cache.find((c) => c.key === key);
-    if (!hit) {
-      const mosaic = await fetchMosaic(plan.bbox, plan.z, {
-        onProgress: (done, total) => post({ gen, progress: { done, total } }),
-      });
-      hit = { key, mosaic };
-      cache.push(hit);
-      if (cache.length > CACHE_MAX) cache.shift();
+    const mosaic = await getMosaic(plan.bbox, plan.z, key, (done, total) => post({ gen, progress: { done, total } }));
+
+    // Recessed and Flat both find the sea on a coarse z≤10 grid — the fine grid is
+    // fill-contaminated above z10 — then flood-fill + upsample an ocean mask. Recessed
+    // recesses the mask below the coast; Flat flushes it to 0. docs/specs/data-sources.md.
+    let oceanMask;
+    if (settings.ocean === "recessed" || settings.ocean === "flat") {
+      const planC = planSquareTile(settings, { z: Math.min(plan.z, OCEAN_DETECT_ZOOM_MAX) });
+      const keyC = JSON.stringify([settings.center, settings.scale, settings.tileWmm, planC.z]);
+      const mosaicC = await getMosaic(planC.bbox, planC.z, keyC);
+      const maskC = oceanMaskFlood(cropGrid(mosaicC, planC.window), planC.gw, planC.gh, 0);
+      oceanMask = upsampleMask(maskC, planC.gw, planC.gh, plan.gw, plan.gh);
     }
+
     post({ gen, baking: true }); // all tiles in hand → meshing + validation (synchronous, blocks the worker)
-    const { solid, emin, emax } = bakeSquareTileSolid(hit.mosaic, plan, settings);
+    const { solid, emin, emax } = bakeSquareTileSolid(mosaic, plan, settings, oceanMask);
     // Latitude-adjusted color changes for THIS bake's frame. Shared by the preview
     // (returned as `bands`) and, later, the export embed. K>0 since exag ∈ [0.5,4].
-    const thresholds = bandThresholds(settings.center[0]);
     const K = plan.mmPerM * settings.exag;
+    const thresholds = bandThresholds(settings.center[0]);
+    // Flat places the ocean→land M600 at print-Z base + colorLiftMm (threshold colorLiftMm/K m)
+    // so the flush ocean layer prints ocean and the next layer up prints land; Recessed /
+    // bathymetric keep the line at sea level (recess supplies the gap in geometry).
+    thresholds[0] = seaLevelColorLineM(settings.ocean, settings.colorLiftMm ?? 0, K);
     const frame = { emin, base: settings.base, mmPerM: plan.mmPerM, exag: settings.exag, zmax: settings.base + (emax - emin) * K };
     // Enrich each change with its boundary line + elevation for the preview legend
     // (the shader and export use only z + color, so the extra fields are harmless there).
@@ -65,7 +89,10 @@ async function handle({ gen, settings, maxTiles, format, name, color }) {
         baseHex: baseColorHex(emin, thresholds),
         baseName: BAND_NAMES[bb],
       };
-      post({ gen, positions: solid.positions, indices: solid.indices, normals, bands },
+      // emin + geom let the preview invert a surface point's print-Z back to metres
+      // for the hover elevation probe: elev = emin + (z − base)/(mmPerM·exag).
+      const probeFrame = { emin, base: settings.base, mmPerM: plan.mmPerM, exag: settings.exag };
+      post({ gen, positions: solid.positions, indices: solid.indices, normals, bands, frame: probeFrame },
         [solid.positions.buffer, solid.indices.buffer, normals.buffer]);
     }
   } catch (err) {

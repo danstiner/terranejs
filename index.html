@@ -60,6 +60,19 @@
           <input id="tileW" type="number" min="50" step="5" value="200" class="num">
           <p class="hint">Print size of the tile (largest dimension) — set it to
             fit your printer's bed.</p>
+          <label for="ocean">Ocean</label>
+          <select id="ocean">
+            <option value="bathymetric">Bathymetric — raw sea floor</option>
+            <option value="recessed" selected>Recessed — flat shelf below coast</option>
+            <option value="flat">Flat — flush ocean</option>
+          </select>
+          <label for="oceanMm">Ocean recess: <span id="oceanMmVal">2.00</span>&nbsp;mm</label>
+          <input id="oceanMm" type="range" min="0.5" max="5" step="0.5" value="2">
+          <label for="colorLift">Flat colour-pause offset: <span id="colorLiftVal">0.100</span>&nbsp;mm</label>
+          <input id="colorLift" type="range" min="0.001" max="0.2" step="0.001" value="0.1">
+          <p class="hint">"Flat" mode: print-Z offset above the 0 m ocean layer where the
+            ocean→land colour pause fires. Default 0.1 mm; nudge the pause in your slicer if
+            it lands wrong for your layer height.</p>
           <label class="check"><input id="colorExport" type="checkbox"> Export color changes (PrusaSlicer only)</label>
           <p class="hint" id="bandHint">Embed filament change pauses at the following Z-heights:</p>
           <div id="bandLegend" class="hint"></div>

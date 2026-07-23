@@ -14,6 +14,7 @@ import { BAND_NAMES } from "../core/colors.js";
  * @typedef {{
  *   center: import("../core/types.js").LatLon | null,
  *   scale: number, tileWmm: number, base: number, exag: number,
+ *   ocean: import("../core/ocean.js").OceanMode, oceanMm: number, colorLiftMm: number,
  * }} AppState
  */
 /** @typedef {import("../core/pipeline.js").TileSettings} TileSettings */
@@ -27,6 +28,8 @@ const EXPORT_MAX_TILES = 300;  // full print resolution (core's default tile bud
 
 const store = createStore(/** @type {AppState} */ ({
   center: DEFAULT_PRESET.center, scale: DEFAULT_PRESET.scale, tileWmm: 200, base: 6, exag: 1,
+  ocean: "recessed", oceanMm: 2, // Recessed (z10-detect + 2 mm shelf) is the default ocean handling
+  colorLiftMm: 0.1, // Flat mode: print-mm offset above the sea-level layer for the ocean→land M600 pause
 }));
 
 /** @param {string} id @returns {HTMLElement} */
@@ -125,7 +128,7 @@ worker.onmessage = ({ data }) => {
   if (data.progress) { setProgress(`${mode} — fetching terrain ${data.progress.done}/${data.progress.total}`); return; }
   if (data.baking) { setProgress(`${mode} — baking…`); return; }
   if (data.error) { setProgress(`Preview failed: ${data.error}`); previewPhase = "idle"; return; }
-  preview.setTiles([{ positions: data.positions, indices: data.indices, normals: data.normals, bands: data.bands }]);
+  preview.setTiles([{ positions: data.positions, indices: data.indices, normals: data.normals, bands: data.bands }], data.frame);
   renderLegend(data.bands);
   if (previewPhase === "fast") {
     previewPhase = "crisp"; // fast relief is up; refine to viewport-sharp
