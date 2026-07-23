@@ -75,6 +75,26 @@ lands on exactly one pixel: resampling reduces to a direct read, and
 adjacent tiles that share an edge sample identical seam data by
 construction.
 
+## 4a. Ocean handling
+
+The elevation source can't be trusted at the coast above zoom 10 — a land DEM
+overwrites the sea with a near-sea-level fill (full evidence in
+[`data-sources.md`](data-sources.md)). So ocean is **detected on a coarse (z ≤ 10)
+grid**, never the fine bake grid:
+
+1. Fetch a coarse mosaic over a **bbox padded 1 tile-width each side** and flood-fill
+   the sea from its frame edges through `elev ≤ 0`. Open sea floods; an inland sub-sea
+   basin enclosed by land within the padded context (e.g. Death Valley) stays land.
+2. Crop the mask to the centre tile and nearest-upsample it to the fine grid.
+3. Clamp the masked vertices to one flat floor, discarding bathymetry:
+   **Recessed** → `−recessMm/K` (a shelf below the coast, the default), **Flat** → `0`
+   (flush at sea level). **Bathymetric** skips all of this (raw sea floor).
+
+Colour is unchanged (§8): `emin` follows the floor so the base band is ocean.
+Recessed's shelf sits `recessMm` below the coast, so the blue-ocean colour split is
+independent of slicer layer height. Flat is flush, so its ocean→land colour pause is
+offset a little print-Z above the ocean layer to keep the flush ocean blue.
+
 ## 5. Mesh
 
 The elevation grid becomes a watertight 3D solid with three parts: a

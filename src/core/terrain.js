@@ -54,6 +54,10 @@ function ctx2d() {
 async function fetchSourceTile(x, y, z) {
   const url = SOURCE_TILE_URL.replace("{z}", String(z)).replace("{x}", String(x)).replace("{y}", String(y));
   const res = await fetch(url, { mode: "cors", cache: "force-cache" });
+  // NOTE (attribution): each response carries an `X-Imagery-Sources` header naming the
+  // actual datasets that contributed to this tile (SRTM/GMTED/GEBCO/…). We could collect
+  // these across a bake to attribute precisely instead of the blanket "Mapzen and others"
+  // credit. Also a lead on the coastal-noise issue: bathymetry sources differ by z/region.
   if (!res.ok) throw new Error(`tile ${z}/${x}/${y}: HTTP ${res.status}`);
   // colorSpaceConversion/premultiplyAlpha "none": keep the raw PNG bytes exact —
   // any colour management or alpha premultiply would corrupt the elevation encoding.
