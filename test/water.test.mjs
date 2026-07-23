@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { recessMasked, seaLevelColorLineM } from "../src/core/ocean.js";
+import { recessMasked, seaLevelColorLineM } from "../src/core/water.js";
 import { decodeWatermask } from "../src/core/terrain.js";
 
 test("decodeWatermask: alpha>127 = ocean(1), else land(0)", () => {
@@ -15,8 +15,7 @@ test("recessMasked: masked cells clamp to floor, land untouched", () => {
   assert.deepEqual([...g], [-80, 50, -80, 200]);
 });
 
-test("seaLevelColorLineM: flat lifts by colorLiftMm/K, others 0", () => {
+test("seaLevelColorLineM: flat lifts by colorLiftMm/K, recessed 0", () => {
   assert.equal(seaLevelColorLineM("flat", 0.1, 0.004), 25);   // 0.1 / 0.004
   assert.equal(seaLevelColorLineM("recessed", 0.1, 0.004), 0);
-  assert.equal(seaLevelColorLineM("bathymetric", 0.1, 0.004), 0);
 });

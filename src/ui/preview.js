@@ -74,8 +74,8 @@ export function initPreview(container) {
   container.appendChild(renderer.domElement);
 
   // Hover elevation probe (user aid): raycast the surface under the cursor and
-  // invert its print-Z back to metres. Ocean is clamped, so in recess/flat modes the
-  // sea reads as the flat floor; switch to bathymetric to probe the raw coastal DEM.
+  // invert its print-Z back to metres. Water is clamped, so recessed/flat modes
+  // read the sea as the flat floor rather than the raw coastal DEM.
   if (!container.style.position) container.style.position = "relative";
   const probe = document.createElement("div");
   probe.style.cssText = "position:absolute;right:8px;bottom:8px;padding:3px 7px;font:12px/1.3 ui-monospace,monospace;" +

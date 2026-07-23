@@ -33,15 +33,15 @@ export function wireControls(store) {
     const v = num(e);
     if (Number.isFinite(v) && v >= 50) store.set({ tileWmm: v });
   });
-  el("ocean").addEventListener("change", (e) => {
-    const v = /** @type {import("../core/ocean.js").OceanMode} */ (
+  el("water").addEventListener("change", (e) => {
+    const v = /** @type {import("../core/water.js").WaterMode} */ (
       /** @type {HTMLSelectElement} */ (e.target).value);
-    store.set({ ocean: v });
+    store.set({ water: v });
   });
-  el("oceanMm").addEventListener("input", (e) => {
+  el("waterMm").addEventListener("input", (e) => {
     const v = num(e);
-    store.set({ oceanMm: v });
-    el("oceanMmVal").textContent = v.toFixed(2);
+    store.set({ waterMm: v });
+    el("waterMmVal").textContent = v.toFixed(2);
   });
   el("colorLift").addEventListener("input", (e) => {
     const v = num(e);

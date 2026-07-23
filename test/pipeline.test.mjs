@@ -117,13 +117,13 @@ test("bakeSquareTileSolid: recessed & flat masks clamp emin to the floor, stay w
     for (let c = 0; c < plan.gw >> 1; c++) mask[r * plan.gw + c] = 1;
   const K = plan.mmPerM * SETTINGS.exag;
 
-  const rec = bakeSquareTileSolid(mosaic, plan, { ...SETTINGS, ocean: "recessed", oceanMm: 2 }, mask);
+  const rec = bakeSquareTileSolid(mosaic, plan, { ...SETTINGS, water: "recessed", waterMm: 2 }, mask);
   assert.ok(checkWatertight(rec.solid).closed, "recessed solid watertight");
   assert.ok(signedVolume(rec.solid) > 0, "recessed solid positive volume");
   // grid is Float32Array-backed, so emin carries float32 rounding (~1.5e-6 at this magnitude) — 1e-6 is too tight.
   assert.ok(Math.abs(rec.emin - -2 / K) < 1e-4, `recessed emin = -recessMm/K (got ${rec.emin})`);
 
-  const flat = bakeSquareTileSolid(mosaic, plan, { ...SETTINGS, ocean: "flat", oceanMm: 2 }, mask);
+  const flat = bakeSquareTileSolid(mosaic, plan, { ...SETTINGS, water: "flat", waterMm: 2 }, mask);
   assert.ok(checkWatertight(flat.solid).closed, "flat solid watertight");
   assert.ok(signedVolume(flat.solid) > 0, "flat solid positive volume");
   assert.equal(flat.emin, 0, "flat emin = 0");

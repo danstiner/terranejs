@@ -60,18 +60,17 @@
           <input id="tileW" type="number" min="50" step="5" value="200" class="num">
           <p class="hint">Print size of the tile (largest dimension) — set it to
             fit your printer's bed.</p>
-          <label for="ocean">Ocean</label>
-          <select id="ocean">
-            <option value="bathymetric">Bathymetric — raw sea floor</option>
+          <label for="water">Water</label>
+          <select id="water">
             <option value="recessed" selected>Recessed — flat shelf below coast</option>
-            <option value="flat">Flat — flush ocean</option>
+            <option value="flat">Flat — flush water</option>
           </select>
-          <label for="oceanMm">Ocean recess: <span id="oceanMmVal">2.00</span>&nbsp;mm</label>
-          <input id="oceanMm" type="range" min="0.5" max="5" step="0.5" value="2">
+          <label for="waterMm">Water recess: <span id="waterMmVal">2.00</span>&nbsp;mm</label>
+          <input id="waterMm" type="range" min="0.5" max="5" step="0.5" value="2">
           <label for="colorLift">Flat colour-pause offset: <span id="colorLiftVal">0.100</span>&nbsp;mm</label>
           <input id="colorLift" type="range" min="0.001" max="0.2" step="0.001" value="0.1">
-          <p class="hint">"Flat" mode: print-Z offset above the 0 m ocean layer where the
-            ocean→land colour pause fires. Default 0.1 mm; nudge the pause in your slicer if
+          <p class="hint">"Flat" mode: print-Z offset above the 0 m water layer where the
+            water→land colour pause fires. Default 0.1 mm; nudge the pause in your slicer if
             it lands wrong for your layer height.</p>
           <label class="check"><input id="colorExport" type="checkbox"> Export color changes (PrusaSlicer only)</label>
           <p class="hint" id="bandHint">Embed filament change pauses at the following Z-heights:</p>
@@ -86,7 +85,7 @@
     <div id="preview"></div>
     <div id="results">
       <div id="resultbar">
-        <p id="credits" class="hint">Elevation data © <a href="https://www.mapzen.com/rights" target="_blank" rel="noopener">Mapzen</a> and <a href="https://github.com/tilezen/joerd/blob/master/docs/attribution.md" target="_blank" rel="noopener">others</a>, hosted by <a href="https://registry.opendata.aws/terrain-tiles/" target="_blank" rel="noopener">AWS</a></p>
+        <p id="credits" class="hint">Elevation & water © <a href="https://terrain.reearth.land/" target="_blank" rel="noopener">Re:Earth Terrain</a> / <a href="https://mapterhorn.com/" target="_blank" rel="noopener">Mapterhorn</a>, geoid EGM2008 (NGA)</p>
         <span id="progress" class="hint">Click the map to place a tile.</span>
         <a id="ghlink" href="https://github.com/danstiner/terranejs" target="_blank"
            rel="noopener" aria-label="View source on GitHub" title="View source on GitHub">

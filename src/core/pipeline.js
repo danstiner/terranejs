@@ -1,12 +1,12 @@
 // Headless bake + export orchestration: (square-tile settings) → source zoom +
 // Mercator pixel window + print geom → elevation grid → watertight solid →
 // validated .3mf. This is the "library" surface a thin UI drives. Single square
-// tile, monochrome — water/color/multi-tile arrive in later features.
+// tile, monochrome — color/multi-tile arrive in later features.
 import { cellsBbox, cellWindows } from "./layout.js";
 import { sourceZoom, MAX_MERCATOR_LAT } from "./tilemath.js";
 import { cropGrid, gridRange } from "./resample.js";
 import { buildSolid } from "./mesh.js";
-import { recessMasked } from "./ocean.js";
+import { recessMasked } from "./water.js";
 import { checkWatertight, signedVolume } from "./validate.js";
 import { ThreeMFWriter } from "./threemf.js";
 import { fetchMosaic } from "./terrain.js";
@@ -20,10 +20,10 @@ import { fetchMosaic } from "./terrain.js";
 /** @typedef {import("./types.js").Solid} Solid */
 /**
  * @typedef {{ center: LatLon, scale: number, tileWmm: number, base: number, exag: number,
- *   ocean?: import("./ocean.js").OceanMode, oceanMm?: number, colorLiftMm?: number }} TileSettings
+ *   water?: import("./water.js").WaterMode, waterMm?: number, colorLiftMm?: number }} TileSettings
  *   center = [lat,lon] of the tile; scale = 1:N; tileWmm = print size of the tile
- *   edge; base = base-plate thickness (mm); exag = vertical exaggeration; ocean = how
- *   sub-sea-level samples are handled (default bathymetric); oceanMm = recess/shift
+ *   edge; base = base-plate thickness (mm); exag = vertical exaggeration; water = how
+ *   masked water samples are handled (default recessed); waterMm = recess/shift
  *   amount in print mm.
  */
 /**
@@ -78,20 +78,20 @@ export function planSquareTile(settings, { z, maxTiles = 300 } = {}) {
 // z-frame needed); emax lets callers place altitude color-change heights. Throws
 // rather than emit a mesh that isn't a positive-volume closed manifold.
 /**
- * `oceanMask` (from the Re:Earth watermask tile) recesses the masked vertices to one flat
+ * `waterMask` (from the Re:Earth watermask tile) recesses the masked vertices to one flat
  * floor — used by Recessed/Flat.
  * @param {Mosaic} mosaic
  * @param {TilePlan} plan
- * @param {{ base: number, exag: number, ocean?: import("./ocean.js").OceanMode, oceanMm?: number }} settings
- * @param {Uint8Array} [oceanMask]
+ * @param {{ base: number, exag: number, water?: import("./water.js").WaterMode, waterMm?: number }} settings
+ * @param {Uint8Array} [waterMask]
  * @returns {{ solid: Solid, emin: number, emax: number }}
  */
-export function bakeSquareTileSolid(mosaic, plan, { base, exag, ocean, oceanMm = 0 }, oceanMask) {
+export function bakeSquareTileSolid(mosaic, plan, { base, exag, water, waterMm = 0 }, waterMask) {
   const { window, span, gw, gh, dx, dy, mmPerM } = plan;
   const grid = cropGrid(mosaic, window);
-  // The watermask clamps exactly the ocean vertices to one flat floor: Flat flushes them to
-  // 0, Recessed steps them oceanMm below the coast. No mask (bathymetric) → grid untouched.
-  if (oceanMask) recessMasked(grid, oceanMask, ocean === "flat" ? 0 : -oceanMm / (mmPerM * exag));
+  // The watermask clamps exactly the water vertices to one flat floor: Flat flushes them to
+  // 0, Recessed steps them waterMm below the coast. No mask → grid untouched.
+  if (waterMask) recessMasked(grid, waterMask, water === "flat" ? 0 : -waterMm / (mmPerM * exag));
   const { min: emin, max: emax } = gridRange(grid);
   const mask = new Uint8Array((gw - 1) * (gh - 1)).fill(1); // full square footprint
   const solid = buildSolid(grid, gw, gh, span, mask, { dx, dy, mmPerM, emin, exag, base });

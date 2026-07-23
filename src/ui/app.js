@@ -14,7 +14,7 @@ import { BAND_NAMES } from "../core/colors.js";
  * @typedef {{
  *   center: import("../core/types.js").LatLon | null,
  *   scale: number, tileWmm: number, base: number, exag: number,
- *   ocean: import("../core/ocean.js").OceanMode, oceanMm: number, colorLiftMm: number,
+ *   water: import("../core/water.js").WaterMode, waterMm: number, colorLiftMm: number,
  * }} AppState
  */
 /** @typedef {import("../core/pipeline.js").TileSettings} TileSettings */
@@ -28,8 +28,8 @@ const EXPORT_MAX_TILES = 300;  // full print resolution (core's default tile bud
 
 const store = createStore(/** @type {AppState} */ ({
   center: DEFAULT_PRESET.center, scale: DEFAULT_PRESET.scale, tileWmm: 200, base: 6, exag: 1,
-  ocean: "recessed", oceanMm: 2, // Recessed (watermask + 2 mm shelf) is the default ocean handling
-  colorLiftMm: 0.1, // Flat mode: print-mm offset above the sea-level layer for the ocean→land M600 pause
+  water: "recessed", waterMm: 2, // Recessed (watermask + 2 mm shelf) is the default water handling
+  colorLiftMm: 0.1, // Flat mode: print-mm offset above the sea-level layer for the water→land M600 pause
 }));
 
 /** @param {string} id @returns {HTMLElement} */

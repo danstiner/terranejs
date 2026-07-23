@@ -1,5 +1,5 @@
 // Fetch Re:Earth Terrain (Mapterhorn) tiles for a bbox and assemble decoded mosaics:
-// elevation (terrarium-encoded) and the companion ocean watermask. Browser-only APIs
+// elevation (terrarium-encoded) and the companion water watermask. Browser-only APIs
 // (fetch, createImageBitmap, OffscreenCanvas, document) are referenced only inside
 // function bodies, so this module still imports under node for the pure decode tests.
 import { sourceTileRange } from "./tilemath.js";
@@ -9,10 +9,10 @@ import { sourceTileRange } from "./tilemath.js";
 
 // Re:Earth Terrain serves the open Mapterhorn DEM (Copernicus GLO-30 land + swissALTI3D in
 // Switzerland, geoid-corrected to EGM2008) as terrarium tiles, plus a Protomaps/OSM-derived
-// ocean watermask. Both are keyless + CORS, z0–14. The ocean is clamped to ~0 (no bathymetry)
-// — which is what we want: the watermask gives the exact coast, and Recessed/Flat flatten the
-// ocean anyway. See docs/specs/data-sources.md. Attribution: Re:Earth Terrain, Mapterhorn,
-// EGM2008 (NGA), upstream Copernicus/swisstopo/OpenStreetMap.
+// watermask (sea + lakes). Both are keyless + CORS, z0–14. Masked water is clamped to ~0
+// (no bathymetry) — which is what we want: the watermask gives the exact coast, and
+// Recessed/Flat flatten the water anyway. See docs/specs/data-sources.md. Attribution:
+// Re:Earth Terrain, Mapterhorn, EGM2008 (NGA), upstream Copernicus/swisstopo/OpenStreetMap.
 const ELEV_TILE_URL = "https://terrain.reearth.land/terrarium/elevation/{z}/{x}/{y}.png";
 const WATERMASK_TILE_URL = "https://terrain.reearth.land/mapterhorn-egm08/watermask/{z}/{x}/{y}.png";
 
@@ -32,7 +32,7 @@ export function decodeTerrarium(rgba, n = rgba.length / 4) {
   return out;
 }
 
-// Watermask decode: opaque (alpha > 127) over ocean, transparent over land. Return 1 for ocean,
+// Watermask decode: opaque (alpha > 127) over water, transparent over land. Return 1 for water,
 // 0 for land — a Float32 grid so it rides the same mosaic/cropGrid path as elevation.
 /**
  * @param {Uint8ClampedArray | Uint8Array} rgba
@@ -157,7 +157,7 @@ async function fetchTiles(urlTemplate, decode, bbox, z, { concurrency = 4, onPro
  */
 export function fetchMosaic(bbox, z, opts) { return fetchTiles(ELEV_TILE_URL, decodeTerrarium, bbox, z, opts); }
 
-// Ocean-watermask mosaic for a bbox+zoom (data: 1 = ocean, 0 = land), pixel-aligned with the
+// Watermask mosaic for a bbox+zoom (data: 1 = water, 0 = land), pixel-aligned with the
 // elevation mosaic at the same bbox+zoom so it drops straight into cropGrid.
 /**
  * @param {BBox} bbox @param {number} z

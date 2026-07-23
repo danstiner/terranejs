@@ -8,7 +8,7 @@ import { vertexNormals } from "../core/normals.js";
 import { fetchMosaic, fetchWaterMask } from "../core/terrain.js";
 import { cropGrid } from "../core/resample.js";
 import { BAND_COLORS, BAND_NAMES, BOUNDARY_NAMES, bandThresholds, baseBand, colorChanges, baseColorHex } from "../core/colors.js";
-import { seaLevelColorLineM } from "../core/ocean.js";
+import { seaLevelColorLineM } from "../core/water.js";
 
 /** @typedef {import("../core/types.js").Mosaic} Mosaic */
 /** @typedef {import("../core/pipeline.js").TileSettings} TileSettings */
@@ -57,26 +57,26 @@ async function handle({ gen, settings, maxTiles, format, name, color }) {
     const key = JSON.stringify([settings.center, settings.scale, settings.tileWmm, plan.z]);
     const mosaic = await getMosaic(plan.bbox, plan.z, key, (done, total) => post({ gen, progress: { done, total } }));
 
-    // Ocean mask from the Re:Earth watermask tile — pixel-aligned with the elevation at the
+    // Water mask from the Re:Earth watermask tile — pixel-aligned with the elevation at the
     // same bbox+zoom, so no detection/flood-fill: fetch, crop to the window, threshold alpha.
-    let oceanMask;
-    if (settings.ocean === "recessed" || settings.ocean === "flat") {
+    let waterMask;
+    if (settings.water === "recessed" || settings.water === "flat") {
       const wmKey = JSON.stringify([settings.center, settings.scale, settings.tileWmm, plan.z, "wm"]);
       const wmGrid = cropGrid(await getWaterMask(plan.bbox, plan.z, wmKey), plan.window);
-      oceanMask = new Uint8Array(wmGrid.length);
-      for (let i = 0; i < wmGrid.length; i++) oceanMask[i] = wmGrid[i] > 0.5 ? 1 : 0;
+      waterMask = new Uint8Array(wmGrid.length);
+      for (let i = 0; i < wmGrid.length; i++) waterMask[i] = wmGrid[i] > 0.5 ? 1 : 0;
     }
 
     post({ gen, baking: true }); // all tiles in hand → meshing + validation (synchronous, blocks the worker)
-    const { solid, emin, emax } = bakeSquareTileSolid(mosaic, plan, settings, oceanMask);
+    const { solid, emin, emax } = bakeSquareTileSolid(mosaic, plan, settings, waterMask);
     // Latitude-adjusted color changes for THIS bake's frame. Shared by the preview
     // (returned as `bands`) and, later, the export embed. K>0 since exag ∈ [0.5,4].
     const K = plan.mmPerM * settings.exag;
     const thresholds = bandThresholds(settings.center[0]);
-    // Flat places the ocean→land M600 at print-Z base + colorLiftMm (threshold colorLiftMm/K m)
-    // so the flush ocean layer prints ocean and the next layer up prints land; Recessed /
-    // bathymetric keep the line at sea level (recess supplies the gap in geometry).
-    thresholds[0] = seaLevelColorLineM(settings.ocean, settings.colorLiftMm ?? 0, K);
+    // Flat places the water→land M600 at print-Z base + colorLiftMm (threshold colorLiftMm/K m)
+    // so the flush water layer prints water and the next layer up prints land; Recessed
+    // keeps the line at sea level (recess supplies the gap in geometry).
+    thresholds[0] = seaLevelColorLineM(settings.water, settings.colorLiftMm ?? 0, K);
     const frame = { emin, base: settings.base, mmPerM: plan.mmPerM, exag: settings.exag, zmax: settings.base + (emax - emin) * K };
     // Enrich each change with its boundary line + elevation for the preview legend
     // (the shader and export use only z + color, so the extra fields are harmless there).
