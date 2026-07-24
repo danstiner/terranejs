@@ -7,6 +7,7 @@ import { initMap } from "./map.js";
 import { initPreview } from "./preview.js";
 import { wireControls } from "./controls.js";
 import { defaultTileName, planSquareTile } from "../core/pipeline.js";
+import { PRESETS, DEFAULT_PRESET } from "./presets.js";
 
 /**
  * @typedef {{
@@ -16,10 +17,6 @@ import { defaultTileName, planSquareTile } from "../core/pipeline.js";
  */
 /** @typedef {import("../core/pipeline.js").TileSettings} TileSettings */
 
-const DEFAULT_SCALE = 250000; // 1:250 000
-/** @type {import("../core/types.js").LatLon} */
-const RAINIER = [46.8523, -121.7603]; // default placement: Mount Rainier summit
-
 // Preview detail is matched to the viewport, not the print: a ~1536px grid is
 // already pixel-dense on screen, and a small tile budget keeps the bake fast.
 // Export uses the full print resolution. See docs/specs/data-pipeline.md §2.
@@ -28,7 +25,7 @@ const CRISP = 64;   // ~8×8 tiles → ~2048px grid → viewport-sharp on zoom; 
 const EXPORT = 300; // full print resolution (core's default tile budget)
 
 const store = createStore(/** @type {AppState} */ ({
-  center: RAINIER, scale: DEFAULT_SCALE, tileWmm: 200, base: 6, exag: 1,
+  center: DEFAULT_PRESET.center, scale: DEFAULT_PRESET.scale, tileWmm: 200, base: 6, exag: 1,
 }));
 
 /** @param {string} id @returns {HTMLElement} */
@@ -40,10 +37,18 @@ const $ = (id) => {
 /** @param {string} msg */
 const setProgress = (msg) => { $("progress").textContent = msg; };
 
+const presetSelect = /** @type {HTMLSelectElement} */ ($("preset"));
+// The store scale is exact (1:N); the mm/km input is a display, so reflect the
+// preset's scale rounded. Editing the box afterwards still overrides the store.
+/** @param {number} scale */
+const syncScaleInput = (scale) => {
+  /** @type {HTMLInputElement} */ ($("scale")).value = String(Number((1e6 / scale).toFixed(2)));
+};
+
 const map = initMap({
-  center: RAINIER, zoom: 9,
-  onPlace: (c) => store.set({ center: c }),
-  onMove: (c) => store.set({ center: c }),
+  start: { center: DEFAULT_PRESET.center, scale: DEFAULT_PRESET.scale, tileWmm: store.get().tileWmm },
+  onPlace: (c) => { presetSelect.value = ""; store.set({ center: c }); },
+  onMove: (c) => { presetSelect.value = ""; store.set({ center: c }); },
 });
 const preview = initPreview($("preview"));
 // Annotate explicitly: without it `worker.onmessage = ({data}) => …` fails TS7031
@@ -151,6 +156,35 @@ store.subscribe((s) => {
   window.clearTimeout(timer);
   timer = window.setTimeout(loadPreview, 500);
 });
+
+// Populate the region picker from PRESETS (grouped), keeping the static Custom
+// option first. Selecting a preset writes centre+scale, reflects the scale in the
+// mm/km input, and flies the map; the store change drives the debounced preview.
+// Display labels are explicit (not just `${group}s`) so "Park" reads "National Parks".
+// National Parks first, terranes last — the everyday picks sit at the top.
+const GROUP_LABELS = /** @type {const} */ ({ Terrane: "Terranes", Park: "National Parks" });
+for (const key of /** @type {const} */ (["Park", "Terrane"])) {
+  const group = document.createElement("optgroup");
+  group.label = GROUP_LABELS[key];
+  for (const p of PRESETS) if (p.group === key) group.appendChild(new Option(p.name, p.name));
+  presetSelect.appendChild(group);
+}
+/** @param {import("./presets.js").Preset} preset */
+function applyPreset(preset) {
+  store.set({ center: preset.center, scale: preset.scale });
+  syncScaleInput(preset.scale);
+  map.focus({ center: preset.center, scale: preset.scale, tileWmm: store.get().tileWmm });
+}
+presetSelect.addEventListener("change", () => {
+  const preset = PRESETS.find((p) => p.name === presetSelect.value);
+  if (preset) applyPreset(preset);
+});
+
+// Default-on-load: reflect the default preset in the picker + scale input. The
+// map is already framed by initMap({ start }); the store carries its centre+scale
+// so the subscribe() fire runs the first preview (no redundant store.set here).
+presetSelect.value = DEFAULT_PRESET.name;
+syncScaleInput(DEFAULT_PRESET.scale);
 
 wireControls(store);
 
