@@ -111,8 +111,9 @@ export function printPitchMm(latDeg, z, scale) {
 /** @type {number} */
 export const PITCH_FLOOR_MM = 0.05;
 
-// Deepest useful export zoom: shallowest z whose print pitch is at or below
-// the floor, clamped to the pyramid max and the whole-region tile budget.
+// Deepest useful export zoom: shallowest z whose print pitch is at or below the floor, clamped
+// to the source max (Re:Earth z15: the native z14 512-px @2x elevation tile supplies
+// z15-equivalent 256-px detail via quadrant extraction) and the whole-region tile budget.
 /**
  * @param {BBox} bbox
  * @param {number} latDeg

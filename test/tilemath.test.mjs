@@ -43,6 +43,6 @@ test("sourceZoom: tile budget clamps the zoom down", () => {
 });
 
 test("sourceZoom: caps at the pyramid max", () => {
-  // 1:20000 → z15 pitch ≈ 0.16 mm, still above the floor → capped at 15
+  // 1:20000 → z15 pitch ≈ 0.16 mm, still above the floor → capped at 15 (Re:Earth retina max)
   assert.equal(sourceZoom([47.5, -122.0, 47.51, -121.99], 47.5, 20000, 1e9), 15);
 });
