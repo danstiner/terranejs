@@ -13,7 +13,7 @@
 // [r,g,b] 0..1, one per band (ascending altitude). Tunable.
 /** @type {RGB[]} */
 export const BAND_COLORS = [
-  [0.16, 0.36, 0.55], // 0 ocean  — ≤ sea level
+  [0.16, 0.36, 0.55], // 0 water  — ≤ sea level
   [0.28, 0.48, 0.28], // 1 forest — ≤ treeline
   [0.60, 0.62, 0.38], // 2 tundra — alpine meadow/krummholz ≤ tundra line
   [0.55, 0.55, 0.55], // 3 rock   — ≤ snowline
@@ -21,7 +21,7 @@ export const BAND_COLORS = [
 ];
 
 /** Band names, index-aligned with BAND_COLORS — for the legend/readout. */
-export const BAND_NAMES = ["ocean", "forest", "tundra", "rock", "snow"];
+export const BAND_NAMES = ["water", "forest", "tundra", "rock", "snow"];
 
 /** The line crossed to ENTER band i+1, index-aligned with the thresholds array
  * ([sea level, timberline, tundra line, snowline]) — for the legend. */
