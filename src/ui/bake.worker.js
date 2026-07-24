@@ -5,8 +5,10 @@
 // app.js. `format` is an output selector, not render policy. One job at a time.
 import { planSquareTile, bakeSquareTileSolid, tileTo3mf } from "../core/pipeline.js";
 import { vertexNormals } from "../core/normals.js";
-import { fetchMosaic } from "../core/terrain.js";
+import { fetchMosaic, fetchWaterMask } from "../core/terrain.js";
+import { cropGrid } from "../core/resample.js";
 import { BAND_COLORS, BAND_NAMES, BOUNDARY_NAMES, bandThresholds, baseBand, colorChanges, baseColorHex } from "../core/colors.js";
+import { seaLevelColorLineM } from "../core/water.js";
 
 /** @typedef {import("../core/types.js").Mosaic} Mosaic */
 /** @typedef {import("../core/pipeline.js").TileSettings} TileSettings */
@@ -23,28 +25,58 @@ const post = /** @type {(msg: unknown, transfer?: Transferable[]) => void} */ (
 // current tile's fast/crisp/export zooms with room to spare.
 /** @type {{ key: string, mosaic: Mosaic }[]} */
 const cache = [];
-const CACHE_MAX = 4;
+const CACHE_MAX = 4; // fast/crisp/export zooms, with room to spare
+
+/** Fetch (or reuse) the decoded mosaic for a bbox+zoom, keyed by the fetch-affecting params.
+ * @param {import("../core/types.js").BBox} bbox @param {number} z @param {string} key
+ * @param {(done: number, total: number) => void} [onProgress] @returns {Promise<Mosaic>} */
+async function getMosaic(bbox, z, key, onProgress) {
+  let hit = cache.find((c) => c.key === key);
+  if (!hit) {
+    hit = { key, mosaic: await fetchMosaic(bbox, z, { onProgress }) };
+    cache.push(hit);
+    if (cache.length > CACHE_MAX) cache.shift();
+  }
+  return hit.mosaic;
+}
+
+/** @type {{ key: string, mosaic: Mosaic }[]} */
+const wmCache = [];
+/** Fetch (or reuse) the decoded watermask mosaic for a bbox+zoom, mirroring getMosaic.
+ * @param {import("../core/types.js").BBox} bbox @param {number} z @param {string} key @returns {Promise<Mosaic>} */
+async function getWaterMask(bbox, z, key) {
+  let hit = wmCache.find((c) => c.key === key);
+  if (!hit) { hit = { key, mosaic: await fetchWaterMask(bbox, z) }; wmCache.push(hit); if (wmCache.length > CACHE_MAX) wmCache.shift(); }
+  return hit.mosaic;
+}
 
 /** @param {{ gen: number, settings: TileSettings, maxTiles: number, format: "mesh" | "3mf", name?: string, color?: boolean }} data */
 async function handle({ gen, settings, maxTiles, format, name, color }) {
   try {
     const plan = planSquareTile(settings, { maxTiles });
     const key = JSON.stringify([settings.center, settings.scale, settings.tileWmm, plan.z]);
-    let hit = cache.find((c) => c.key === key);
-    if (!hit) {
-      const mosaic = await fetchMosaic(plan.bbox, plan.z, {
-        onProgress: (done, total) => post({ gen, progress: { done, total } }),
-      });
-      hit = { key, mosaic };
-      cache.push(hit);
-      if (cache.length > CACHE_MAX) cache.shift();
+    const mosaic = await getMosaic(plan.bbox, plan.z, key, (done, total) => post({ gen, progress: { done, total } }));
+
+    // Water mask from the Re:Earth watermask tile — pixel-aligned with the elevation at the
+    // same bbox+zoom, so no detection/flood-fill: fetch, crop to the window, threshold alpha.
+    let waterMask;
+    if (settings.water === "recessed" || settings.water === "flat") {
+      const wmKey = JSON.stringify([settings.center, settings.scale, settings.tileWmm, plan.z, "wm"]);
+      const wmGrid = cropGrid(await getWaterMask(plan.bbox, plan.z, wmKey), plan.window);
+      waterMask = new Uint8Array(wmGrid.length);
+      for (let i = 0; i < wmGrid.length; i++) waterMask[i] = wmGrid[i] > 0.5 ? 1 : 0;
     }
+
     post({ gen, baking: true }); // all tiles in hand → meshing + validation (synchronous, blocks the worker)
-    const { solid, emin, emax } = bakeSquareTileSolid(hit.mosaic, plan, settings);
+    const { solid, emin, emax } = bakeSquareTileSolid(mosaic, plan, settings, waterMask);
     // Latitude-adjusted color changes for THIS bake's frame. Shared by the preview
     // (returned as `bands`) and, later, the export embed. K>0 since exag ∈ [0.5,4].
-    const thresholds = bandThresholds(settings.center[0]);
     const K = plan.mmPerM * settings.exag;
+    const thresholds = bandThresholds(settings.center[0]);
+    // Flat places the water→land M600 at print-Z base + colorLiftMm (threshold colorLiftMm/K m)
+    // so the flush water layer prints water and the next layer up prints land; Recessed
+    // keeps the line at sea level (recess supplies the gap in geometry).
+    thresholds[0] = seaLevelColorLineM(settings.water, settings.colorLiftMm ?? 0, K);
     const frame = { emin, base: settings.base, mmPerM: plan.mmPerM, exag: settings.exag, zmax: settings.base + (emax - emin) * K };
     // Enrich each change with its boundary line + elevation for the preview legend
     // (the shader and export use only z + color, so the extra fields are harmless there).
@@ -65,7 +97,10 @@ async function handle({ gen, settings, maxTiles, format, name, color }) {
         baseHex: baseColorHex(emin, thresholds),
         baseName: BAND_NAMES[bb],
       };
-      post({ gen, positions: solid.positions, indices: solid.indices, normals, bands },
+      // emin + geom let the preview invert a surface point's print-Z back to metres
+      // for the hover elevation probe: elev = emin + (z − base)/(mmPerM·exag).
+      const probeFrame = { emin, base: settings.base, mmPerM: plan.mmPerM, exag: settings.exag };
+      post({ gen, positions: solid.positions, indices: solid.indices, normals, bands, frame: probeFrame },
         [solid.positions.buffer, solid.indices.buffer, normals.buffer]);
     }
   } catch (err) {
