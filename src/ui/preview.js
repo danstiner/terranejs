@@ -1,12 +1,69 @@
-// three.js preview: renders the pipeline's indexed Solid meshes as single-colour
-// lit terrain — relief reads from shading, no elevation colouring — and frames
-// the camera on their combined bounds. three.js loads via the importmap.
+// three.js preview: renders the pipeline's indexed Solid meshes as lit terrain
+// colored by altitude band (by print-height), and frames the camera on their
+// combined bounds. three.js loads via the importmap.
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { MAX_CHANGES } from "../core/colors.js";
 
 /** @typedef {import("../core/types.js").Solid} Solid */
+/** @typedef {import("../core/colors.js").ColorChange} ColorChange */
+/**
+ * @typedef {{ changes: ColorChange[], baseColor: [number,number,number], baseHex: string, baseName: string }} Bands
+ *   worker payload for the mesh path; applyBands reads changes+baseColor, the app legend reads baseHex+baseName.
+ */
 
-const TERRAIN = 0x8a8f98; // neutral filament grey; relief comes from the shading
+// A lit terrain material that recolors by print-height: everything below a change's
+// Z prints in the lower filament, so banding by object-space position.z is the
+// faithful M600 preview. Fixed-size uniform arrays (never a per-bake length) keep the
+// injected source identical across bakes, so three.js's program cache can't collide.
+function makeBandMaterial() {
+  const mat = new THREE.MeshStandardMaterial({ roughness: 0.95, metalness: 0.0, side: THREE.DoubleSide });
+  const uniforms = {
+    uChangeZ: { value: new Float32Array(MAX_CHANGES) },
+    uChangeColor: { value: Array.from({ length: MAX_CHANGES }, () => new THREE.Color()) },
+    uChangeCount: { value: 0 },
+    uBaseColor: { value: new THREE.Color() },
+  };
+  mat.userData.uniforms = uniforms;
+  mat.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, uniforms);
+    shader.vertexShader = shader.vertexShader
+      .replace("#include <common>", "#include <common>\nvarying float vLocalZ;")
+      .replace("#include <begin_vertex>", "#include <begin_vertex>\nvLocalZ = position.z;");
+    shader.fragmentShader = shader.fragmentShader
+      .replace("#include <common>",
+        `#include <common>
+varying float vLocalZ;
+uniform float uChangeZ[${MAX_CHANGES}];
+uniform vec3 uChangeColor[${MAX_CHANGES}];
+uniform int uChangeCount;
+uniform vec3 uBaseColor;`)
+      .replace("#include <color_fragment>",
+        `#include <color_fragment>
+vec3 bandCol = uBaseColor;
+for (int i = 0; i < ${MAX_CHANGES}; i++) {
+  if (i >= uChangeCount) break;
+  if (vLocalZ >= uChangeZ[i]) bandCol = uChangeColor[i];
+}
+diffuseColor.rgb = bandCol;`);
+  };
+  mat.customProgramCacheKey = () => "terrane-band"; // constant → shared program across bakes
+  return mat;
+}
+
+/** @param {THREE.MeshStandardMaterial} mat @param {Bands} bands */
+function applyBands(mat, bands) {
+  const u = mat.userData.uniforms;
+  const n = Math.min(bands.changes.length, MAX_CHANGES);
+  u.uChangeCount.value = n;
+  for (let i = 0; i < n; i++) {
+    u.uChangeZ.value[i] = bands.changes[i].z;
+    const [r, g, b] = bands.changes[i].color;
+    u.uChangeColor.value[i].setRGB(r, g, b);
+  }
+  const [br, bg, bb] = bands.baseColor;
+  u.uBaseColor.value.setRGB(br, bg, bb);
+}
 
 /**
  * @param {HTMLElement} container
@@ -49,7 +106,7 @@ export function initPreview(container) {
   };
   loop();
 
-  /** @param {{ positions: Float32Array, indices: Uint32Array, normals: Float32Array }[]} solids */
+  /** @param {{ positions: Float32Array, indices: Uint32Array, normals: Float32Array, bands: Bands }[]} solids */
   function setTiles(solids) {
     for (const c of group.children) {
       const m = /** @type {THREE.Mesh} */ (c);
@@ -67,9 +124,9 @@ export function initPreview(container) {
       g.setAttribute("normal", new THREE.BufferAttribute(s.normals, 3));
       g.computeBoundingBox();
       if (g.boundingBox) box.union(g.boundingBox);
-      group.add(new THREE.Mesh(g, new THREE.MeshStandardMaterial({
-        color: TERRAIN, roughness: 0.95, metalness: 0.0, side: THREE.DoubleSide,
-      })));
+      const mat = makeBandMaterial();
+      applyBands(mat, s.bands);
+      group.add(new THREE.Mesh(g, mat));
     }
     if (box.isEmpty()) return;
 

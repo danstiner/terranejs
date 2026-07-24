@@ -69,35 +69,38 @@ export function planSquareTile(settings, { z, maxTiles = 300 } = {}) {
   };
 }
 
-// Pure: decoded mosaic + plan + {base,exag} → validated watertight solid. emin is
-// the tile's own grid minimum (single tile, so no cross-tile z-frame needed).
-// Throws rather than emit a mesh that isn't a positive-volume closed manifold.
+// Pure: decoded mosaic + plan + {base,exag} → validated watertight solid + the tile's
+// grid range. emin/emax are the tile's own min/max (single tile, so no cross-tile
+// z-frame needed); emax lets callers place altitude color-change heights. Throws
+// rather than emit a mesh that isn't a positive-volume closed manifold.
 /**
  * @param {Mosaic} mosaic
  * @param {TilePlan} plan
  * @param {{ base: number, exag: number }} settings
- * @returns {Solid}
+ * @returns {{ solid: Solid, emin: number, emax: number }}
  */
 export function bakeSquareTileSolid(mosaic, plan, { base, exag }) {
   const { window, span, gw, gh, dx, dy, mmPerM } = plan;
   const grid = cropGrid(mosaic, window);
-  const { min: emin } = gridRange(grid);
+  const { min: emin, max: emax } = gridRange(grid);
   const mask = new Uint8Array((gw - 1) * (gh - 1)).fill(1); // full square footprint
   const solid = buildSolid(grid, gw, gh, span, mask, { dx, dy, mmPerM, emin, exag, base });
   const wt = checkWatertight(solid);
   if (!wt.closed) throw new Error(`pipeline: non-watertight solid (${wt.unmatched} unmatched edges)`);
   if (signedVolume(solid) <= 0) throw new Error("pipeline: non-positive-volume (inside-out) solid");
-  return solid;
+  return { solid, emin, emax };
 }
 
 // One solid → a single-object .3mf blob (tile placed at the plate origin).
 /**
  * @param {string} name
  * @param {Solid} solid
+ * @param {import("./colors.js").ColorChange[]} [colorChanges]
  * @returns {Promise<Uint8Array>}
  */
-export async function tileTo3mf(name, solid) {
+export async function tileTo3mf(name, solid, colorChanges) {
   const writer = new ThreeMFWriter();
+  if (colorChanges && colorChanges.length) writer.setColorChanges(colorChanges);
   await writer.addObject(name, solid, 0, 0);
   return writer.finish();
 }
@@ -122,7 +125,7 @@ export function defaultTileName({ center: [lat, lon], tileWmm, scale }) {
 /**
  * @param {TileSettings} settings
  * @param {{ z?: number, maxTiles?: number, onProgress?: (done: number, total: number) => void }} [opts]
- * @returns {Promise<Solid>}
+ * @returns {Promise<{ solid: Solid, emin: number, emax: number }>}
  */
 export async function bakeSquareTile(settings, opts = {}) {
   const plan = planSquareTile(settings, opts);
@@ -137,6 +140,6 @@ export async function bakeSquareTile(settings, opts = {}) {
  * @returns {Promise<Uint8Array>}
  */
 export async function exportSquareTile(settings, opts = {}) {
-  const solid = await bakeSquareTile(settings, opts);
+  const { solid } = await bakeSquareTile(settings, opts);
   return tileTo3mf(opts.name ?? defaultTileName(settings), solid);
 }
