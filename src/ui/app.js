@@ -9,12 +9,13 @@ import { wireControls } from "./controls.js";
 import { defaultTileName, planSquareTile } from "../core/pipeline.js";
 import { PRESETS, DEFAULT_PRESET } from "./presets.js";
 import { BAND_NAMES } from "../core/colors.js";
+import { LAND_BLUE_WARN_PCT } from "../core/water.js";
 
 /**
  * @typedef {{
  *   center: import("../core/types.js").LatLon | null,
  *   scale: number, tileWmm: number, base: number, exag: number,
- *   water: import("../core/water.js").WaterMode, waterMm: number, colorLiftMm: number,
+ *   mode: "auto" | "manual", recessMm: number,
  * }} AppState
  */
 /** @typedef {import("../core/pipeline.js").TileSettings} TileSettings */
@@ -28,8 +29,7 @@ const EXPORT_MAX_TILES = 300;  // full print resolution (core's default tile bud
 
 const store = createStore(/** @type {AppState} */ ({
   center: DEFAULT_PRESET.center, scale: DEFAULT_PRESET.scale, tileWmm: 200, base: 6, exag: 1,
-  water: "recessed", waterMm: 2, // Recessed (watermask + 2 mm shelf) is the default water handling
-  colorLiftMm: 0.1, // Flat mode: print-mm offset above the sea-level layer for the water→land M600 pause
+  mode: "auto", recessMm: 2, // Auto anchors + recesses water to the tile's lowest water
 }));
 
 /** @param {string} id @returns {HTMLElement} */
@@ -130,6 +130,15 @@ worker.onmessage = ({ data }) => {
   if (data.error) { setProgress(`Preview failed: ${data.error}`); previewPhase = "idle"; return; }
   preview.setTiles([{ positions: data.positions, indices: data.indices, normals: data.normals, bands: data.bands }], data.frame);
   renderLegend(data.bands);
+  // Manual can leave low land printing blue; nudge the user to Auto / more recess. Auto separates
+  // by construction (landBluePct ~0), so the guard never fires there.
+  const warn = $("waterWarn");
+  if (store.get().mode === "manual" && data.landBluePct > LAND_BLUE_WARN_PCT) {
+    warn.textContent = `${Math.round(data.landBluePct)}% of the land will print blue — switch to Auto or raise the recess to separate land from water.`;
+    warn.hidden = false;
+  } else {
+    warn.hidden = true;
+  }
   if (previewPhase === "fast") {
     previewPhase = "crisp"; // fast relief is up; refine to viewport-sharp
     setProgress("Detailed preview…");

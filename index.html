@@ -60,18 +60,17 @@
           <input id="tileW" type="number" min="50" step="5" value="200" class="num">
           <p class="hint">Print size of the tile (largest dimension) — set it to
             fit your printer's bed.</p>
-          <label for="water">Water</label>
-          <select id="water">
-            <option value="recessed" selected>Recessed — flat shelf below coast</option>
-            <option value="flat">Flat — flush water</option>
+          <label for="waterMode">Water</label>
+          <select id="waterMode">
+            <option value="auto" selected>Auto — recess &amp; colour water for you</option>
+            <option value="manual">Manual — set the recess yourself</option>
           </select>
-          <label for="waterMm">Water recess: <span id="waterMmVal">2.00</span>&nbsp;mm</label>
-          <input id="waterMm" type="range" min="0.5" max="5" step="0.5" value="2">
-          <label for="colorLift">Flat colour-pause offset: <span id="colorLiftVal">0.100</span>&nbsp;mm</label>
-          <input id="colorLift" type="range" min="0.001" max="0.2" step="0.001" value="0.1">
-          <p class="hint">"Flat" mode: print-Z offset above the 0 m water layer where the
-            water→land colour pause fires. Default 0.1 mm; nudge the pause in your slicer if
-            it lands wrong for your layer height.</p>
+          <label for="recess"><span id="recessLabel">Max recess</span>: <span id="recessVal">2.0</span>&nbsp;mm</label>
+          <input id="recess" type="range" min="0" max="5" step="0.5" value="2">
+          <p class="hint">Water is coloured blue from the tile's lowest water; the recess drops it
+            below the land so the land keeps its colours. Auto sizes the recess automatically;
+            Manual lets you set it.</p>
+          <p class="hint" id="waterWarn" style="color:#e0a800" hidden></p>
           <label class="check"><input id="colorExport" type="checkbox"> Export color changes (PrusaSlicer only)</label>
           <p class="hint" id="bandHint">Embed filament change pauses at the following Z-heights:</p>
           <div id="bandLegend" class="hint"></div>

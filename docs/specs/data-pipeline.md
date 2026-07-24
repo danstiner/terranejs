@@ -76,25 +76,40 @@ construction.
 
 ## 4a. Water handling
 
-Water (ocean + lakes) is masked from the Re:Earth **watermask** tile, fetched
-at the same bbox and zoom as the elevation mosaic — pixel-aligned, so no
-detection or flood-fill is needed:
+Water (ocean + lakes + rivers) is masked from the Re:Earth **watermask** tile, fetched at the
+same bbox and zoom as the elevation mosaic — pixel-aligned, so no detection or flood-fill is
+needed. Rather than flatten water to absolute sea level (which holes high lakes and colours low
+land blue), terranejs anchors to the tile's **own lowest water**:
 
-1. Fetch the watermask mosaic and threshold its alpha channel (`alpha > 127`
-   = water) to a mask over the fine bake grid directly.
-2. Clamp the masked vertices to one flat floor: **Recessed** → `−recessMm/K`
-   (a shelf below the coast, the default), **Flat** → `0` (flush at sea
-   level).
+1. Fetch the watermask mosaic and threshold its alpha (`alpha > 127` = water) to a boolean mask
+   over the bake grid.
+2. Read the grid's lowest water and lowest land, then flatten the low water to one floor a recess
+   below the land, and place the water→land colour line just above that floor. The lowest water
+   prints blue; terrain bands up from there. Which water gets flattened is gated a bounded distance
+   above the lowest water — a fixed minimum, widened by the recess slider — so a bigger recess
+   reaches higher and pulls more of the tile's water (a reservoir sitting above a river) down to
+   the same blue floor; water past the gate stays at its elevation, coloured as terrain.
+3. **Auto** (default) sizes the recess automatically: just enough to drop the colour line below
+   the lowest land, capped by the *Max recess* slider. On an ordinary coast (land at or above the
+   water) that need is already covered by a small fixed floor, so the slider changes nothing — it
+   only matters once land dips well below the water and clearing it would take more recess than
+   the cap allows. When that happens (a deep valley under a small lake), Auto refuses to blue the
+   land instead: it caps the colour line at the lowest land, so that water prints as ordinary
+   terrain rather than bleeding blue onto the valley — raising *Max recess* clears the land and
+   lets the water blue again. **Manual** sets the recess (mm) directly with no such cap, warning
+   instead when low land would print blue.
 
-Lakes recess the same as the ocean — the mask doesn't distinguish them.
+So a mountain lake becomes the tile's blue base with peaks banding above it; a coast gets blue
+ocean with green land; below-sea-level polders stay green above a recessed blue channel. Lakes and
+ocean are treated alike — the mask doesn't distinguish them. See
+`docs/superpowers/specs/2026-07-23-water-anchor-recess-design.md`.
 Inland land below sea level (e.g. Death Valley) is unmasked, so it's
 preserved as real terrain.
 
-Colour is unchanged (§8): `emin` follows the floor so the base band is
-water. Recessed's shelf sits `recessMm` below the coast, so the blue-water
-colour split is independent of slicer layer height. Flat is flush, so its
-water→land colour pause is offset a little print-Z above the water layer to
-keep the flush water blue.
+The colour line becomes `thresholds[0]` in §8's band array (the ecological lines clamp up to it,
+staying ascending), so it drives the same per-print-Z filament changes as any other band boundary
+— no separate colour path. `emin` follows the recess floor, so the base filament is water — except
+in Auto's give-up case above, where the tile's true low point is the uncleared land instead.
 
 ## 5. Mesh
 

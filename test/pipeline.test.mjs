@@ -109,24 +109,27 @@ test("pipeline: fixed region → validated watertight printable .3mf (milestone)
   }
 });
 
-test("bakeSquareTileSolid: recessed & flat masks clamp emin to the floor, stay watertight", () => {
+test("bakeSquareTileSolid: water recess anchors below the land, stays watertight", () => {
   const plan = planSquareTile(SETTINGS, { z: 10 }); // 41×41, ramp elevations 500..700 m
   const mosaic = mosaicFor(plan);
-  const mask = new Uint8Array(plan.gw * plan.gh); // mask the left half as ocean
+  const mask = new Uint8Array(plan.gw * plan.gh); // left half = water
   for (let r = 0; r < plan.gh; r++)
     for (let c = 0; c < plan.gw >> 1; c++) mask[r * plan.gw + c] = 1;
   const K = plan.mmPerM * SETTINGS.exag;
 
-  const rec = bakeSquareTileSolid(mosaic, plan, { ...SETTINGS, water: "recessed", waterMm: 2 }, mask);
-  assert.ok(checkWatertight(rec.solid).closed, "recessed solid watertight");
-  assert.ok(signedVolume(rec.solid) > 0, "recessed solid positive volume");
-  // grid is Float32Array-backed, so emin carries float32 rounding (~1.5e-6 at this magnitude) — 1e-6 is too tight.
-  assert.ok(Math.abs(rec.emin - -2 / K) < 1e-4, `recessed emin = -recessMm/K (got ${rec.emin})`);
+  const auto = bakeSquareTileSolid(mosaic, plan, { ...SETTINGS, mode: "auto", recessMm: 2 }, mask);
+  assert.ok(checkWatertight(auto.solid).closed, "auto solid watertight");
+  assert.ok(signedVolume(auto.solid) > 0, "auto solid positive volume");
+  // waterMin = 500, land is well above it → Auto uses the minimum recess (AUTO_MIN_RECESS_MM =
+  // 0.30 mm), independent of the 2 mm slider; the low water floors at waterMin − 0.30/K.
+  assert.ok(Math.abs(auto.emin - (500 - 0.30 / K)) < 1e-2, `auto emin = waterMin − 0.30/K (got ${auto.emin})`);
+  assert.ok(auto.lineElev < 560, "colour line below the lowest land (560 m) → land keeps its colours");
+  assert.equal(auto.landBluePct, 0, "no land prints blue");
 
-  const flat = bakeSquareTileSolid(mosaic, plan, { ...SETTINGS, water: "flat", waterMm: 2 }, mask);
-  assert.ok(checkWatertight(flat.solid).closed, "flat solid watertight");
-  assert.ok(signedVolume(flat.solid) > 0, "flat solid positive volume");
-  assert.equal(flat.emin, 0, "flat emin = 0");
+  const man = bakeSquareTileSolid(mosaic, plan, { ...SETTINGS, mode: "manual", recessMm: 0 }, mask);
+  assert.ok(checkWatertight(man.solid).closed, "manual solid watertight");
+  assert.ok(Math.abs(man.emin - 500) < 1e-2, "manual recess 0 → water flush at waterMin (500 m)");
+  assert.equal(man.landBluePct, 0, "ramp land (≥560 m) clears the flush colour line");
 });
 
 test("defaultTileName: encodes center, width, and scale", () => {

@@ -6,7 +6,7 @@ import { cellsBbox, cellWindows } from "./layout.js";
 import { sourceZoom, MAX_MERCATOR_LAT } from "./tilemath.js";
 import { cropGrid, gridRange } from "./resample.js";
 import { buildSolid } from "./mesh.js";
-import { recessMasked } from "./water.js";
+import { applyWaterRecess } from "./water.js";
 import { checkWatertight, signedVolume } from "./validate.js";
 import { ThreeMFWriter } from "./threemf.js";
 import { fetchMosaic } from "./terrain.js";
@@ -20,11 +20,11 @@ import { fetchMosaic } from "./terrain.js";
 /** @typedef {import("./types.js").Solid} Solid */
 /**
  * @typedef {{ center: LatLon, scale: number, tileWmm: number, base: number, exag: number,
- *   water?: import("./water.js").WaterMode, waterMm?: number, colorLiftMm?: number }} TileSettings
+ *   mode?: "auto" | "manual", recessMm?: number }} TileSettings
  *   center = [lat,lon] of the tile; scale = 1:N; tileWmm = print size of the tile
- *   edge; base = base-plate thickness (mm); exag = vertical exaggeration; water = how
- *   masked water samples are handled (default recessed); waterMm = recess/shift
- *   amount in print mm.
+ *   edge; base = base-plate thickness (mm); exag = vertical exaggeration; mode = water
+ *   recess mode (default auto); recessMm = the water-recess slider (max recess in auto,
+ *   exact recess in manual; default 2).
  */
 /**
  * @typedef {{ z: number, bbox: BBox, window: Window, span: Span, gw: number, gh: number, dx: number, dy: number, mmPerM: number }} TilePlan
@@ -78,27 +78,26 @@ export function planSquareTile(settings, { z, maxTiles = 300 } = {}) {
 // z-frame needed); emax lets callers place altitude color-change heights. Throws
 // rather than emit a mesh that isn't a positive-volume closed manifold.
 /**
- * `waterMask` (from the Re:Earth watermask tile) recesses the masked vertices to one flat
- * floor — used by Recessed/Flat.
+ * `waterMask` (from the Re:Earth watermask tile) anchors the colour line to the tile's lowest
+ * water and recesses that water below the land — see water.applyWaterRecess. No mask → grid
+ * untouched, `lineElev` 0 (the headless bakeSquareTile path).
  * @param {Mosaic} mosaic
  * @param {TilePlan} plan
- * @param {{ base: number, exag: number, water?: import("./water.js").WaterMode, waterMm?: number }} settings
+ * @param {{ base: number, exag: number, mode?: "auto" | "manual", recessMm?: number }} settings
  * @param {Uint8Array} [waterMask]
- * @returns {{ solid: Solid, emin: number, emax: number }}
+ * @returns {{ solid: Solid, emin: number, emax: number, lineElev: number, landBluePct: number }}
  */
-export function bakeSquareTileSolid(mosaic, plan, { base, exag, water, waterMm = 0 }, waterMask) {
+export function bakeSquareTileSolid(mosaic, plan, { base, exag, mode = "auto", recessMm = 2 }, waterMask) {
   const { window, span, gw, gh, dx, dy, mmPerM } = plan;
   const grid = cropGrid(mosaic, window);
-  // The watermask clamps exactly the water vertices to one flat floor: Flat flushes them to
-  // 0, Recessed steps them waterMm below the coast. No mask → grid untouched.
-  if (waterMask) recessMasked(grid, waterMask, water === "flat" ? 0 : -waterMm / (mmPerM * exag));
+  const { lineElev, landBluePct } = applyWaterRecess(grid, waterMask, { mode, recessMm, K: mmPerM * exag });
   const { min: emin, max: emax } = gridRange(grid);
   const mask = new Uint8Array((gw - 1) * (gh - 1)).fill(1); // full square footprint
   const solid = buildSolid(grid, gw, gh, span, mask, { dx, dy, mmPerM, emin, exag, base });
   const wt = checkWatertight(solid);
   if (!wt.closed) throw new Error(`pipeline: non-watertight solid (${wt.unmatched} unmatched edges)`);
   if (signedVolume(solid) <= 0) throw new Error("pipeline: non-positive-volume (inside-out) solid");
-  return { solid, emin, emax };
+  return { solid, emin, emax, lineElev, landBluePct };
 }
 
 // One solid → a single-object .3mf blob (tile placed at the plate origin).
@@ -135,7 +134,7 @@ export function defaultTileName({ center: [lat, lon], tileWmm, scale }) {
 /**
  * @param {TileSettings} settings
  * @param {{ z?: number, maxTiles?: number, onProgress?: (done: number, total: number) => void }} [opts]
- * @returns {Promise<{ solid: Solid, emin: number, emax: number }>}
+ * @returns {Promise<{ solid: Solid, emin: number, emax: number, lineElev: number, landBluePct: number }>}
  */
 export async function bakeSquareTile(settings, opts = {}) {
   const plan = planSquareTile(settings, opts);

@@ -3,7 +3,24 @@ import assert from "node:assert/strict";
 import {
   BAND_COLORS, BAND_NAMES, MAX_CHANGES,
   bandThresholds, bandOf, baseBand, colorChanges, prusaColorChangeXML, baseColorHex,
+  waterLineThresholds,
 } from "../src/core/colors.js";
+
+test("waterLineThresholds: sets the water line and clamps ecological bands above it", () => {
+  const base = [0, 1200, 1600, 2200]; // sea level, timberline, tundra, snowline
+  assert.deepEqual(waterLineThresholds(base, 300), [300, 1200, 1600, 2200], "line below timberline");
+  // line ABOVE timberline (alpine lake > treeline) → lower bands clamp up so the array stays ascending
+  assert.deepEqual(waterLineThresholds(base, 1800), [1800, 1800, 1800, 2200], "collapses sub-line bands");
+});
+
+test("waterLineThresholds + colorChanges: above-timberline lake bands blue → tundra/rock, never green", () => {
+  // Tropical alpine lake: timberline 3500 (bandThresholds plateau), water colour line at 3800 (above it).
+  const thr = waterLineThresholds([0, 3500, 3900, 4500], 3800); // → [3800, 3800, 3900, 4500]
+  // Recessed lake floor 3700 m up to 4200 m; K = mmPerM·exag = 1 so print-Z ≈ metres above base.
+  const changes = colorChanges(thr, { emin: 3700, base: 6, mmPerM: 1, exag: 1, zmax: 6 + (4200 - 3700) });
+  assert.ok(!changes.some((c) => c.band === 1), "no forest/green band emitted above the water line");
+  assert.equal(changes[0].band, 2, "first change enters tundra (collapsed forest+tundra), not forest");
+});
 
 test("palette + names + MAX_CHANGES are aligned", () => {
   assert.equal(BAND_COLORS.length, BAND_NAMES.length);

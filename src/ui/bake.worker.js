@@ -7,8 +7,7 @@ import { planSquareTile, bakeSquareTileSolid, tileTo3mf } from "../core/pipeline
 import { vertexNormals } from "../core/normals.js";
 import { fetchMosaic, fetchWaterMask } from "../core/terrain.js";
 import { cropGrid } from "../core/resample.js";
-import { BAND_COLORS, BAND_NAMES, BOUNDARY_NAMES, bandThresholds, baseBand, colorChanges, baseColorHex } from "../core/colors.js";
-import { seaLevelColorLineM } from "../core/water.js";
+import { BAND_COLORS, BAND_NAMES, BOUNDARY_NAMES, bandThresholds, baseBand, colorChanges, baseColorHex, waterLineThresholds } from "../core/colors.js";
 
 /** @typedef {import("../core/types.js").Mosaic} Mosaic */
 /** @typedef {import("../core/pipeline.js").TileSettings} TileSettings */
@@ -59,24 +58,22 @@ async function handle({ gen, settings, maxTiles, format, name, color }) {
 
     // Water mask from the Re:Earth watermask tile — pixel-aligned with the elevation at the
     // same bbox+zoom, so no detection/flood-fill: fetch, crop to the window, threshold alpha.
-    let waterMask;
-    if (settings.water === "recessed" || settings.water === "flat") {
-      const wmKey = JSON.stringify([settings.center, settings.scale, settings.tileWmm, plan.z, "wm"]);
-      const wmGrid = cropGrid(await getWaterMask(plan.bbox, plan.z, wmKey), plan.window);
-      waterMask = new Uint8Array(wmGrid.length);
-      for (let i = 0; i < wmGrid.length; i++) waterMask[i] = wmGrid[i] > 0.5 ? 1 : 0;
-    }
+    // Water is always considered: fetch the watermask, threshold its alpha to a boolean mask
+    // aligned with the elevation grid. applyWaterRecess (in the bake) no-ops when the tile has no
+    // water, so a landlocked tile just falls through.
+    const wmKey = JSON.stringify([settings.center, settings.scale, settings.tileWmm, plan.z, "wm"]);
+    const wmGrid = cropGrid(await getWaterMask(plan.bbox, plan.z, wmKey), plan.window);
+    const waterMask = new Uint8Array(wmGrid.length);
+    for (let i = 0; i < wmGrid.length; i++) waterMask[i] = wmGrid[i] > 0.5 ? 1 : 0;
 
     post({ gen, baking: true }); // all tiles in hand → meshing + validation (synchronous, blocks the worker)
-    const { solid, emin, emax } = bakeSquareTileSolid(mosaic, plan, settings, waterMask);
+    const { solid, emin, emax, lineElev, landBluePct } = bakeSquareTileSolid(mosaic, plan, settings, waterMask);
     // Latitude-adjusted color changes for THIS bake's frame. Shared by the preview
     // (returned as `bands`) and, later, the export embed. K>0 since exag ∈ [0.5,4].
     const K = plan.mmPerM * settings.exag;
-    const thresholds = bandThresholds(settings.center[0]);
-    // Flat places the water→land M600 at print-Z base + colorLiftMm (threshold colorLiftMm/K m)
-    // so the flush water layer prints water and the next layer up prints land; Recessed
-    // keeps the line at sea level (recess supplies the gap in geometry).
-    thresholds[0] = seaLevelColorLineM(settings.water, settings.colorLiftMm ?? 0, K);
+    // threshold[0] = the tile's anchored water/land colour line; clamp the ecological bands up to
+    // it so the threshold array stays ascending (see colors.waterLineThresholds).
+    const thresholds = waterLineThresholds(bandThresholds(settings.center[0]), lineElev);
     const frame = { emin, base: settings.base, mmPerM: plan.mmPerM, exag: settings.exag, zmax: settings.base + (emax - emin) * K };
     // Enrich each change with its boundary line + elevation for the preview legend
     // (the shader and export use only z + color, so the extra fields are harmless there).
@@ -100,7 +97,7 @@ async function handle({ gen, settings, maxTiles, format, name, color }) {
       // emin + geom let the preview invert a surface point's print-Z back to metres
       // for the hover elevation probe: elev = emin + (z − base)/(mmPerM·exag).
       const probeFrame = { emin, base: settings.base, mmPerM: plan.mmPerM, exag: settings.exag };
-      post({ gen, positions: solid.positions, indices: solid.indices, normals, bands, frame: probeFrame },
+      post({ gen, positions: solid.positions, indices: solid.indices, normals, bands, frame: probeFrame, landBluePct },
         [solid.positions.buffer, solid.indices.buffer, normals.buffer]);
     }
   } catch (err) {

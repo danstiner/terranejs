@@ -1,7 +1,12 @@
 # Elevation data sources
 
-terranejs reads elevation and water extent from **Re:Earth Terrain**, an
-open, self-hostable tile service serving the **Mapterhorn** DEM:
+terranejs reads elevation and water extent from **Re:Earth Terrain**, the
+current source. It previously used AWS's `elevation-tiles-prod` terrarium
+tiles, now deprecated for the reasons below.
+
+## Current source: Re:Earth Terrain (Mapterhorn)
+
+An open, self-hostable tile service serving the **Mapterhorn** DEM:
 
 ```
 https://terrain.reearth.land/terrarium/elevation/{z}/{x}/{y}.png
@@ -28,7 +33,7 @@ https://terrain.reearth.land/mapterhorn-egm08/watermask/{z}/{x}/{y}.png
   EGM2008. The watermask is derived from Protomaps/OpenStreetMap water
   polygons, not from the DEM itself.
 - **Ocean values:** flat ~0 m — no bathymetry. terranejs doesn't need sea
-  floor depth (§4a of `data-pipeline.md` clamps masked water to one flat
+  floor depth (§4a of `data-pipeline.md` recesses masked water to a flat
   floor), so this is a non-issue; the watermask, not elevation, supplies the
   coastline.
 - **Access:** keyless, CORS-enabled, open-source (BSD-3, self-hostable) —
@@ -37,12 +42,40 @@ https://terrain.reearth.land/mapterhorn-egm08/watermask/{z}/{x}/{y}.png
 - **Attribution:** "Elevation & water © Re:Earth Terrain / Mapterhorn, geoid
   EGM2008 (NGA)" — shown in the app footer.
 
-### Why not AWS Terrain Tiles
+## Deprecated source: AWS Terrain Tiles (`elevation-tiles-prod`)
 
-terranejs previously used the AWS `elevation-tiles-prod` terrarium tiles.
-Above zoom 10 that dataset overwrites coastal ocean with a land DEM's flat
-near-sea-level fill, so thresholding elevation could no longer find the
-shoreline — a real bathymetric gradient at z10 became a flat fill at z11.
-Re:Earth's watermask sidesteps the problem entirely: the coastline comes
-from an independent vector mask, not from thresholding a DEM that may or may
-not carry real bathymetry at the zoom in use.
+terranejs's former elevation source, no longer used. Kept here for context
+on why the switch happened and as a record for anyone reading old code or
+issues that reference it.
+
+The AWS Open Data ["Terrain Tiles"](https://registry.opendata.aws/terrain-tiles/)
+dataset (Tilezen/Mapzen lineage), served terrarium-encoded 256×256 px PNGs
+from the `elevation-tiles-prod` S3 bucket:
+
+```
+https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png
+```
+
+Same terrarium RGB encoding as above. Composited from open DEMs — SRTM,
+GMTED2010, ETOPO1, plus assorted regional/national sources — with no
+retiling or resolution boost beyond the source DEMs' native precision (no
+512-px "@2×" tier). Keyless, CORS-enabled, no vector watermask companion.
+
+**Why deprecated:** two compounding problems, both rooted in the dataset
+carrying elevation only, no independent water mask:
+
+1. **Coastline vanished at higher zoom.** Above roughly zoom 10 the dataset
+   overwrites coastal ocean with a land DEM's flat near-sea-level fill, so
+   thresholding elevation could no longer find the shoreline — a real
+   bathymetric gradient visible at one zoom became a flat fill one zoom
+   deeper. terranejs picks its working zoom per-region (§2 of
+   `data-pipeline.md`), so any elevation-based coastline detection was one
+   zoom bump away from silently breaking.
+2. **No independent watermask.** With only a DEM to work from, the coastline
+   had to be inferred by thresholding elevation near 0 m — fragile even
+   where bathymetry existed, and outright wrong once problem (1) flattened
+   it away.
+
+Re:Earth resolves both: a separate vector-derived watermask gives the exact
+coast regardless of what the DEM does at the zoom in use, decoupling water
+detection from elevation entirely (§4a of `data-pipeline.md`).

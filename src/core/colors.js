@@ -92,6 +92,20 @@ export function bandThresholds(centerLat) {
 }
 
 /**
+ * Swap the sea-level threshold[0] for the tile's water colour line and clamp the ecological lines
+ * up to it, keeping the array ascending. bandOf/colorChanges index colour by position and assume
+ * ascending thresholds, so a colour line above timberline (an alpine lake above the treeline) must
+ * not un-sort the array — the sub-line bands collapse to coincident values and fold together via
+ * colorChanges' EPS merge instead.
+ * @param {number[]} thresholds  [sea level, timberline, tundra, snowline] from bandThresholds
+ * @param {number} lineElev      the water/land colour line (metres) from applyWaterRecess
+ * @returns {number[]}
+ */
+export function waterLineThresholds(thresholds, lineElev) {
+  return thresholds.map((t, i) => (i === 0 ? lineElev : Math.max(t, lineElev)));
+}
+
+/**
  * value → band index 0..4. Generic over metres OR print-Z (same comparison).
  * Threshold is the TOP of the lower band (strict >): value 0 is water, 0+ε forest.
  * @param {number} value
