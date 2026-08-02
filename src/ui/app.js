@@ -201,8 +201,8 @@ store.subscribe((s) => {
 // mm/km input, and flies the map; the store change drives the debounced preview.
 // Display labels are explicit (not just `${group}s`) so "Park" reads "National Parks".
 // National Parks first, terranes last — the everyday picks sit at the top.
-const GROUP_LABELS = /** @type {const} */ ({ Terrane: "Terranes", Park: "National Parks" });
-for (const key of /** @type {const} */ (["Park", "Terrane"])) {
+const GROUP_LABELS = /** @type {const} */ ({ Terrane: "Terranes", Park: "National Parks", Water: "Coasts & Water" });
+for (const key of /** @type {const} */ (["Park", "Water", "Terrane"])) {
   const group = document.createElement("optgroup");
   group.label = GROUP_LABELS[key];
   for (const p of PRESETS) if (p.group === key) group.appendChild(new Option(p.name, p.name));

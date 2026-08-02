@@ -6,7 +6,7 @@
 // Full-state export/import is a separate feature (see TODO.md).
 /** @typedef {import("../core/types.js").LatLon} LatLon */
 /**
- * @typedef {{ name: string, group: "Terrane" | "Park", center: LatLon, scale: number }} Preset
+ * @typedef {{ name: string, group: "Terrane" | "Park" | "Water", center: LatLon, scale: number }} Preset
  *   name = dropdown label + option value; group = optgroup; center = [lat,lon]
  *   tile centre and map focus; scale = 1:N map scale framing the feature.
  */
@@ -35,6 +35,23 @@ export const PRESETS = [
   { name: "Glacier", group: "Park", center: [48.7, -113.72], scale: 250000 },
   { name: "Great Smoky Mountains", group: "Park", center: [35.65, -83.5], scale: 250000 },
   { name: "Haleakalā", group: "Park", center: [20.71, -156.17], scale: 150000 },
+  // Water — tiles chosen because they stress the water model (data-pipeline.md §4a) in ways
+  // ordinary relief doesn't. Each is a different disagreement between the default sea-level
+  // colour line and the "recess all water" checkbox.
+  // Sub-sea land beside tidal ocean: unchecked, the polders print blue with the warning; the
+  // checkbox carves the sea below them and hands the land back its terrain colours.
+  { name: "Zeeland", group: "Water", center: [51.55, 3.75], scale: 250000 },
+  { name: "New Orleans", group: "Water", center: [29.97, -90.05], scale: 250000 },
+  // Water ABOVE the tropical treeline (3812 m) — the band clamp keeps the array ascending so
+  // the lake reads blue against tundra/rock rather than mis-sorting into green.
+  { name: "Lake Titicaca", group: "Water", center: [-15.85, -69.4], scale: 500000 },
+  // Water BELOW sea level (−430 m, the lowest on Earth): the only case where the default 0 m
+  // line blues the water AND its shore, so the checkbox is the whole story.
+  { name: "Dead Sea", group: "Water", center: [31.5, 35.47], scale: 300000 },
+  // Deep fjords: sea inlets threading 1500 m walls — the recess groove reads as real coastline.
+  { name: "Sognefjord", group: "Water", center: [61.15, 6.9], scale: 300000 },
+  // Volcanic peak inside a reef lagoon — an all-but-enclosed waterline at print scale.
+  { name: "Bora Bora", group: "Water", center: [-16.505, -151.745], scale: 80000 },
 ];
 
 /**
