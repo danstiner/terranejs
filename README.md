@@ -9,14 +9,15 @@ No build step. Plain ES modules; browser dependencies load from a CDN importmap.
 
 ```bash
 npm install        # dev dependencies (TypeScript for typecheck, type stubs)
+npm run dev        # serve the repo at http://localhost:8000 (pass a port to override)
 npm test           # node --test over test/**/*.test.mjs
 npm run typecheck  # tsc --checkJs (JSDoc types; never emits)
 ```
 
-Run the site locally by serving the repo root over HTTP, e.g.
-`npx http-server .` or `python3 -m http.server`, then open the served
-`index.html`. (Opening the file directly won't work — ES module imports need
-an HTTP origin.)
+`npm run dev` needs an HTTP origin — ES module imports won't load from `file://` —
+and sends `Cache-Control: no-store`, which `python3 -m http.server` does not: without
+it Chrome caches modules heuristically and an edit can silently keep running its old
+bytes. Use it rather than a generic static server.
 
 ## Deploy
 

@@ -64,11 +64,6 @@ const map = initMap({
 });
 const preview = initPreview($("preview"));
 const workerUrl = new URL("./bake.worker.js", import.meta.url);
-// python http.server sends Last-Modified but no Cache-Control/ETag, so Chrome heuristically
-// caches the worker script — and the cached copy survived repeated hard reloads here, leaving
-// an edited worker silently running old code (no error, just stale results). Bust it on
-// loopback; deployed hosts send real cache headers, so production keeps caching it.
-if (location.hostname === "localhost" || location.hostname === "127.0.0.1") workerUrl.search = `dev=${Date.now()}`;
 // Annotate explicitly: without it `worker.onmessage = ({data}) => …` fails TS7031
 // (the inferred Worker type doesn't flow contextual typing into the handler param).
 /** @type {Worker} */
