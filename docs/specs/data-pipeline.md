@@ -81,8 +81,8 @@ construction.
 ### Tile footprints
 
 A tile prints as a square, a flat-top hexagon, or a circle. All three share one pixel window
-and one elevation grid; the shape is applied as a **cell mask** over that grid, so the mesh is
-the same stair-clipped heightfield in every case.
+and one elevation grid. Squares fill their window exactly. Hexagons and circles apply a
+boundary — hexagons via a **cell mask** that stairs, circles via clipping to the true circle.
 
 - `layout.footprintPx` returns the footprint ring in global pixels — 6 vertices for a hexagon
   (on a half-unit integer lattice, so a vertex shared by two adjacent hexes is bit-identical),
@@ -90,29 +90,31 @@ the same stair-clipped heightfield in every case.
 - `layout.footprintCellMaskPx` rasterises that ring by scanline at cell centres, decided in
   global pixel coordinates so adjacent tiles reach the same verdict for a shared cell and
   never double-claim a seam.
-- `mesh.buildSolid` clips the top surface to the mask and closes it with a boundary skirt and
-  a flat base, so any footprint yields a watertight solid.
+- `mesh.buildSolid` applies the boundary (hexagon cell mask or circle clip), builds the
+  top surface, then closes it into a watertight solid with a skirt and flat base. Squares need
+  neither mask nor clip; they fill the window outright.
 
-Rim stair-stepping is below print resolution — at export a tile is ~1670 cells across 200 mm,
-so each step is ~0.12 mm, under both the layer height and the nozzle width — but that does not
-make it acceptable, for two reasons:
+**Circles are clipped to the true circle.** `clip.clipCircle` intersects the circle with the
+grid: boundary cells are cut rather than taken whole, and the rim follows the circle instead
+of the cell lattice. Crossings are keyed by grid edge so the two cells sharing an edge
+resolve one vertex id — that is what keeps the clipped surface free of interior boundary,
+and hence watertight. Because every crossing sits exactly on the circle, the printed
+footprint is an inscribed polygon whose area deficit is ~1e-7 relative; the cell-centre mask
+it replaced measured 0.78387 of the bounding box against π/4 = 0.78540.
 
-- **Preview is much coarser than export.** At ~52 m/vertex a step is ~0.35 mm and reads as
-  visibly chunky on a circle's arc, where the eye expects a smooth curve.
-- **A hexagon steps unevenly.** Its two constant-y edges land flush on cell rows and cut clean;
-  the other four run at 60° (Δy/Δx = √3) and stair, jogging about every other row. Two smooth
-  faces and four stepped ones is wrong at any resolution — the inconsistency is the defect, not
-  the step size.
+Elevation at a rim crossing is linear along its edge — the interior's piecewise-linear
+surface sampled at the boundary — so `emin`/`emax` are taken over inside samples **plus**
+crossing elevations. `emin` sets the base plane, and a crossing interpolated toward a lower
+outside sample can sit below every inside sample; statistics that missed it would put the
+surface under its own base.
 
-The centre test is also conservative — a cell whose centre falls outside the ring is dropped
-whole — so the printed rim sits slightly inside the true footprint: a real circle export measures
-0.78387 of its bounding box against π/4 = 0.78540.
-
-Fixing this means clipping boundary cells to the ring rather than taking them whole. Circles can
-be clipped freely (they never tile). Hexagons additionally need neighbouring tiles to agree on
-the shared edge's height profile; since tiles are separate physical prints rather than a welded
-mesh, that requires matching profiles, not shared vertices — place boundary vertices at the
-segment's crossings of global grid lines and interpolate from the global mosaic.
+**Hexagons still stair, and unevenly.** From the ring offsets (`layout.js:41-42`) a flat-top
+hex has two constant-y edges that land flush on cell rows and cut clean, and four edges at
+60° (Δy/Δx = √3) that stair, jogging about every other row. Two smooth faces and four
+stepped ones is wrong at any resolution — the inconsistency is the defect, not the step size
+(~0.12 mm at export, under both nozzle width and layer height). Clipping them is deferred:
+hexes tile, so neighbouring tiles must agree on a shared edge's height profile, which
+circles never need (`NEIGHBORS.circle` is empty).
 
 **`tileWmm` is the bounding-square side** — the largest dimension — in every shape, so a tile
 always fits the same bed envelope. Enclosed area therefore differs by shape:
@@ -126,11 +128,12 @@ always fits the same bed envelope. Enclosed area therefore differs by shape:
 **Statistics are computed over the footprint, not the window.** A hexagon discards 25% of its
 own window and a circle 21.6% (window-relative — a different frame from the table's vs.-square
 column above). That terrain never reaches the print, so it must not set `emin`/`emax`
-(the base plane and the altitude colour bands) or the waterline. `layout.vertexMaskFromCells`
+(the base plane and the altitude colour bands) or the waterline. For hexagons, `layout.vertexMaskFromCells`
 derives a vertex footprint from the cell mask — a vertex counts when **any** of its ≤4 incident
 cells is set, since requiring all four would drop the rim vertices the skirt is built from — and
-`resample.gridRange` and `water.applyWaterRecess` both skip samples outside it. The square path
-passes no footprint and is unchanged.
+`resample.gridRange` and `water.applyWaterRecess` both skip samples outside it. For circles,
+the footprint comes from `clip.inside` and statistics from `clipRange` (§105–109 above). The square path
+passes no footprint and uses the full window.
 
 ## 4a. Water handling
 
