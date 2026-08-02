@@ -9,7 +9,6 @@ import { fetchMosaic, fetchWaterMask } from "../core/terrain.js";
 import { cropGrid } from "../core/resample.js";
 import { BAND_COLORS, BAND_NAMES, BOUNDARY_NAMES, bandThresholds, baseBand, colorChanges, baseColorHex, waterLineThresholds } from "../core/colors.js";
 
-/** @typedef {import("../core/types.js").Mosaic} Mosaic */
 /** @typedef {import("../core/pipeline.js").TileSettings} TileSettings */
 
 // self.postMessage is typed as Window.postMessage (message, targetOrigin) under the
@@ -19,51 +18,23 @@ const post = /** @type {(msg: unknown, transfer?: Transferable[]) => void} */ (
   /** @type {unknown} */ (self.postMessage.bind(self))
 );
 
-// Small FIFO cache of decoded mosaics keyed by the fetch-affecting params + zoom,
-// so a base/exag tweak (same z) re-bakes without re-fetching+decoding. Holds the
-// current tile's fast/crisp/export zooms with room to spare.
-/** @type {{ key: string, mosaic: Mosaic }[]} */
-const cache = [];
-const CACHE_MAX = 4; // fast/crisp/export zooms, with room to spare
-
-/** Fetch (or reuse) the decoded mosaic for a bbox+zoom, keyed by the fetch-affecting params.
- * @param {import("../core/types.js").BBox} bbox @param {number} z @param {string} key
- * @param {(done: number, total: number) => void} [onProgress] @returns {Promise<Mosaic>} */
-async function getMosaic(bbox, z, key, onProgress) {
-  let hit = cache.find((c) => c.key === key);
-  if (!hit) {
-    hit = { key, mosaic: await fetchMosaic(bbox, z, { onProgress }) };
-    cache.push(hit);
-    if (cache.length > CACHE_MAX) cache.shift();
-  }
-  return hit.mosaic;
-}
-
-/** @type {{ key: string, mosaic: Mosaic }[]} */
-const wmCache = [];
-/** Fetch (or reuse) the decoded watermask mosaic for a bbox+zoom, mirroring getMosaic.
- * @param {import("../core/types.js").BBox} bbox @param {number} z @param {string} key @returns {Promise<Mosaic>} */
-async function getWaterMask(bbox, z, key) {
-  let hit = wmCache.find((c) => c.key === key);
-  if (!hit) { hit = { key, mosaic: await fetchWaterMask(bbox, z) }; wmCache.push(hit); if (wmCache.length > CACHE_MAX) wmCache.shift(); }
-  return hit.mosaic;
-}
-
+// No mosaic cache: `fetchTileRGBA` already fetches force-cache, so a re-bake at the same
+// zoom re-reads the tiles from the HTTP cache and only pays the decode — ~100 ms at preview
+// scale, behind a 500 ms debounce. Retaining decoded mosaics to skip that meant holding tens
+// of MB (an export mosaic is ~25 MB, and its watermask another ~25 MB) for an imperceptible
+// win, so the bake decodes fresh every time.
 /** @param {{ gen: number, settings: TileSettings, maxTiles: number, format: "mesh" | "3mf", name?: string, color?: boolean }} data */
 async function handle({ gen, settings, maxTiles, format, name, color }) {
   try {
     const plan = planSquareTile(settings, { maxTiles });
-    const key = JSON.stringify([settings.center, settings.scale, settings.tileWmm, plan.z]);
     // Water mask from the Re:Earth watermask tile — pixel-aligned with the elevation at the
     // same bbox+zoom, so no detection/flood-fill: fetch, crop to the window, threshold alpha.
     // Water is always considered: applyWaterRecess (in the bake) no-ops when the tile has no
-    // water, so a landlocked tile just falls through. The two fans are independent (separate
-    // caches, separate sources), so overlap them — a cold cache pays the slower round-trip,
-    // not the sum of both.
-    const wmKey = JSON.stringify([settings.center, settings.scale, settings.tileWmm, plan.z, "wm"]);
+    // water, so a landlocked tile just falls through. The two fans are independent sources, so
+    // overlap them — the bake pays the slower round-trip, not the sum of both.
     const [mosaic, wmMosaic] = await Promise.all([
-      getMosaic(plan.bbox, plan.z, key, (done, total) => post({ gen, progress: { done, total } })),
-      getWaterMask(plan.bbox, plan.z, wmKey),
+      fetchMosaic(plan.bbox, plan.z, { onProgress: (done, total) => post({ gen, progress: { done, total } }) }),
+      fetchWaterMask(plan.bbox, plan.z),
     ]);
     const wmGrid = cropGrid(wmMosaic, plan.window);
     const waterMask = new Uint8Array(wmGrid.length);
