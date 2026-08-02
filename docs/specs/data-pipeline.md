@@ -76,25 +76,35 @@ construction.
 
 ## 4a. Water handling
 
-Water (ocean + lakes) is masked from the Re:Earth **watermask** tile, fetched
-at the same bbox and zoom as the elevation mosaic — pixel-aligned, so no
-detection or flood-fill is needed:
+Water (ocean + lakes + rivers) is masked from the Re:Earth **watermask** tile, fetched at the
+same bbox and zoom as the elevation mosaic — pixel-aligned, so no detection or flood-fill is
+needed. Colour is per-print-Z, so water reads blue only at or below the water/land colour line;
+two orthogonal controls decide where the water and that line sit:
 
-1. Fetch the watermask mosaic and threshold its alpha channel (`alpha > 127`
-   = water) to a mask over the fine bake grid directly.
-2. Clamp the masked vertices to one flat floor: **Recessed** → `−recessMm/K`
-   (a shelf below the coast, the default), **Flat** → `0` (flush at sea
-   level).
+1. **Recess all water to lowest waterline** (checkbox, default off). Off: the terrain is
+   untouched and the colour line sits at 0 m exactly — classic sea-level tint at any map scale.
+   Ocean prints blue; land above sea level prints as terrain, however low; land at/below the
+   line (polders) prints blue, with a warning naming the checkbox as the fix. On: every masked
+   cell is pulled down to one plane two print layers below the lowest land — `min(lowest water,
+   lowest land − 2 layers)` — and the line sits at that plane, so every water body prints blue
+   and land never does. Flattening is unbounded by design: a reservoir far above a river drops
+   all the way to the shared plane.
+2. **Water recess** (slider, 0–5 mm). Sinks all water that much further in print space without
+   moving the colour line — a groove between water and land. With the checkbox off, a large
+   recess can sink even high water below the sea-level line — blue pits where lakes were;
+   documented, not guarded.
 
-Lakes recess the same as the ocean — the mask doesn't distinguish them.
-Inland land below sea level (e.g. Death Valley) is unmasked, so it's
-preserved as real terrain.
+A tile with no masked water gets no water line at all: waterless below-sea-level land (Death
+Valley) prints as ordinary terrain.
 
-Colour is unchanged (§8): `emin` follows the floor so the base band is
-water. Recessed's shelf sits `recessMm` below the coast, so the blue-water
-colour split is independent of slicer layer height. Flat is flush, so its
-water→land colour pause is offset a little print-Z above the water layer to
-keep the flush water blue.
+The colour line becomes `thresholds[0]` in §8's band array (the ecological lines clamp up to it,
+staying ascending), so it drives the same per-print-Z filament changes as any other band
+boundary — no separate colour path. The **exported** water pause alone is lifted one print layer
+(Advanced layer-height setting, default 0.15 mm) above the line, so the water's top layer prints
+blue before the swap — a sub-layer offset the preview and warning do not carry, since they show
+the true line. With the base thickness divisible by the layer height, that pause lands exactly
+on the first land layer of an ocean-floor tile. See
+`docs/superpowers/specs/2026-08-01-water-plane-simplification-design.md`.
 
 ## 5. Mesh
 
