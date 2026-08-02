@@ -33,19 +33,16 @@ export function wireControls(store) {
     const v = num(e);
     if (Number.isFinite(v) && v >= 50) store.set({ tileWmm: v });
   });
-  el("water").addEventListener("change", (e) => {
-    const v = /** @type {import("../core/water.js").WaterMode} */ (
-      /** @type {HTMLSelectElement} */ (e.target).value);
-    store.set({ water: v });
+  el("flatten").addEventListener("change", (e) => {
+    store.set({ flatten: /** @type {HTMLInputElement} */ (e.target).checked });
   });
-  el("waterMm").addEventListener("input", (e) => {
+  el("recess").addEventListener("input", (e) => {
     const v = num(e);
-    store.set({ waterMm: v });
-    el("waterMmVal").textContent = v.toFixed(2);
+    store.set({ recessMm: v });
+    el("recessVal").textContent = String(v); // integer steps — no decimals
   });
-  el("colorLift").addEventListener("input", (e) => {
+  el("layerMm").addEventListener("input", (e) => {
     const v = num(e);
-    store.set({ colorLiftMm: v });
-    el("colorLiftVal").textContent = v.toFixed(3);
+    if (Number.isFinite(v) && v >= 0.05 && v <= 0.6) store.set({ layerMm: v });
   });
 }

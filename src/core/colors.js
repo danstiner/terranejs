@@ -24,8 +24,10 @@ export const BAND_COLORS = [
 export const BAND_NAMES = ["water", "forest", "tundra", "rock", "snow"];
 
 /** The line crossed to ENTER band i+1, index-aligned with the thresholds array
- * ([sea level, timberline, tundra line, snowline]) — for the legend. */
-export const BOUNDARY_NAMES = ["sea level", "timberline", "tundra line", "snowline"];
+ * ([water line, timberline, tundra line, snowline]) — for the legend. Index 0 is the tile's
+ * anchored water/land colour line (waterLineThresholds), NOT absolute sea level — a Lake Tahoe
+ * tile's line sits at ~1890 m. */
+export const BOUNDARY_NAMES = ["water line", "timberline", "tundra line", "snowline"];
 
 /** Fixed size of the preview shader's change arrays: one slot per threshold. */
 export const MAX_CHANGES = BAND_COLORS.length - 1; // 4
@@ -92,6 +94,20 @@ export function bandThresholds(centerLat) {
 }
 
 /**
+ * Swap the sea-level threshold[0] for the tile's water colour line and clamp the ecological lines
+ * up to it, keeping the array ascending. bandOf/colorChanges index colour by position and assume
+ * ascending thresholds, so a colour line above timberline (an alpine lake above the treeline) must
+ * not un-sort the array — the sub-line bands collapse to coincident values and fold together via
+ * colorChanges' EPS merge instead.
+ * @param {number[]} thresholds  [sea level, timberline, tundra, snowline] from bandThresholds
+ * @param {number} lineElev      the water/land colour line (metres) from applyWaterRecess
+ * @returns {number[]}
+ */
+export function waterLineThresholds(thresholds, lineElev) {
+  return thresholds.map((t, i) => (i === 0 ? lineElev : Math.max(t, lineElev)));
+}
+
+/**
  * value → band index 0..4. Generic over metres OR print-Z (same comparison).
  * Threshold is the TOP of the lower band (strict >): value 0 is water, 0+ε forest.
  * @param {number} value
@@ -105,41 +121,48 @@ export function bandOf(value, thresholds) {
 }
 
 /**
- * Band of the base plate / first-loaded filament. A threshold at or below the lowest
- * printed elevation cannot fire a mid-print change (it would sit at the base), so it
- * folds into the base band — unlike bandOf's point rule at emin.
+ * Band of the base plate / first-loaded filament. A threshold strictly below the lowest
+ * printed elevation cannot fire a mid-print change (it would sit under the base), so it
+ * folds into the base band. Strictly below, not at: on an ocean-floor tile the waterline
+ * sits exactly AT emin and its pause still fires (lifted a layer — see colorChanges), so
+ * the base filament must stay the water band.
  * @param {number} emin
  * @param {number[]} thresholds
  * @returns {number}
  */
 export function baseBand(emin, thresholds) {
   let b = 0;
-  for (const t of thresholds) if (t <= emin) b++;
+  for (const t of thresholds) if (t < emin) b++;
   return b;
 }
 
 const EPS = 0.05; // mm; merge sub-layer-coincident changes
 
 /**
- * Color changes to fire, ascending — thresholds whose print-Z lands in (base, zmax).
+ * Color changes to fire, ascending — thresholds whose print-Z lands in [base, zmax).
  * z = base + (t − emin)·mmPerM·exag; crossing threshold i enters band i+1. exag ∈
- * [0.5,4] from the slider, so K > 0. Coincident changes (within EPS — e.g. near-polar
- * ties where treeline and snowline collapse together) merge into one, keeping the
- * HIGHER band. Coincidences here are near-exact ties, so anchoring the merge to prev.z
- * is exact.
+ * [0.5,4] from the slider, so K > 0. A change exactly AT the base is kept: the waterline
+ * sits at emin on an ocean-floor tile, the shader colours land above it, and the export
+ * lifts it clear of the base. Coincident changes (within EPS — e.g. near-polar ties where
+ * treeline and snowline collapse together) merge into one, keeping the HIGHER band.
+ * `pauseLiftMm` (export only) raises the WATER pause — thresholds[0] — that much print-Z
+ * above the line, so the water's top layer prints blue before the swap; the model, preview,
+ * and warning all keep the true line. The final sort covers the sub-layer case where the
+ * lifted pause crosses a colliding ecological change.
  * @param {number[]} thresholds
  * @param {Frame} frame
+ * @param {{ pauseLiftMm?: number }} [opts]
  * @returns {ColorChange[]}
  */
-export function colorChanges(thresholds, frame) {
+export function colorChanges(thresholds, frame, { pauseLiftMm = 0 } = {}) {
   const { emin, base, mmPerM, exag, zmax } = frame;
   const K = mmPerM * exag;
   /** @type {ColorChange[]} */
   const out = [];
   thresholds.forEach((t, i) => {
     const band = i + 1; // crossing threshold i enters band i+1
-    const z = base + (t - emin) * K;
-    if (z <= base || z >= zmax) return; // at/below the base, or above the print
+    const z = base + (t - emin) * K + (i === 0 ? pauseLiftMm : 0);
+    if (z < base || z >= zmax) return; // below the base, or above the print
     const prev = out[out.length - 1];
     if (prev && z - prev.z < EPS) { // collapsed onto the previous change:
       prev.band = band;             // keep the higher band (e.g. tundra→snow)
@@ -148,7 +171,7 @@ export function colorChanges(thresholds, frame) {
     }
     out.push({ z, band, color: BAND_COLORS[band] });
   });
-  return out;
+  return out.sort((a, b) => a.z - b.z);
 }
 
 /** @type {(v: number) => string} */

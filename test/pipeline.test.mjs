@@ -109,24 +109,29 @@ test("pipeline: fixed region → validated watertight printable .3mf (milestone)
   }
 });
 
-test("bakeSquareTileSolid: recessed & flat masks clamp emin to the floor, stay watertight", () => {
+test("bakeSquareTileSolid: water recess anchors below the land, stays watertight", () => {
   const plan = planSquareTile(SETTINGS, { z: 10 }); // 41×41, ramp elevations 500..700 m
   const mosaic = mosaicFor(plan);
-  const mask = new Uint8Array(plan.gw * plan.gh); // mask the left half as ocean
+  const mask = new Uint8Array(plan.gw * plan.gh); // left half = water
   for (let r = 0; r < plan.gh; r++)
     for (let c = 0; c < plan.gw >> 1; c++) mask[r * plan.gw + c] = 1;
   const K = plan.mmPerM * SETTINGS.exag;
 
-  const rec = bakeSquareTileSolid(mosaic, plan, { ...SETTINGS, water: "recessed", waterMm: 2 }, mask);
-  assert.ok(checkWatertight(rec.solid).closed, "recessed solid watertight");
-  assert.ok(signedVolume(rec.solid) > 0, "recessed solid positive volume");
-  // grid is Float32Array-backed, so emin carries float32 rounding (~1.5e-6 at this magnitude) — 1e-6 is too tight.
-  assert.ok(Math.abs(rec.emin - -2 / K) < 1e-4, `recessed emin = -recessMm/K (got ${rec.emin})`);
+  const lift = 0.15 / K;
+  const flat = bakeSquareTileSolid(mosaic, plan, { ...SETTINGS, flatten: true }, mask);
+  assert.ok(checkWatertight(flat.solid).closed, "flatten solid watertight");
+  assert.ok(signedVolume(flat.solid) > 0, "flatten solid positive volume");
+  // water 500 m, land ≥ 560 m → plane = min(500, 560 − 2·lift)
+  const planeExp = Math.min(500, 560 - 2 * lift);
+  assert.ok(Math.abs(flat.emin - planeExp) < 1e-2, `flatten emin = plane (got ${flat.emin})`);
+  assert.ok(flat.lineElev < 560, "colour line below the lowest land → land keeps its colours");
+  assert.equal(flat.landBluePct, 0, "no land prints blue");
 
-  const flat = bakeSquareTileSolid(mosaic, plan, { ...SETTINGS, water: "flat", waterMm: 2 }, mask);
-  assert.ok(checkWatertight(flat.solid).closed, "flat solid watertight");
-  assert.ok(signedVolume(flat.solid) > 0, "flat solid positive volume");
-  assert.equal(flat.emin, 0, "flat emin = 0");
+  const dflt = bakeSquareTileSolid(mosaic, plan, { ...SETTINGS }, mask);
+  assert.ok(checkWatertight(dflt.solid).closed, "default solid watertight");
+  assert.ok(Math.abs(dflt.emin - 500) < 1e-2, "default: geometry untouched, emin = waterMin");
+  assert.equal(dflt.lineElev, 0, "default: line at true sea level");
+  assert.equal(dflt.landBluePct, 0, "land far above sea level stays green");
 });
 
 test("defaultTileName: encodes center, width, and scale", () => {

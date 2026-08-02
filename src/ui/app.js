@@ -9,12 +9,13 @@ import { wireControls } from "./controls.js";
 import { defaultTileName, planSquareTile } from "../core/pipeline.js";
 import { PRESETS, DEFAULT_PRESET } from "./presets.js";
 import { BAND_NAMES } from "../core/colors.js";
+import { LAND_BLUE_WARN_PCT } from "../core/water.js";
 
 /**
  * @typedef {{
  *   center: import("../core/types.js").LatLon | null,
  *   scale: number, tileWmm: number, base: number, exag: number,
- *   water: import("../core/water.js").WaterMode, waterMm: number, colorLiftMm: number,
+ *   flatten: boolean, recessMm: number, layerMm: number,
  * }} AppState
  */
 /** @typedef {import("../core/pipeline.js").TileSettings} TileSettings */
@@ -28,8 +29,7 @@ const EXPORT_MAX_TILES = 300;  // full print resolution (core's default tile bud
 
 const store = createStore(/** @type {AppState} */ ({
   center: DEFAULT_PRESET.center, scale: DEFAULT_PRESET.scale, tileWmm: 200, base: 6, exag: 1,
-  water: "recessed", waterMm: 2, // Recessed (watermask + 2 mm shelf) is the default water handling
-  colorLiftMm: 0.1, // Flat mode: print-mm offset above the sea-level layer for the water→land M600 pause
+  flatten: false, recessMm: 0, layerMm: 0.15, // sea-level tint by default; checkbox flattens
 }));
 
 /** @param {string} id @returns {HTMLElement} */
@@ -55,10 +55,16 @@ const map = initMap({
   onMove: (c) => { presetSelect.value = ""; store.set({ center: c }); },
 });
 const preview = initPreview($("preview"));
+const workerUrl = new URL("./bake.worker.js", import.meta.url);
+// python http.server sends Last-Modified but no Cache-Control/ETag, so Chrome heuristically
+// caches the worker script — and the cached copy survived repeated hard reloads here, leaving
+// an edited worker silently running old code (no error, just stale results). Bust it on
+// loopback; deployed hosts send real cache headers, so production keeps caching it.
+if (location.hostname === "localhost" || location.hostname === "127.0.0.1") workerUrl.search = `dev=${Date.now()}`;
 // Annotate explicitly: without it `worker.onmessage = ({data}) => …` fails TS7031
 // (the inferred Worker type doesn't flow contextual typing into the handler param).
 /** @type {Worker} */
-const worker = new Worker(new URL("./bake.worker.js", import.meta.url), { type: "module" });
+const worker = new Worker(workerUrl, { type: "module" });
 
 // Job identity. `gen` allocates a monotonic id per job; `previewGen`/`exportGen`
 // track the live job on each channel so a reply is matched to it and stale replies
@@ -127,9 +133,20 @@ worker.onmessage = ({ data }) => {
   const mode = previewPhase === "fast" ? "Quick preview" : "Detailed preview";
   if (data.progress) { setProgress(`${mode} — fetching terrain ${data.progress.done}/${data.progress.total}`); return; }
   if (data.baking) { setProgress(`${mode} — baking…`); return; }
-  if (data.error) { setProgress(`Preview failed: ${data.error}`); previewPhase = "idle"; return; }
+  // Hide the warning too — it describes the previous mesh, which "Preview failed" just orphaned.
+  if (data.error) { setProgress(`Preview failed: ${data.error}`); previewPhase = "idle"; $("waterWarn").hidden = true; return; }
   preview.setTiles([{ positions: data.positions, indices: data.indices, normals: data.normals, bands: data.bands }], data.frame);
   renderLegend(data.bands);
+  // Low land below the colour line prints blue (possible only with the checkbox off — flatten
+  // holds the line below all land); the warning's one remedy is the checkbox. Gate on the bake's
+  // own data, not the current UI mode.
+  const warn = $("waterWarn");
+  if (data.landBluePct > LAND_BLUE_WARN_PCT) {
+    warn.textContent = `${Math.round(data.landBluePct)}% of the land will print blue — enable "Recess all water to lowest waterline" to separate land from water.`;
+    warn.hidden = false;
+  } else {
+    warn.hidden = true;
+  }
   if (previewPhase === "fast") {
     previewPhase = "crisp"; // fast relief is up; refine to viewport-sharp
     setProgress("Detailed preview…");

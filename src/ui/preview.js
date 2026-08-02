@@ -43,7 +43,7 @@ uniform vec3 uBaseColor;`)
 vec3 bandCol = uBaseColor;
 for (int i = 0; i < ${MAX_CHANGES}; i++) {
   if (i >= uChangeCount) break;
-  if (vLocalZ >= uChangeZ[i]) bandCol = uChangeColor[i];
+  if (vLocalZ > uChangeZ[i]) bandCol = uChangeColor[i]; // strict: the boundary stays in the lower band, matching colors.bandOf
 }
 diffuseColor.rgb = bandCol;`);
   };
@@ -73,9 +73,10 @@ export function initPreview(container) {
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   container.appendChild(renderer.domElement);
 
-  // Hover elevation probe (user aid): raycast the surface under the cursor and
-  // invert its print-Z back to metres. Water is clamped, so recessed/flat modes
-  // read the sea as the flat floor rather than the raw coastal DEM.
+  // Hover elevation probe (user aid): raycast the surface under the cursor and invert its
+  // print-Z back to metres. Water cells instead read their ORIGINAL elevation from the
+  // pre-recess grid the worker ships (plus a "recessed" marker when the geometry moved) —
+  // the printed surface no longer encodes it once water is flattened or sunk.
   if (!container.style.position) container.style.position = "relative";
   const probe = document.createElement("div");
   probe.style.cssText = "position:absolute;right:8px;bottom:8px;padding:3px 7px;font:12px/1.3 ui-monospace,monospace;" +
@@ -83,7 +84,12 @@ export function initPreview(container) {
   container.appendChild(probe);
   const raycaster = new THREE.Raycaster();
   const pointer = new THREE.Vector2();
-  /** @type {{ emin: number, base: number, mmPerM: number, exag: number } | null} */
+  /**
+   * @typedef {{ emin: number, base: number, mmPerM: number, exag: number,
+   *   orig: Float32Array, mask: Uint8Array, gw: number, gh: number, dx: number, dy: number,
+   *   recessed: boolean }} ProbeFrame
+   */
+  /** @type {ProbeFrame | null} */
   let frame = null;
   let probeDirty = false; // set on pointer move; one raycast per frame, then cleared
   renderer.domElement.addEventListener("pointermove", (e) => {
@@ -127,9 +133,21 @@ export function initPreview(container) {
       raycaster.setFromCamera(pointer, camera);
       const hit = raycaster.intersectObjects(group.children, false)[0];
       if (hit) {
-        const localZ = hit.point.z - group.position.z; // group only translates → undo it
-        const elev = frame.emin + (localZ - frame.base) / (frame.mmPerM * frame.exag);
-        probe.textContent = `${elev.toFixed(1)} m`; // interpolated across the hit triangle, not rounded
+        // group only translates → undo it to get tile-local print coordinates
+        const lx = hit.point.x - group.position.x;
+        const ly = hit.point.y - group.position.y;
+        const lz = hit.point.z - group.position.z;
+        // Grid cell under the cursor — inverts mesh.js's single-tile layout
+        // (x = c·dx, y = (gh−1−r)·dy); out-of-range hits (side walls) fall back to land.
+        const c = Math.round(lx / frame.dx);
+        const r = frame.gh - 1 - Math.round(ly / frame.dy);
+        const i = r >= 0 && r < frame.gh && c >= 0 && c < frame.gw ? r * frame.gw + c : -1;
+        if (i >= 0 && frame.mask[i]) {
+          probe.textContent = `${frame.orig[i].toFixed(1)} m · water${frame.recessed ? " (recessed)" : ""}`;
+        } else {
+          const elev = frame.emin + (lz - frame.base) / (frame.mmPerM * frame.exag);
+          probe.textContent = `${elev.toFixed(1)} m`; // interpolated across the hit triangle, not rounded
+        }
         probe.style.display = "block";
       } else {
         probe.style.display = "none";
@@ -142,7 +160,7 @@ export function initPreview(container) {
 
   /**
    * @param {{ positions: Float32Array, indices: Uint32Array, normals: Float32Array, bands: Bands }[]} solids
-   * @param {{ emin: number, base: number, mmPerM: number, exag: number } | null} [probeFrame]
+   * @param {ProbeFrame | null} [probeFrame]
    */
   function setTiles(solids, probeFrame = null) {
     frame = probeFrame;
