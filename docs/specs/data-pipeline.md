@@ -78,6 +78,60 @@ lands on exactly one pixel: resampling reduces to a direct read, and
 adjacent tiles that share an edge sample identical seam data by
 construction.
 
+### Tile footprints
+
+A tile prints as a square, a flat-top hexagon, or a circle. All three share one pixel window
+and one elevation grid; the shape is applied as a **cell mask** over that grid, so the mesh is
+the same stair-clipped heightfield in every case.
+
+- `layout.footprintPx` returns the footprint ring in global pixels — 6 vertices for a hexagon
+  (on a half-unit integer lattice, so a vertex shared by two adjacent hexes is bit-identical),
+  64 for a circle, and `null` for a square, which fills its window and needs no clip.
+- `layout.footprintCellMaskPx` rasterises that ring by scanline at cell centres, decided in
+  global pixel coordinates so adjacent tiles reach the same verdict for a shared cell and
+  never double-claim a seam.
+- `mesh.buildSolid` clips the top surface to the mask and closes it with a boundary skirt and
+  a flat base, so any footprint yields a watertight solid.
+
+Rim stair-stepping is below print resolution — at export a tile is ~1670 cells across 200 mm,
+so each step is ~0.12 mm, under both the layer height and the nozzle width — but that does not
+make it acceptable, for two reasons:
+
+- **Preview is much coarser than export.** At ~52 m/vertex a step is ~0.35 mm and reads as
+  visibly chunky on a circle's arc, where the eye expects a smooth curve.
+- **A hexagon steps unevenly.** Its two constant-y edges land flush on cell rows and cut clean;
+  the other four run at 60° (Δy/Δx = √3) and stair, jogging about every other row. Two smooth
+  faces and four stepped ones is wrong at any resolution — the inconsistency is the defect, not
+  the step size.
+
+The centre test is also conservative — a cell whose centre falls outside the ring is dropped
+whole — so the printed rim sits slightly inside the true footprint: a real circle export measures
+0.78387 of its bounding box against π/4 = 0.78540.
+
+Fixing this means clipping boundary cells to the ring rather than taking them whole. Circles can
+be clipped freely (they never tile). Hexagons additionally need neighbouring tiles to agree on
+the shared edge's height profile; since tiles are separate physical prints rather than a welded
+mesh, that requires matching profiles, not shared vertices — place boundary vertices at the
+segment's crossings of global grid lines and interpolate from the global mosaic.
+
+**`tileWmm` is the bounding-square side** — the largest dimension — in every shape, so a tile
+always fits the same bed envelope. Enclosed area therefore differs by shape:
+
+| Shape  | Printed bbox at 200 mm | Area | vs. square |
+| ------ | ---------------------- | ---- | ---------- |
+| Square | 200 × 200 mm | 40000 mm² | 100% |
+| Circle | 200 × 200 mm | 31365 mm² | 78.4% (≈π/4) |
+| Hex    | 200 × 173.2 mm | 25981 mm² | 65.0% (3√3/8) |
+
+**Statistics are computed over the footprint, not the window.** A hexagon discards 25% of its
+own window and a circle 21.6% (window-relative — a different frame from the table's vs.-square
+column above). That terrain never reaches the print, so it must not set `emin`/`emax`
+(the base plane and the altitude colour bands) or the waterline. `layout.vertexMaskFromCells`
+derives a vertex footprint from the cell mask — a vertex counts when **any** of its ≤4 incident
+cells is set, since requiring all four would drop the rim vertices the skirt is built from — and
+`resample.gridRange` and `water.applyWaterRecess` both skip samples outside it. The square path
+passes no footprint and is unchanged.
+
 ## 4a. Water handling
 
 Water (ocean + lakes + rivers) is masked from the Re:Earth **watermask** tile, fetched at the

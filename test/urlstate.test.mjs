@@ -5,7 +5,7 @@ import { encodeState, decodeState, STATE_VERSION } from "../src/core/urlstate.js
 const FULL = {
   center: /** @type {[number, number]} */ ([46.8523, -121.7603]),
   scale: 150000, tileWmm: 200, base: 6, exag: 1,
-  flatten: false, recessMm: 0, layerMm: 0.15,
+  flatten: false, recessMm: 0, layerMm: 0.15, shape: /** @type {const} */ ("square"),
 };
 
 test("encodeState → decodeState round-trips every field", () => {
@@ -101,4 +101,28 @@ test("coordinates keep ~metre precision, not float noise", () => {
   const [lat, lon] = /** @type {NonNullable<ReturnType<typeof decodeState>>} */ (decodeState(encodeState(s))).center ?? [0, 0];
   assert.ok(Math.abs(lat - s.center[0]) < 1e-4 && Math.abs(lon - s.center[1]) < 1e-4, "within ~10 m");
   assert.ok(!encodeState(s).includes("46.85231234567"), "trimmed, not raw float");
+});
+
+test("every shape round-trips", () => {
+  for (const shape of /** @type {const} */ (["square", "hex", "circle"])) {
+    assert.deepEqual(decodeState(encodeState({ ...FULL, shape })), { ...FULL, shape });
+  }
+});
+
+// Links were shared before shapes existed. Those payloads have no `shape` key, and back
+// then square was the only tile there was — so absent decodes as square exactly, and the
+// version does NOT get bumped (a bump would invalidate the very links this protects).
+test("a pre-shape link still opens, as a square", () => {
+  const legacy = "v=1&lat=46.8523&lon=-121.7603&scale=150000&width=200&base=6&exag=1" +
+    "&flatten=F&recess=0&layer=0.15";
+  const s = decodeState(legacy);
+  assert.ok(s, "legacy link is not rejected");
+  assert.equal(s?.shape, "square");
+  assert.equal(STATE_VERSION, 1, "adding a field must not bump the version");
+});
+
+test("an unrecognised shape is rejected, not coerced", () => {
+  const bend = (/** @type {string} */ v) => encodeState(FULL).replace(/shape=[^&]*/, `shape=${v}`);
+  assert.equal(decodeState(bend("triangle")), null);
+  assert.equal(decodeState(bend("")), null);
 });

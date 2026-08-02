@@ -7,12 +7,13 @@ import { cellRingLatLon } from "../core/layout.js";
 import { MAX_MERCATOR_LAT } from "../core/tilemath.js";
 
 /** @typedef {import("../core/types.js").LatLon} LatLon */
+/** @typedef {import("../core/types.js").Shape} Shape */
 
 /** @type {import("../core/types.js").Cell} */
 const ORIGIN = [0, 0];
 
 /**
- * @param {{ start: { center: LatLon, scale: number, tileWmm: number }, onPlace: (c: LatLon) => void, onMove: (c: LatLon) => void }} opts
+ * @param {{ start: { center: LatLon, scale: number, tileWmm: number, shape?: Shape }, onPlace: (c: LatLon) => void, onMove: (c: LatLon) => void }} opts
  *   `start` frames the initial view — the map is created without one, so
  *   focus(start) below sets it before any layer draws.
  */
@@ -37,9 +38,9 @@ export function initMap({ start, onPlace, onMove }) {
   // Fly the view to frame a tile's footprint (initial paint + every preset
   // select). Builds bounds straight from the cell ring, so it never depends on
   // setLayout having drawn the polygon yet.
-  /** @param {{ center: LatLon, scale: number, tileWmm: number }} s */
+  /** @param {{ center: LatLon, scale: number, tileWmm: number, shape?: Shape }} s */
   const focus = (s) => {
-    const ring = cellRingLatLon(s.center, s.scale, s.tileWmm, ORIGIN, "square");
+    const ring = cellRingLatLon(s.center, s.scale, s.tileWmm, ORIGIN, s.shape ?? "square");
     map.fitBounds(L.latLngBounds(ring), { padding: [20, 20] });
   };
   focus(start); // establish the initial view (map was created without one)
@@ -47,12 +48,12 @@ export function initMap({ start, onPlace, onMove }) {
   return {
     focus,
     // Redraw the placed tile + drag marker from store state (idempotent).
-    /** @param {{ center: LatLon | null, scale: number, tileWmm: number }} s */
+    /** @param {{ center: LatLon | null, scale: number, tileWmm: number, shape: Shape }} s */
     setLayout(s) {
       if (tileLayer) { map.removeLayer(tileLayer); tileLayer = null; }
       if (marker) { map.removeLayer(marker); marker = null; }
       if (!s.center) return;
-      const ring = cellRingLatLon(s.center, s.scale, s.tileWmm, ORIGIN, "square");
+      const ring = cellRingLatLon(s.center, s.scale, s.tileWmm, ORIGIN, s.shape);
       tileLayer = L.polygon(ring, { color: "#2d6cdf", weight: 2, fillOpacity: 0.08 }).addTo(map);
       const m = L.marker(s.center, { draggable: true }).addTo(map);
       m.on("dragend", () => { const ll = m.getLatLng(); onMove([ll.lat, ll.lng]); });

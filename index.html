@@ -42,6 +42,13 @@
       <section id="settings" hidden>
         <h2>Print settings</h2>
 
+        <label for="shape">Tile shape</label>
+        <select id="shape">
+          <option value="square">Square</option>
+          <option value="hex">Hexagon</option>
+          <option value="circle">Circle</option>
+        </select>
+
         <label for="scale">Map scale</label>
         <div class="row">
           <span><input id="scale" type="number" min="0.01" max="1000" step="any" value="4" class="num">&nbsp;mm&nbsp;=&nbsp;1&nbsp;km</span>

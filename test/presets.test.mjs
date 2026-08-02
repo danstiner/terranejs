@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { PRESETS, DEFAULT_PRESET } from "../src/ui/presets.js";
-import { planSquareTile } from "../src/core/pipeline.js";
+import { planTile } from "../src/core/pipeline.js";
 import { MAX_MERCATOR_LAT } from "../src/core/tilemath.js";
 
 // Every seed preset must yield an in-bounds, valid plan at the default print
@@ -17,8 +17,8 @@ test("every preset yields a valid in-bounds plan", () => {
     assert.ok(Number.isFinite(p.scale) && p.scale > 0, `${p.name}: bad scale ${p.scale}`);
     // The core planner throws on an out-of-bounds tile; a preset must never do that.
     assert.doesNotThrow(
-      () => planSquareTile({ ...p, tileWmm: 200, base: 6, exag: 1 }),
-      `${p.name}: planSquareTile threw`);
+      () => planTile({ ...p, tileWmm: 200, base: 6, exag: 1 }),
+      `${p.name}: planTile threw`);
   }
 });
 

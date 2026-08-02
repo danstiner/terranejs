@@ -1,8 +1,8 @@
-// Headless bake + export orchestration: (square-tile settings) → source zoom +
+// Headless bake + export orchestration: (tile settings) → source zoom +
 // Mercator pixel window + print geom → elevation grid → watertight solid →
-// validated .3mf. This is the "library" surface a thin UI drives. Single square
-// tile, monochrome — color/multi-tile arrive in later features.
-import { cellsBbox, cellWindows } from "./layout.js";
+// validated .3mf. This is the "library" surface a thin UI drives. Single tile
+// (square, hex or circle), monochrome — color/multi-tile arrive in later features.
+import { cellsBbox, cellWindows, footprintPx, footprintCellMaskPx, vertexMaskFromCells } from "./layout.js";
 import { sourceZoom, MAX_MERCATOR_LAT } from "./tilemath.js";
 import { cropGrid, gridRange } from "./resample.js";
 import { buildSolid } from "./mesh.js";
@@ -14,23 +14,28 @@ import { fetchMosaic } from "./terrain.js";
 /** @typedef {import("./types.js").BBox} BBox */
 /** @typedef {import("./types.js").Cell} Cell */
 /** @typedef {import("./types.js").LatLon} LatLon */
+/** @typedef {import("./types.js").Shape} Shape */
 /** @typedef {import("./types.js").Window} Window */
 /** @typedef {import("./types.js").Span} Span */
 /** @typedef {import("./types.js").Mosaic} Mosaic */
 /** @typedef {import("./types.js").Solid} Solid */
 /**
  * @typedef {{ center: LatLon, scale: number, tileWmm: number, base: number, exag: number,
- *   flatten?: boolean, recessMm?: number, layerMm?: number }} TileSettings
+ *   flatten?: boolean, recessMm?: number, layerMm?: number, shape?: Shape }} TileSettings
  *   center = [lat,lon] of the tile; scale = 1:N; tileWmm = print size of the tile
  *   edge; base = base-plate thickness (mm); exag = vertical exaggeration; flatten = pull
  *   all water to one waterline below the land (default false); recessMm = extra water
- *   sink in print mm (default 0); layerMm = slicer layer height (default 0.15).
+ *   sink in print mm (default 0); layerMm = slicer layer height (default 0.15);
+ *   shape = tile footprint (default "square"); tileWmm is the bounding-square side
+ *   in every shape.
  */
 /**
- * @typedef {{ z: number, bbox: BBox, window: Window, span: Span, gw: number, gh: number, dx: number, dy: number, mmPerM: number }} TilePlan
+ * @typedef {{ z: number, bbox: BBox, window: Window, span: Span, gw: number, gh: number, dx: number, dy: number, mmPerM: number, shape: Shape, ring: Array<[number,number]> | null }} TilePlan
  *   z = source zoom; bbox = fetch bounds; window = exact Mercator pixel window;
  *   span = full-coverage cell span; gw/gh = window dims; dx/dy = print mm per
- *   pixel; mmPerM = print mm per metre of elevation (pre-exaggeration).
+ *   pixel; mmPerM = print mm per metre of elevation (pre-exaggeration); shape =
+ *   footprint kind; ring = footprint vertices in global px (null for square,
+ *   which needs no clip).
  */
 
 /** @type {Cell[]} */
@@ -43,10 +48,10 @@ const ORIGIN = [[0, 0]]; // single-tile layout: one cell at the origin
  * @param {{ z?: number, maxTiles?: number }} [opts]
  * @returns {TilePlan}
  */
-export function planSquareTile(settings, { z, maxTiles = 300 } = {}) {
-  const { center, scale, tileWmm } = settings;
+export function planTile(settings, { z, maxTiles = 300 } = {}) {
+  const { center, scale, tileWmm, shape = "square" } = settings;
   const [lat] = center;
-  const bbox = cellsBbox(center, scale, tileWmm, ORIGIN, "square");
+  const bbox = cellsBbox(center, scale, tileWmm, ORIGIN, shape);
   const [s, , n] = bbox;
   // Web Mercator only covers ±85.0511°; a tile spilling past it (a very large or
   // near-polar tile) has no source tiles. Reject up front with a clear message
@@ -54,11 +59,11 @@ export function planSquareTile(settings, { z, maxTiles = 300 } = {}) {
   // Written as a negated range test so a non-finite edge would be rejected too.
   if (!(s >= -MAX_MERCATOR_LAT && n <= MAX_MERCATOR_LAT)) {
     throw new Error(
-      `planSquareTile: tile latitude span [${s.toFixed(4)}, ${n.toFixed(4)}]° ` +
+      `planTile: tile latitude span [${s.toFixed(4)}, ${n.toFixed(4)}]° ` +
       `exceeds the ±${MAX_MERCATOR_LAT.toFixed(4)}° Web Mercator limit`);
   }
   const zoom = z ?? sourceZoom(bbox, lat, scale, maxTiles);
-  const { spanPx, union } = cellWindows(center, scale, tileWmm, ORIGIN, zoom, "square");
+  const { spanPx, union } = cellWindows(center, scale, tileWmm, ORIGIN, zoom, shape);
   const dx = tileWmm / spanPx; // Mercator is conformal: square cells → dx = dy
   return {
     z: zoom,
@@ -70,6 +75,10 @@ export function planSquareTile(settings, { z, maxTiles = 300 } = {}) {
     dx,
     dy: dx,
     mmPerM: 1000 / scale,
+    shape,
+    // The ring, not the mask: 6 or 64 points travel with the plan, while the mask is
+    // megabytes at export scale and is cheap to rebuild where it is used.
+    ring: footprintPx(center, scale, tileWmm, ORIGIN[0], zoom, shape),
   };
 }
 
@@ -80,20 +89,27 @@ export function planSquareTile(settings, { z, maxTiles = 300 } = {}) {
 /**
  * `waterMask` (from the Re:Earth watermask tile) flattens/sinks masked water and anchors the
  * colour line — see water.applyWaterRecess. No mask → grid untouched, lineElev −Infinity (the
- * headless bakeSquareTile path).
+ * headless bakeTile path).
  * @param {Mosaic} mosaic
  * @param {TilePlan} plan
  * @param {{ base: number, exag: number, flatten?: boolean, recessMm?: number, layerMm?: number }} settings
  * @param {Uint8Array} [waterMask]
  * @returns {{ solid: Solid, emin: number, emax: number, lineElev: number, landBluePct: number }}
  */
-export function bakeSquareTileSolid(mosaic, plan, { base, exag, flatten = false, recessMm = 0, layerMm = 0.15 }, waterMask) {
-  const { window, span, gw, gh, dx, dy, mmPerM } = plan;
+export function bakeTileSolid(mosaic, plan, { base, exag, flatten = false, recessMm = 0, layerMm = 0.15 }, waterMask) {
+  const { window, span, gw, gh, dx, dy, mmPerM, ring } = plan;
   const grid = cropGrid(mosaic, window);
-  const { lineElev, landBluePct } = applyWaterRecess(grid, waterMask, { flatten, recessMm, layerMm, K: mmPerM * exag });
-  const { min: emin, max: emax } = gridRange(grid);
-  const mask = new Uint8Array((gw - 1) * (gh - 1)).fill(1); // full square footprint
-  const solid = buildSolid(grid, gw, gh, span, mask, { dx, dy, mmPerM, emin, exag, base });
+  // Square fills its window, so it needs no clip and no footprint — keeping `footprint`
+  // undefined there is what makes the square path bit-identical to before shapes existed.
+  const cellMask = ring
+    ? footprintCellMaskPx(ring, gw, gh, window.gx0, window.gy0)
+    : new Uint8Array((gw - 1) * (gh - 1)).fill(1);
+  const footprint = ring ? vertexMaskFromCells(cellMask, gw, gh) : undefined;
+  const { lineElev, landBluePct } = applyWaterRecess(grid, waterMask, {
+    flatten, recessMm, layerMm, K: mmPerM * exag, footprint,
+  });
+  const { min: emin, max: emax } = gridRange(grid, footprint);
+  const solid = buildSolid(grid, gw, gh, span, cellMask, { dx, dy, mmPerM, emin, exag, base });
   const wt = checkWatertight(solid);
   if (!wt.closed) throw new Error(`pipeline: non-watertight solid (${wt.unmatched} unmatched edges)`);
   if (signedVolume(solid) <= 0) throw new Error("pipeline: non-positive-volume (inside-out) solid");
@@ -121,10 +137,11 @@ export async function tileTo3mf(name, solid, colorChanges) {
  * @param {TileSettings} settings
  * @returns {string}
  */
-export function defaultTileName({ center: [lat, lon], tileWmm, scale }) {
+export function defaultTileName({ center: [lat, lon], tileWmm, scale, shape = "square" }) {
   const ns = `${Math.abs(lat).toFixed(4)}${lat >= 0 ? "N" : "S"}`;
   const ew = `${Math.abs(lon).toFixed(4)}${lon >= 0 ? "E" : "W"}`;
-  return `terrane_tile_${ns}_${ew}_${tileWmm}mm_1to${Math.round(scale)}`;
+  const sh = shape === "square" ? "" : `_${shape}`; // square is the default; don't label it
+  return `terrane_tile_${ns}_${ew}_${tileWmm}mm${sh}_1to${Math.round(scale)}`;
 }
 
 // Browser step: fetch the tile's terrarium mosaic and bake a validated solid.
@@ -136,10 +153,10 @@ export function defaultTileName({ center: [lat, lon], tileWmm, scale }) {
  * @param {{ z?: number, maxTiles?: number, onProgress?: (done: number, total: number) => void }} [opts]
  * @returns {Promise<{ solid: Solid, emin: number, emax: number, lineElev: number, landBluePct: number }>}
  */
-export async function bakeSquareTile(settings, opts = {}) {
-  const plan = planSquareTile(settings, opts);
+export async function bakeTile(settings, opts = {}) {
+  const plan = planTile(settings, opts);
   const mosaic = await fetchMosaic(plan.bbox, plan.z, { onProgress: opts.onProgress });
-  return bakeSquareTileSolid(mosaic, plan, settings);
+  return bakeTileSolid(mosaic, plan, settings);
 }
 
 // Browser entry: bake, then serialize to a downloadable .3mf blob.
@@ -148,7 +165,7 @@ export async function bakeSquareTile(settings, opts = {}) {
  * @param {{ z?: number, maxTiles?: number, name?: string, onProgress?: (done: number, total: number) => void }} [opts]
  * @returns {Promise<Uint8Array>}
  */
-export async function exportSquareTile(settings, opts = {}) {
-  const { solid } = await bakeSquareTile(settings, opts);
+export async function exportTile(settings, opts = {}) {
+  const { solid } = await bakeTile(settings, opts);
   return tileTo3mf(opts.name ?? defaultTileName(settings), solid);
 }
