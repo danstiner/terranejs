@@ -14,13 +14,28 @@
 /** @type {Preset[]} */
 export const PRESETS = [
   // Terranes — the project's namesake: crustal fragments accreted to a continent.
-  // Kept to well-sampled latitudes: the high-latitude Alaska terranes (Wrangellia,
-  // Yakutat, Chugach) sit above SRTM's 60°N limit, where the source DEM stitches
-  // seam-prone fallback data, so they're parked until a cleaner source lands.
+  // The northern set was parked while elevation came from the terrarium mosaic, which
+  // stitched seam-prone fallback data above SRTM's 60°N limit. The Copernicus-backed
+  // Re:Earth source carries no such limit, so they're back — ordered north to south
+  // along the American Cordillera, then the Eurasian pair.
+  // Type locality of the flood-basalt terrane: four glaciated volcanoes in one frame.
+  { name: "Wrangellia", group: "Terrane", center: [61.95, -144.0], scale: 350000 },
+  // Still colliding today, and it shows: tidewater to 5,489 m in ~16 km, about the
+  // steepest sea-to-summit relief on Earth. Frames the coast so the whole rise prints.
+  { name: "Yakutat", group: "Terrane", center: [60.15, -140.9], scale: 250000 },
+  // Accretionary prism scraped off the subducting plate — peaks to the north, the
+  // drowned glacial valleys of Prince William Sound to the south.
+  { name: "Chugach", group: "Terrane", center: [61.2, -147.4], scale: 300000 },
+  { name: "Alexander", group: "Terrane", center: [58.85, -137.3], scale: 250000 },
   { name: "Methow", group: "Terrane", center: [48.5, -120.6], scale: 200000 },
   { name: "Salinia", group: "Terrane", center: [36.2, -121.42], scale: 180000 },
   { name: "Guerrero", group: "Terrane", center: [17.47, -100.2], scale: 250000 },
   { name: "Cuyania", group: "Terrane", center: [-31.5, -69.15], scale: 300000 },
+  // The microplate whose collision is raising the Alps; framed tight on the Dolomites,
+  // where the limestone towers give the sharpest vertical steps of any preset.
+  { name: "Adria", group: "Terrane", center: [46.45, 11.85], scale: 150000 },
+  // Damavand: a 5,610 m cone standing clear of the Alborz ridges it was built on.
+  { name: "Cimmeria", group: "Terrane", center: [35.95, 52.11], scale: 200000 },
   // Parks & peaks — distinctive, map-worthy relief.
   { name: "Mount Rainier", group: "Park", center: [46.8523, -121.7603], scale: 150000 },
   { name: "Mount St. Helens", group: "Park", center: [46.1912, -122.1944], scale: 100000 },
@@ -55,10 +70,10 @@ export const PRESETS = [
 ];
 
 /**
- * Default region on first paint. Temporarily Mount Rainier (a park): the accreted
- * terranes we'd open on to honour the project name are high-latitude and render
- * with source-DEM stitching artifacts, so the "open on a terrane namesake" default
- * is parked until the terrane set is settled.
+ * Default region on first paint. Mount Rainier by choice, not by constraint — it's the
+ * most legible first impression: one isolated cone, strong relief at print scale, no
+ * water to explain. (The high-latitude terranes it once stood in for now render clean,
+ * so opening on a namesake is available whenever it's wanted.)
  * @type {Preset}
  */
 export const DEFAULT_PRESET = PRESETS.find((p) => p.name === "Mount Rainier") ?? PRESETS[0];
