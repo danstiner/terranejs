@@ -5,19 +5,16 @@
 import { createStore } from "./store.js";
 import { initMap } from "./map.js";
 import { initPreview } from "./preview.js";
-import { wireControls } from "./controls.js";
+import { wireControls, syncControls } from "./controls.js";
 import { defaultTileName, planSquareTile } from "../core/pipeline.js";
+import { encodeState, decodeState } from "../core/urlstate.js";
 import { PRESETS, DEFAULT_PRESET } from "./presets.js";
 import { BAND_NAMES } from "../core/colors.js";
 import { LAND_BLUE_WARN_PCT } from "../core/water.js";
 
-/**
- * @typedef {{
- *   center: import("../core/types.js").LatLon | null,
- *   scale: number, tileWmm: number, base: number, exag: number,
- *   flatten: boolean, recessMm: number, layerMm: number,
- * }} AppState
- */
+// The app state IS the shareable state — one typedef, so a new field can't be added here and
+// silently dropped from every link.
+/** @typedef {import("../core/urlstate.js").ShareableState} AppState */
 /** @typedef {import("../core/pipeline.js").TileSettings} TileSettings */
 
 // Max source-tile budget per bake, one per quality tier (passed as `maxTiles`). Preview
@@ -27,7 +24,11 @@ const FAST_MAX_TILES = 1;      // one tile → instant relief while the detailed
 const CRISP_MAX_TILES = 16;    // ~4×4 tiles → one zoom deeper on wide tiles, still a light fetch
 const EXPORT_MAX_TILES = 300;  // full print resolution (core's default tile budget)
 
-const store = createStore(/** @type {AppState} */ ({
+// A shared link carries the full state, not a preset name: presets get retuned (a recentre, a
+// scale nudge), and a name would silently repoint every old link at the new framing. An
+// unreadable hash decodes to null, so a mangled link opens the default region instead of failing.
+const restored = decodeState(location.hash);
+const store = createStore(restored ?? /** @type {AppState} */ ({
   center: DEFAULT_PRESET.center, scale: DEFAULT_PRESET.scale, tileWmm: 200, base: 6, exag: 1,
   flatten: false, recessMm: 0, layerMm: 0.15, // sea-level tint by default; checkbox flattens
 }));
@@ -50,7 +51,11 @@ const syncScaleInput = (scale) => {
 };
 
 const map = initMap({
-  start: { center: DEFAULT_PRESET.center, scale: DEFAULT_PRESET.scale, tileWmm: store.get().tileWmm },
+  start: {
+    center: store.get().center ?? DEFAULT_PRESET.center,
+    scale: store.get().scale,
+    tileWmm: store.get().tileWmm,
+  },
   onPlace: (c) => { presetSelect.value = ""; store.set({ center: c }); },
   onMove: (c) => { presetSelect.value = ""; store.set({ center: c }); },
 });
@@ -78,6 +83,16 @@ let previewPhase = /** @type {"idle" | "fast" | "crisp"} */ ("idle");
 let previewSettings = null;
 let exportName = "";
 let previewDeferred = false; // a preview requested during an export; run once the export finishes
+let lastHash = ""; // last payload written, so a settled debounce doesn't replaceState redundantly
+
+/** Put the state in the address bar. replaceState, not pushState: a map drag fires continuously
+ * and each nudge as a history entry would bury the back button. (replaceState never fires
+ * hashchange, so this can't re-enter the paste listener below.)
+ * @param {AppState} s */
+function writeHash(s) {
+  const hash = encodeState(s);
+  if (hash && hash !== lastHash) { lastHash = hash; history.replaceState(null, "", `#${hash}`); }
+}
 
 // Resting status after the detailed preview lands: the resolution (real metres per
 // grid sample) and rough triangle count of what's on screen vs what Export will
@@ -193,7 +208,7 @@ store.subscribe((s) => {
     : "No tile placed.";
   $("settings").hidden = !s.center;
   window.clearTimeout(timer);
-  timer = window.setTimeout(loadPreview, 500);
+  timer = window.setTimeout(() => { writeHash(s); loadPreview(); }, 500); // same settling point
 });
 
 // Populate the region picker from PRESETS (grouped), keeping the static Custom
@@ -219,19 +234,41 @@ presetSelect.addEventListener("change", () => {
   if (preset) applyPreset(preset);
 });
 
-// Default-on-load: reflect the default preset in the picker + scale input. The
-// map is already framed by initMap({ start }); the store carries its centre+scale
-// so the subscribe() fire runs the first preview (no redundant store.set here).
-presetSelect.value = DEFAULT_PRESET.name;
-syncScaleInput(DEFAULT_PRESET.scale);
+// On-load picker + inputs. A restored link is "Custom" by name — its centre may be nowhere near
+// a preset, and matching one by coordinates would mislabel a tile the user nudged off it. The
+// map is already framed by initMap({ start }); the store carries its centre+scale so the
+// subscribe() fire runs the first preview (no redundant store.set here).
+presetSelect.value = restored ? "" : DEFAULT_PRESET.name;
+syncScaleInput(store.get().scale);
+syncControls(store.get()); // unconditional: app.js owns the defaults, index.html only seeds them
 
 wireControls(store);
+
+// Pasting a link into this tab's address bar changes only the fragment — no reload, no module
+// re-run — so without this the app would ignore it and then overwrite it on the next debounce,
+// destroying the link. Unlike first load, an unreadable hash here is left alone rather than
+// reset to the default: the tile already on screen is the user's work, not a boot failure.
+window.addEventListener("hashchange", () => {
+  const h = location.hash.replace(/^#/, "");
+  if (h === lastHash) return;
+  const s = decodeState(h);
+  if (!s) return;
+  lastHash = h;
+  presetSelect.value = "";
+  syncControls(s);
+  syncScaleInput(s.scale);
+  store.set(s);
+  if (s.center) map.focus({ center: s.center, scale: s.scale, tileWmm: s.tileWmm });
+});
 
 $("export").addEventListener("click", () => {
   const s = store.get();
   if (!s.center) return;
   const btn = /** @type {HTMLButtonElement} */ ($("export"));
   btn.disabled = true;
+  // Settle the hash first: clearTimeout below drops the pending write, which would otherwise
+  // leave the address bar describing different settings than the model being exported.
+  writeHash(s);
   window.clearTimeout(timer); // cancel a queued preview…
   previewGen = 0;             // …and void any in-flight one, so its trailing reply can't clobber the export status
   const settings = { ...s, center: s.center };
