@@ -10,7 +10,7 @@ import { MAX_MERCATOR_LAT } from "../src/core/tilemath.js";
 test("every preset yields a valid in-bounds plan", () => {
   for (const p of PRESETS) {
     assert.ok(p.name.length > 0, "name non-empty");
-    assert.ok(p.group === "Terrane" || p.group === "Park", `${p.name}: bad group ${p.group}`);
+    assert.ok(["Terrane", "Park", "Water"].includes(p.group), `${p.name}: bad group ${p.group}`);
     const [lat, lon] = p.center;
     assert.ok(Math.abs(lat) <= MAX_MERCATOR_LAT, `${p.name}: lat ${lat} out of Mercator band`);
     assert.ok(Math.abs(lon) <= 180, `${p.name}: lon ${lon} out of range`);
@@ -20,6 +20,16 @@ test("every preset yields a valid in-bounds plan", () => {
       () => planSquareTile({ ...p, tileWmm: 200, base: 6, exag: 1 }),
       `${p.name}: planSquareTile threw`);
   }
+});
+
+// The Water group is curated to exercise the water model (data-pipeline.md §4a), so it must
+// keep at least one tile whose water sits BELOW sea level and one whose water sits well above
+// it — the two cases where the default 0 m colour line and the flatten checkbox disagree.
+test("Water presets span below-sea and high-altitude water", () => {
+  const water = PRESETS.filter((p) => p.group === "Water");
+  assert.ok(water.length > 0, "Water group is populated");
+  assert.ok(water.some((p) => p.name === "Dead Sea"), "a below-sea-level water body");
+  assert.ok(water.some((p) => p.name === "Lake Titicaca"), "a water body above the treeline");
 });
 
 // Names are the <option> values and the picker's identity — must be unique.
