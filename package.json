@@ -5,6 +5,7 @@
   "type": "module",
   "description": "Wall-mountable 3D-printed topography tiles — library + website.",
   "scripts": {
+    "dev": "python3 scripts/dev-server.py",
     "test": "node --test",
     "typecheck": "tsc --noEmit"
   },
