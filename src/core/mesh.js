@@ -1,6 +1,8 @@
 // Heightfield → watertight indexed export solids, in tile-local mm (origin at
-// the tile's SW corner, +Y = north). The top surface is grid-cell triangles
-// (stair-clipped to a cell mask, +Z wound), closed by a boundary skirt and a
+// the tile's SW corner, +Y = north). The top surface is grid-cell triangles, +Z
+// wound: stair-clipped to a cell mask (gridTopTris) without a `clip`, or cut to
+// the true circle boundary (clippedTopTris, boundary cells fanned from their
+// clipped polygon) with one. Either way it's closed by a boundary skirt and a
 // flat z=0 base. The base degrades fan → ear-clip → mirror so any footprint
 // (full, multi-island, notched, holed) closes watertight.
 
@@ -181,6 +183,13 @@ function baseTriangles(loop, xy) {
   for (const [i, j, k] of ears) {
     const a2 = (ring[j][0] - ring[i][0]) * (ring[k][1] - ring[i][1]) -
       (ring[j][1] - ring[i][1]) * (ring[k][0] - ring[i][0]);
+    // earclip's every-other ear is guarded by this same cross3>AREA2_EPS test, but its
+    // final idx.length===3 remainder is pushed unconditionally — if that remainder is
+    // exactly collinear (e.g. a rim vertex that only reads inside via SNAP_EPS dilation,
+    // flanked by two independent crossings on the same grid line), it slips through as a
+    // zero-area triangle. Reject the whole loop here instead of shipping it: the caller
+    // falls back to mirroring, which needs nothing from this ring but a non-degenerate top.
+    if (Math.abs(a2) <= AREA2_EPS) return null;
     covered += Math.abs(a2);
     tris.push(i, k, j); // earclip yields CCW (+Z); flip to −Z
   }
@@ -328,23 +337,122 @@ function gridTopTris(gw, span, mask) {
   return topTris;
 }
 
-// Watertight export solid for one tile, in tile-local mm (origin at the tile's
-// SW corner, +Y = north), flat z=0 base. `mask` stair-clips the top to a cell
-// footprint; `geom` maps grid samples to print-Z via base + relief·mmPerM·exag.
+// One boundary cell's clipped polygon, as vertex ids walked CCW into the module-scratch
+// `poly`; returns its length. Corners A=(r,c) B=(r,c+1) C=(r+1,c) D=(r+1,c+1); the walk is
+// C→D→B→A (SW→SE→NE→NW), which is CCW in xy because row 0 is north. Consecutive repeats
+// are dropped — SNAP_EPS can land a crossing on a corner already emitted.
+//
+// 8 slots = 4 corners + at most one crossing per edge × 4 edges. That bound holds only
+// while every grid edge has at most one crossing — true for any realistic radius (R ≫ 1
+// cell), but not derived from convexity and not enforced: a radius near one grid cell
+// could cross an edge twice and overflow silently.
+const poly = new Int32Array(8);
+/**
+ * @param {import("./types.js").Clip} clip
+ * @param {number} r
+ * @param {number} c
+ * @returns {number}
+ */
+function cellPoly(clip, r, c) {
+  const { inside, idOf, HBASE, gw } = clip;
+  const A = r * gw + c, B = A + 1, C = A + gw, D = C + 1;
+  let m = 0;
+  /** @type {(id: number) => void} */
+  const put = (id) => { if (m === 0 || poly[m - 1] !== id) poly[m++] = id; };
+  if (inside[C]) put(C);
+  if (inside[C] !== inside[D]) put(/** @type {number} */ (idOf.get((r + 1) * (gw - 1) + c)));
+  if (inside[D]) put(D);
+  if (inside[D] !== inside[B]) put(/** @type {number} */ (idOf.get(HBASE + r * gw + c + 1)));
+  if (inside[B]) put(B);
+  if (inside[B] !== inside[A]) put(/** @type {number} */ (idOf.get(r * (gw - 1) + c)));
+  if (inside[A]) put(A);
+  if (inside[A] !== inside[C]) put(/** @type {number} */ (idOf.get(HBASE + r * gw + c)));
+  while (m > 1 && poly[m - 1] === poly[0]) m--; // close the wrap-around duplicate
+  // Only exact id repeats are collapsed here. Near-coincidence is settled once per edge in
+  // clip.js's SNAP_EPS, where both cells sharing the edge reach the same verdict; doing it
+  // here instead would make the verdict depend on walk adjacency, which differs between
+  // those two cells — see the SNAP_EPS comment.
+  return m;
+}
+
+// Clipped top triangulation (+Z wound): interior cells emit the same two triangles as
+// gridTopTris, boundary cells emit their clipped polygon fanned from its first vertex.
+// Counted first so the id list is one exact typed array, matching gridTopTris.
+/**
+ * @param {number} gw
+ * @param {Span} span
+ * @param {import("./types.js").Clip} clip
+ * @returns {Uint32Array}
+ */
+function clippedTopTris(gw, span, clip) {
+  const { r0, r1, c0, c1 } = span;
+  const { inside } = clip;
+  let n = 0;
+  for (let r = r0; r < r1; r++) {
+    for (let c = c0; c < c1; c++) {
+      const A = r * gw + c;
+      const k = inside[A] + inside[A + 1] + inside[A + gw] + inside[A + gw + 1];
+      if (k === 0) continue;
+      if (k === 4) { n += 2; continue; }
+      const m = cellPoly(clip, r, c);
+      if (m >= 3) n += m - 2;
+    }
+  }
+  const topTris = new Uint32Array(3 * n);
+  let p = 0;
+  for (let r = r0; r < r1; r++) {
+    for (let c = c0; c < c1; c++) {
+      const A = r * gw + c, B = A + 1, C = A + gw, D = C + 1;
+      const k = inside[A] + inside[B] + inside[C] + inside[D];
+      if (k === 0) continue;
+      if (k === 4) {
+        topTris[p++] = A; topTris[p++] = C; topTris[p++] = B;
+        topTris[p++] = B; topTris[p++] = C; topTris[p++] = D;
+        continue;
+      }
+      const m = cellPoly(clip, r, c);
+      for (let i = 1; i + 1 < m; i++) {
+        topTris[p++] = poly[0]; topTris[p++] = poly[i]; topTris[p++] = poly[i + 1];
+      }
+    }
+  }
+  return topTris;
+}
+
+// Watertight export solid for one tile, in tile-local mm (origin at the tile's SW corner,
+// +Y = north), flat z=0 base. Without `clip`, `mask` stair-clips the top to a cell
+// footprint. With it, boundary cells are clipped to the circle instead and ids at or above
+// gw*gh are rim crossings. `geom` maps grid samples to print-Z via base + relief·mmPerM·exag.
 /**
  * @param {Float32Array} grid
  * @param {number} gw
  * @param {number} gh
  * @param {Span} span
- * @param {Uint8Array} mask
+ * @param {Uint8Array | null} mask
  * @param {{ dx: number, dy: number, mmPerM: number, emin: number, exag: number, base: number }} geom
+ * @param {import("./types.js").Clip} [clip]
  * @returns {Solid}
  */
-export function buildSolid(grid, gw, gh, span, mask, geom) {
+export function buildSolid(grid, gw, gh, span, mask, geom, clip) {
+  // clippedTopTris' cell-walk loops index by the `gw` param, but cellPoly (called from
+  // inside it) destructures gw from `clip.gw` — a disagreement would walk cell corners
+  // with two different strides. No caller can trigger this today (pipeline.js threads one
+  // consistent value), but silently indexing garbage is worse than throwing: the JSDoc cast
+  // on `cl` below means a missing idOf entry coerces to vertex id 0 instead of erroring.
+  if (clip && clip.gw !== gw) throw new Error(`buildSolid: gw=${gw} disagrees with clip.gw=${clip.gw}`);
   const { dx, dy, mmPerM, emin, exag, base } = geom;
   const { r1, c0 } = span;
-  return assembleSolid(gridTopTris(gw, span, mask), gw * gh,
-    (id) => [((id % gw) - c0) * dx, (r1 - ((id / gw) | 0)) * dy],
-    (id) => base + (grid[id] - emin) * mmPerM * exag,
+  const gv = gw * gh;
+  // Closures below only dereference `cl` on the id>=gv branch, reachable only when `clip`
+  // was passed (N stays gv otherwise) — same non-null contract as the `mask` cast above.
+  const cl = /** @type {import("./types.js").Clip} */ (clip);
+  const topTris = clip
+    ? clippedTopTris(gw, span, clip)
+    : gridTopTris(gw, span, /** @type {Uint8Array} */ (mask));
+  return assembleSolid(topTris, clip ? gv + cl.col.length : gv,
+    (id) => (id < gv
+      ? [((id % gw) - c0) * dx, (r1 - ((id / gw) | 0)) * dy]
+      : [(cl.col[id - gv] - c0) * dx, (r1 - cl.row[id - gv]) * dy]),
+    (id) => base + ((id < gv ? grid[id] : cl.elev[id - gv]) - emin) * mmPerM * exag,
     () => 0, "flat");
 }

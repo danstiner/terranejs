@@ -135,6 +135,34 @@ test("bakeTileSolid: water recess anchors below the land, stays watertight", () 
   assert.equal(dflt.landBluePct, 0, "land far above sea level stays green");
 });
 
+// Regression for the clip/recess ordering constraint: bakeTileSolid must run applyWaterRecess
+// (mutates the grid) BEFORE clipElevs (samples it) — see the comments at the two call sites.
+// Nothing else exercises circle + water together through bakeTileSolid: the water test above
+// bakes a square (no clip at all), and clip.test.mjs/mesh.test.mjs call clipElevs directly on
+// synthetic grids, never through the pipeline. Pinning a volume here is what would have caught
+// the ordering bug pipeline.js shipped with once and fixed before the first commit landed.
+test("bakeTileSolid: circle + flatten reads post-recess elevations at the rim (ordering)", () => {
+  const plan = planTile({ ...SETTINGS, shape: "circle" }, { z: 10 }); // 41×41; R≈20 spans the window,
+  // so the rim runs through every edge of the grid, not just a corner.
+  const mosaic = mosaicFor(plan); // ramp elevations, so every water cell's pre-flatten value differs
+  // West half water, east half land. Column 20 (the mask split) passes through the circle's centre
+  // (cx≈20), so the split crosses the rim near the top and bottom of the window: several of
+  // clip.js's rim-crossing edges have one water endpoint and one land endpoint. Flatten collapses
+  // every water sample to one shared plane; a crossing that samples the water endpoint BEFORE that
+  // runs still sees its original ramp value instead — wrong geometry, not a rounding-level slip.
+  const mask = new Uint8Array(plan.gw * plan.gh);
+  for (let r = 0; r < plan.gh; r++)
+    for (let c = 0; c < plan.gw >> 1; c++) mask[r * plan.gw + c] = 1;
+  const { solid } = bakeTileSolid(mosaic, plan, { ...SETTINGS, flatten: true }, mask);
+  assert.ok(checkWatertight(solid).closed, "watertight");
+  // Golden value from the correct order (clipElevs after applyWaterRecess). Swapping the two
+  // call-site lines in bakeTileSolid moves this to 52200.09348442017 — a ~114 mm³ divergence on a
+  // ~52314 mm³ solid (~0.2%), confirmed by hand before this test was added; 1e-3 clears float
+  // noise by ~5 orders while catching that swap by ~5.
+  assert.ok(Math.abs(signedVolume(solid) - 52313.8190144107) < 1e-3,
+    `circle+flatten volume drifted from the pinned order-correct value — got ${signedVolume(solid)}`);
+});
+
 test("defaultTileName: encodes center, width, and scale", () => {
   const g = { base: 6, exag: 1 }; // geom fields the name ignores
   assert.equal(
@@ -184,8 +212,16 @@ test("bakeTileSolid: footprint areas match their analytic fractions", () => {
     vol[shape] = signedVolume(bakeTileSolid(flatMosaic(plan), plan, SETTINGS).solid);
   }
   const hex = vol.hex / vol.square, circle = vol.circle / vol.square;
+  // Hex still takes the cell-centre mask, so it keeps the loose tolerance.
   assert.ok(Math.abs(hex - (3 * Math.sqrt(3)) / 8) < 0.02, `hex ratio ${hex}`);
-  assert.ok(Math.abs(circle - Math.PI / 4) < 0.02, `circle ratio ${circle}`);
+  // Circle is clipped to the true circle now. The residual is not the rim — that is exact to
+  // ~1e-5 — but the window's whole-pixel rounding, which moves the square denominator by up to
+  // a cell. 1e-4 is chosen to discriminate, not just pass: it clears the clipped path's measured
+  // noise floor (4.8e-6) by two orders, while the pre-clip stairstep path (commit 93b88c7, ratio
+  // 0.7841015719764709 — 1.3e-3 off) still fails it by one. A looser tolerance like the 0.005
+  // this replaced does not: 1.3e-3 is inside 0.005, so that bound passed even with the clip
+  // reverted.
+  assert.ok(Math.abs(circle - Math.PI / 4) < 1e-4, `circle ratio ${circle}`);
 });
 
 // checkWatertight is edge-parity only, so a bowtie (two cells meeting at one corner) would pass

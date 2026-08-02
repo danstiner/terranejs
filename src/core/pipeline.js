@@ -2,10 +2,11 @@
 // Mercator pixel window + print geom → elevation grid → watertight solid →
 // validated .3mf. This is the "library" surface a thin UI drives. Single tile
 // (square, hex or circle), monochrome — color/multi-tile arrive in later features.
-import { cellsBbox, cellWindows, footprintPx, footprintCellMaskPx, vertexMaskFromCells } from "./layout.js";
+import { cellsBbox, cellWindows, footprintPx, footprintCellMaskPx, vertexMaskFromCells, circlePx } from "./layout.js";
 import { sourceZoom, MAX_MERCATOR_LAT } from "./tilemath.js";
 import { cropGrid, gridRange } from "./resample.js";
 import { buildSolid } from "./mesh.js";
+import { clipCircle, clipElevs, clipRange } from "./clip.js";
 import { applyWaterRecess } from "./water.js";
 import { checkWatertight, signedVolume } from "./validate.js";
 import { ThreeMFWriter } from "./threemf.js";
@@ -30,12 +31,14 @@ import { fetchMosaic } from "./terrain.js";
  *   in every shape.
  */
 /**
- * @typedef {{ z: number, bbox: BBox, window: Window, span: Span, gw: number, gh: number, dx: number, dy: number, mmPerM: number, shape: Shape, ring: Array<[number,number]> | null }} TilePlan
+ * @typedef {{ z: number, bbox: BBox, window: Window, span: Span, gw: number, gh: number, dx: number, dy: number, mmPerM: number, shape: Shape, ring: Array<[number,number]> | null, circle: { cx: number, cy: number, R: number } | null }} TilePlan
  *   z = source zoom; bbox = fetch bounds; window = exact Mercator pixel window;
  *   span = full-coverage cell span; gw/gh = window dims; dx/dy = print mm per
  *   pixel; mmPerM = print mm per metre of elevation (pre-exaggeration); shape =
  *   footprint kind; ring = footprint vertices in global px (null for square,
- *   which needs no clip).
+ *   which needs no clip); circle = centre/radius in global px, non-null only
+ *   for shape === "circle" (what the mesh clip needs; ring is only for the
+ *   map outline and the stair mask).
  */
 
 /** @type {Cell[]} */
@@ -77,8 +80,13 @@ export function planTile(settings, { z, maxTiles = 300 } = {}) {
     mmPerM: 1000 / scale,
     shape,
     // The ring, not the mask: 6 or 64 points travel with the plan, while the mask is
-    // megabytes at export scale and is cheap to rebuild where it is used.
+    // megabytes at export scale and is cheap to rebuild where it is used. For circles this
+    // is dead weight bakeTileSolid never reads (clip short-circuits the cellMask branch
+    // before ring is checked) — kept for hex, and because map.js draws its own ring anyway
+    // (cellRingLatLon), so dropping the field here would save nothing there either.
     ring: footprintPx(center, scale, tileWmm, ORIGIN[0], zoom, shape),
+    // Only a circle is clipped; hex keeps the cell-centre mask until its seam work lands.
+    circle: shape === "circle" ? circlePx(center, scale, tileWmm, zoom) : null,
   };
 }
 
@@ -97,19 +105,27 @@ export function planTile(settings, { z, maxTiles = 300 } = {}) {
  * @returns {{ solid: Solid, emin: number, emax: number, lineElev: number, landBluePct: number }}
  */
 export function bakeTileSolid(mosaic, plan, { base, exag, flatten = false, recessMm = 0, layerMm = 0.15 }, waterMask) {
-  const { window, span, gw, gh, dx, dy, mmPerM, ring } = plan;
+  const { window, span, gw, gh, dx, dy, mmPerM, ring, circle } = plan;
   const grid = cropGrid(mosaic, window);
+  // Clip geometry first — applyWaterRecess mutates the grid, so crossing ELEVATIONS have
+  // to wait for it, but the inside mask and crossing positions are pure geometry.
+  const clip = circle
+    ? clipCircle(gw, gh, circle.cx - window.gx0, circle.cy - window.gy0, circle.R)
+    : null;
   // Square fills its window, so it needs no clip and no footprint — keeping `footprint`
   // undefined there is what makes the square path bit-identical to before shapes existed.
-  const cellMask = ring
-    ? footprintCellMaskPx(ring, gw, gh, window.gx0, window.gy0)
-    : new Uint8Array((gw - 1) * (gh - 1)).fill(1);
-  const footprint = ring ? vertexMaskFromCells(cellMask, gw, gh) : undefined;
+  const cellMask = clip || !ring
+    ? null
+    : footprintCellMaskPx(ring, gw, gh, window.gx0, window.gy0);
+  const footprint = clip ? clip.inside : (cellMask ? vertexMaskFromCells(cellMask, gw, gh) : undefined);
   const { lineElev, landBluePct } = applyWaterRecess(grid, waterMask, {
     flatten, recessMm, layerMm, K: mmPerM * exag, footprint,
   });
-  const { min: emin, max: emax } = gridRange(grid, footprint);
-  const solid = buildSolid(grid, gw, gh, span, cellMask, { dx, dy, mmPerM, emin, exag, base });
+  if (clip) clipElevs(clip, grid);
+  const { min: emin, max: emax } = clip ? clipRange(grid, clip) : gridRange(grid, footprint);
+  const solid = buildSolid(grid, gw, gh, span,
+    cellMask ?? (clip ? null : new Uint8Array((gw - 1) * (gh - 1)).fill(1)),
+    { dx, dy, mmPerM, emin, exag, base }, clip ?? undefined);
   const wt = checkWatertight(solid);
   if (!wt.closed) throw new Error(`pipeline: non-watertight solid (${wt.unmatched} unmatched edges)`);
   if (signedVolume(solid) <= 0) throw new Error("pipeline: non-positive-volume (inside-out) solid");

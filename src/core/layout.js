@@ -76,6 +76,25 @@ export function footprintPx([lat, lon], scale, tileWmm, [q, r], z, shape) {
   });
 }
 
+// Circle centre and radius in global px — what mesh clipping needs, where footprintPx's
+// 64-gon is only what the map outline and the cell-mask rasteriser need. The polygon sits
+// R(1−cos(π/64)) inside the circle, ~0.12 mm at a 200 mm tile, which is coarser than an
+// export cell; clipping uses the circle itself.
+/**
+ * @param {LatLon} center
+ * @param {number} scale
+ * @param {number} tileWmm
+ * @param {number} z
+ * @returns {{ cx: number, cy: number, R: number }}
+ */
+export function circlePx([lat, lon], scale, tileWmm, z) {
+  return {
+    cx: lonToGlobalX(lon, z),
+    cy: latToGlobalY(lat, z),
+    R: tileSpanPx(lat, scale, tileWmm, z) / 2,
+  };
+}
+
 // Stair cell mask for a footprint ring, decided in GLOBAL pixel coordinates:
 // cell (r,c) of a window at (gx0,gy0) has its center at integer+0.5 globals,
 // and ring verts are bit-identical across adjacent tiles (half-unit lattice),
