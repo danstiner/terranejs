@@ -61,9 +61,13 @@ on-screen. Only the exported model uses the full budget.
 ## 3. Fetch + assemble
 
 Given the region and the chosen zoom, terranejs works out which source
-tiles cover it, fetches them concurrently, decodes each to metres, and
+tiles cover it, fetches them one at a time, decodes each to metres, and
 stitches the results into one elevation raster in a shared pixel space —
 the **mosaic**. This is the raw material every later stage samples from.
+The fetch is deliberately serial: the tile hosts are free, shared
+infrastructure, and a preview needs only a tile or two. Elevation and
+watermask are fetched as two independent passes that overlap each other,
+so a bake holds at most two connections open.
 
 ## 4. Resample
 

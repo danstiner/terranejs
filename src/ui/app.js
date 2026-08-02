@@ -21,10 +21,10 @@ import { LAND_BLUE_WARN_PCT } from "../core/water.js";
 /** @typedef {import("../core/pipeline.js").TileSettings} TileSettings */
 
 // Max source-tile budget per bake, one per quality tier (passed as `maxTiles`). Preview
-// detail is scaled to the viewport, not the print — a small tile budget keeps the bake
-// fast; export uses the full print resolution. See docs/specs/data-pipeline.md §2.
-const FAST_MAX_TILES = 4;      // ~2×2 tiles → fast sub-10ms bake for user feedback
-const CRISP_MAX_TILES = 36;    // ~6×6 tiles → enough detail for an unzoomed ~1500px viewport
+// detail is scaled to the viewport, not the print — a small tile budget keeps the bake fast
+// and the fetch light on a free tile host. See docs/specs/data-pipeline.md §2.
+const FAST_MAX_TILES = 1;      // one tile → instant relief while the detailed bake runs
+const CRISP_MAX_TILES = 16;    // ~4×4 tiles → one zoom deeper on wide tiles, still a light fetch
 const EXPORT_MAX_TILES = 300;  // full print resolution (core's default tile budget)
 
 const store = createStore(/** @type {AppState} */ ({
