@@ -44,7 +44,7 @@
 
         <label for="scale">Map scale</label>
         <div class="row">
-          <span><input id="scale" type="number" min="0.01" step="any" value="4" class="num">&nbsp;mm&nbsp;=&nbsp;1&nbsp;km</span>
+          <span><input id="scale" type="number" min="0.01" max="1000" step="any" value="4" class="num">&nbsp;mm&nbsp;=&nbsp;1&nbsp;km</span>
         </div>
         <p class="hint">Bigger number = bigger print, finer detail.</p>
 
@@ -57,7 +57,7 @@
         <details>
           <summary>Advanced</summary>
           <label for="tileW">Tile width (mm)</label>
-          <input id="tileW" type="number" min="50" step="5" value="200" class="num">
+          <input id="tileW" type="number" min="50" max="1000" step="5" value="200" class="num">
           <p class="hint">Print size of the tile (largest dimension) — set it to
             fit your printer's bed.</p>
           <label for="recess">Water recess: <span id="recessVal">0</span>&nbsp;mm</label>
