@@ -3,7 +3,7 @@
 // optional .3mf) and posts the result back, transferring the buffers zero-copy. It
 // knows nothing about preview vs export vs fast vs crisp; that policy lives in
 // app.js. `format` is an output selector, not render policy. One job at a time.
-import { planSquareTile, bakeSquareTileSolid, tileTo3mf } from "../core/pipeline.js";
+import { planTile, bakeTileSolid, tileTo3mf } from "../core/pipeline.js";
 import { vertexNormals } from "../core/normals.js";
 import { fetchMosaic, fetchWaterMask } from "../core/terrain.js";
 import { cropGrid } from "../core/resample.js";
@@ -26,7 +26,7 @@ const post = /** @type {(msg: unknown, transfer?: Transferable[]) => void} */ (
 /** @param {{ gen: number, settings: TileSettings, maxTiles: number, format: "mesh" | "3mf", name?: string, color?: boolean }} data */
 async function handle({ gen, settings, maxTiles, format, name, color }) {
   try {
-    const plan = planSquareTile(settings, { maxTiles });
+    const plan = planTile(settings, { maxTiles });
     // Water mask from the Re:Earth watermask tile — pixel-aligned with the elevation at the
     // same bbox+zoom, so no detection/flood-fill: fetch, crop to the window, threshold alpha.
     // Water is always considered: applyWaterRecess (in the bake) no-ops when the tile has no
@@ -41,7 +41,7 @@ async function handle({ gen, settings, maxTiles, format, name, color }) {
     for (let i = 0; i < wmGrid.length; i++) waterMask[i] = wmGrid[i] > 0.5 ? 1 : 0;
 
     post({ gen, baking: true }); // all tiles in hand → meshing + validation (synchronous, blocks the worker)
-    const { solid, emin, emax, lineElev, landBluePct } = bakeSquareTileSolid(mosaic, plan, settings, waterMask);
+    const { solid, emin, emax, lineElev, landBluePct } = bakeTileSolid(mosaic, plan, settings, waterMask);
     // Latitude-adjusted color changes for THIS bake's frame. Shared by the preview
     // (returned as `bands`) and, later, the export embed. K>0 since exag ∈ [0.5,4].
     const K = plan.mmPerM * settings.exag;
@@ -77,7 +77,7 @@ async function handle({ gen, settings, maxTiles, format, name, color }) {
       };
       // emin + geom let the preview invert a surface point's print-Z back to metres for the
       // hover probe. The pre-recess elevations + water mask ride along too (a fresh crop —
-      // bakeSquareTileSolid mutated its own copy in place), so the probe can report a water
+      // bakeTileSolid mutated its own copy in place), so the probe can report a water
       // cell's ORIGINAL elevation, which the printed surface no longer encodes once water moves.
       const probeGrid = cropGrid(mosaic, plan.window);
       const probeFrame = {

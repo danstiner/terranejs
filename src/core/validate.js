@@ -24,9 +24,12 @@ export function signedVolume({ positions: P, indices: I }) {
 // quantization, so it catches T-junctions. Keys u*V+v stay exact below 2^53;
 // matching walks two sorted Float64Arrays (V8's Map/Set 2^24 cap is under a
 // large tile's directed-edge count).
-// Edge-parity only: a vertex-pinch (two shells meeting at one vertex) or a fully
-// doubled surface still balances. buildSolid's square footprint yields neither,
-// so this stays sufficient until arbitrary footprints (masked shapes) land.
+// Edge-parity only: a vertex-pinch (two shells meeting at one vertex) or a fully doubled
+// surface still balances. Convex footprints cannot produce a pinch — every mask row is one
+// contiguous run centred on the footprint's vertical axis, so adjacent rows always share a
+// column (swept across span and sub-pixel phase in test/pipeline.test.mjs). The square, hex
+// and circle footprints are all convex, so this stays sufficient. A non-convex or
+// multi-island footprint would reopen the gap: add a per-vertex one-ring check then.
 /**
  * @param {Solid} solid
  * @returns {{ closed: boolean, unmatched: number }}

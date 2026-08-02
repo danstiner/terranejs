@@ -6,11 +6,12 @@ import { createStore } from "./store.js";
 import { initMap } from "./map.js";
 import { initPreview } from "./preview.js";
 import { wireControls, syncControls } from "./controls.js";
-import { defaultTileName, planSquareTile } from "../core/pipeline.js";
+import { defaultTileName, planTile } from "../core/pipeline.js";
 import { encodeState, decodeState } from "../core/urlstate.js";
 import { PRESETS, DEFAULT_PRESET } from "./presets.js";
 import { BAND_NAMES } from "../core/colors.js";
 import { LAND_BLUE_WARN_PCT } from "../core/water.js";
+import { HEX_H } from "../core/layout.js";
 
 // The app state IS the shareable state — one typedef, so a new field can't be added here and
 // silently dropped from every link.
@@ -31,6 +32,7 @@ const restored = decodeState(location.hash);
 const store = createStore(restored ?? /** @type {AppState} */ ({
   center: DEFAULT_PRESET.center, scale: DEFAULT_PRESET.scale, tileWmm: 200, base: 6, exag: 1,
   flatten: false, recessMm: 0, layerMm: 0.15, // sea-level tint by default; checkbox flattens
+  shape: "square",
 }));
 
 /** @param {string} id @returns {HTMLElement} */
@@ -55,6 +57,7 @@ const map = initMap({
     center: store.get().center ?? DEFAULT_PRESET.center,
     scale: store.get().scale,
     tileWmm: store.get().tileWmm,
+    shape: store.get().shape,
   },
   onPlace: (c) => { presetSelect.value = ""; store.set({ center: c }); },
   onMove: (c) => { presetSelect.value = ""; store.set({ center: c }); },
@@ -94,17 +97,28 @@ function writeHash(s) {
   if (hash && hash !== lastHash) { lastHash = hash; history.replaceState(null, "", `#${hash}`); }
 }
 
+// gw*gh is the WINDOW's cell count, not the footprint's — a hex or circle discards part of
+// that window (mask/clip), so the raw product overstates their triangle count. Scale by how
+// much of its own window each footprint fills: square is exact; hex is 3/4 (a flat-top hexagon
+// fills exactly 3/4 of its bounding rectangle — (3√3/8)/(√3/2), the full-square ratio divided by
+// the window's own height fraction); circle is π/4 (the built 64-gon is 0.7841, within 0.2% —
+// fine for an estimate line that already says "≈"). gsd below needs no such fix: it divides by
+// gw alone (mesh spacing along the window's width), which every shape's window shares in full.
+/** @type {Record<import("../core/types.js").Shape, number>} */
+const WINDOW_FILL = { square: 1, hex: 3 / 4, circle: Math.PI / 4 };
+
 // Resting status after the detailed preview lands: the resolution (real metres per
 // grid sample) and rough triangle count of what's on screen vs what Export will
 // bake at the full print budget — so the preview-vs-print gap is legible. Both are
-// planned with the same pure planSquareTile the worker uses; no fetch, no bake.
+// planned with the same pure planTile the worker uses; no fetch, no bake.
 /** @param {TileSettings} settings @returns {string} */
 function detailSummary(settings) {
+  const fill = WINDOW_FILL[settings.shape ?? "square"];
   /** @param {number} maxTiles */
   const part = (maxTiles) => {
-    const { gw, gh } = planSquareTile(settings, { maxTiles });
+    const { gw, gh } = planTile(settings, { maxTiles });
     const gsd = (settings.tileWmm * settings.scale) / (1000 * gw); // real metres between mesh vertices
-    const tris = (gw * gh * 2) / 1e6;                              // ≈ top-surface triangles, millions
+    const tris = (gw * gh * 2 * fill) / 1e6;                       // ≈ top-surface triangles, millions
     return `${gsd >= 10 ? Math.round(gsd) : gsd.toFixed(1)} m/vertex, ~${tris.toFixed(1)}M triangles`;
   };
   try {
@@ -203,8 +217,14 @@ function loadPreview() {
 store.subscribe((s) => {
   map.setLayout(s);
   const km = (s.tileWmm * s.scale) / 1e6; // print mm × 1:N scale → real km the tile spans
+  // tileWmm is the bounding-square side, so only the hex prints shorter than it is wide.
+  const tile = s.shape === "hex"
+    ? `hex tile · ${s.tileWmm} × ${Math.round(s.tileWmm * HEX_H)} mm`
+    : s.shape === "circle"
+      ? `circle tile · ${s.tileWmm} mm across`
+      : `square tile · ${s.tileWmm} mm`;
   $("readout").textContent = s.center
-    ? `1 square tile · ${s.tileWmm} mm : ~${km >= 10 ? Math.round(km) : km.toFixed(1)} km`
+    ? `1 ${tile} : ~${km >= 10 ? Math.round(km) : km.toFixed(1)} km`
     : "No tile placed.";
   $("settings").hidden = !s.center;
   window.clearTimeout(timer);
@@ -227,7 +247,7 @@ for (const key of /** @type {const} */ (["Park", "Water", "Terrane"])) {
 function applyPreset(preset) {
   store.set({ center: preset.center, scale: preset.scale });
   syncScaleInput(preset.scale);
-  map.focus({ center: preset.center, scale: preset.scale, tileWmm: store.get().tileWmm });
+  map.focus({ center: preset.center, scale: preset.scale, tileWmm: store.get().tileWmm, shape: store.get().shape });
 }
 presetSelect.addEventListener("change", () => {
   const preset = PRESETS.find((p) => p.name === presetSelect.value);
@@ -258,7 +278,7 @@ window.addEventListener("hashchange", () => {
   syncControls(s);
   syncScaleInput(s.scale);
   store.set(s);
-  if (s.center) map.focus({ center: s.center, scale: s.scale, tileWmm: s.tileWmm });
+  if (s.center) map.focus({ center: s.center, scale: s.scale, tileWmm: s.tileWmm, shape: s.shape });
 });
 
 $("export").addEventListener("click", () => {

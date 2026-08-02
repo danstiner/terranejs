@@ -112,6 +112,29 @@ export function footprintCellMaskPx(ring, gw, gh, gx0, gy0) {
   return mask;
 }
 
+// Cell mask → vertex mask. A vertex is in the footprint when ANY of its ≤4 incident
+// cells is: requiring all four would drop every rim vertex, which is exactly the set
+// the boundary skirt is built from. Consumers use this to keep discarded corners out
+// of the tile's statistics (elevation range, waterline) — see pipeline.bakeTileSolid.
+/**
+ * @param {Uint8Array} cellMask  (gw-1)×(gh-1), row-major
+ * @param {number} gw
+ * @param {number} gh
+ * @returns {Uint8Array} gw×gh, row-major
+ */
+export function vertexMaskFromCells(cellMask, gw, gh) {
+  const cw = gw - 1, ch = gh - 1;
+  const out = new Uint8Array(gw * gh);
+  for (let r = 0; r < ch; r++) {
+    for (let c = 0; c < cw; c++) {
+      if (!cellMask[r * cw + c]) continue;
+      const a = r * gw + c;
+      out[a] = 1; out[a + 1] = 1; out[a + gw] = 1; out[a + gw + 1] = 1;
+    }
+  }
+  return out;
+}
+
 // Per-cell pixel windows at zoom z. Cell edges land on Math.round of the exact
 // Mercator crossing, so adjacent cells SHARE the edge pixel index and
 // physical tile size quantizes to pixel pitch (≤1 px).

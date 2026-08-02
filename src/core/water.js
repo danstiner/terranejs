@@ -21,15 +21,18 @@ export const LAND_BLUE_WARN_PCT = 5;
  * genuinely below-sea-level land (Death Valley) on a tile with no water at all.
  * @param {Float32Array} grid  elevation grid cropped to the bake window; MUTATED in place
  * @param {Uint8Array | undefined} mask  1 = water, 0 = land, index-aligned with grid
- * @param {{ flatten: boolean, recessMm: number, layerMm: number, K: number }} opts
+ * @param {{ flatten: boolean, recessMm: number, layerMm: number, K: number, footprint?: Uint8Array }} opts
  *   flatten = pull all water to one plane below the land; recessMm = extra sink (mm, print
- *   space); layerMm = slicer layer height (the colour-lift unit); K = mmPerM·exag.
+ *   space); layerMm = slicer layer height (the colour-lift unit); K = mmPerM·exag;
+ *   footprint = optional vertex mask; samples outside it are neither measured nor moved
+ *   (hex/circle discard their window's corners).
  * @returns {{ lineElev: number, landBluePct: number }}
  */
-export function applyWaterRecess(grid, mask, { flatten, recessMm, layerMm, K }) {
+export function applyWaterRecess(grid, mask, { flatten, recessMm, layerMm, K, footprint }) {
   if (!mask) return { lineElev: -Infinity, landBluePct: 0 };
   let waterMin = Infinity, landMin = Infinity, landCount = 0;
   for (let i = 0; i < grid.length; i++) {
+    if (footprint && !footprint[i]) continue; // discarded corner: not in the print
     if (mask[i]) { if (grid[i] < waterMin) waterMin = grid[i]; }
     else { if (grid[i] < landMin) landMin = grid[i]; landCount++; }
   }
@@ -46,6 +49,7 @@ export function applyWaterRecess(grid, mask, { flatten, recessMm, layerMm, K }) 
   const sink = recessMm / K;
   let landBlue = 0;
   for (let i = 0; i < grid.length; i++) {
+    if (footprint && !footprint[i]) continue;
     if (mask[i]) grid[i] = (flatten ? anchor : grid[i]) - sink;
     else if (grid[i] <= lineElev) landBlue++; // export predicate: bandOf keeps the boundary blue
   }

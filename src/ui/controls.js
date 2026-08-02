@@ -23,6 +23,7 @@ export function syncControls(s) {
   set("base", s.base);
   set("recess", s.recessMm);
   set("layerMm", s.layerMm);
+  /** @type {HTMLSelectElement} */ (el("shape")).value = s.shape;
   /** @type {HTMLInputElement} */ (el("flatten")).checked = s.flatten;
   el("exagVal").textContent = s.exag.toFixed(1);
   el("baseVal").textContent = s.base.toFixed(1);
@@ -57,6 +58,11 @@ export function wireControls(store) {
   el("tileW").addEventListener("input", (e) => {
     const v = num(e);
     if (Number.isFinite(v) && v >= 50 && v <= 1000) store.set({ tileWmm: v });
+  });
+  el("shape").addEventListener("change", (e) => {
+    const v = /** @type {HTMLSelectElement} */ (e.target).value;
+    // Guard like the numeric inputs: the store must never hold a value the hash rejects.
+    if (v === "square" || v === "hex" || v === "circle") store.set({ shape: v });
   });
   el("flatten").addEventListener("change", (e) => {
     store.set({ flatten: /** @type {HTMLInputElement} */ (e.target).checked });

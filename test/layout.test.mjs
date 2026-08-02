@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   CELL_CAP, tileSpanPx, cellWindows, cellBbox, cellsBbox, ghostCells,
   footprintPx, cellRingLatLon, pruneToOrigin, connectedToOrigin,
-  footprintCellMaskPx, pointInPolygon,
+  footprintCellMaskPx, pointInPolygon, vertexMaskFromCells,
 } from "../src/core/layout.js";
 import { lonToGlobalX, latToGlobalY } from "../src/core/tilemath.js";
 
@@ -249,4 +249,36 @@ test("hex windows sit consistently around their footprint centers (placement inv
       assert.ok(Math.abs(w2.gy0 - (cy - (Math.sqrt(3) / 4) * S)) <= 0.5 + 1e-9, `y origin (${q},${r} z${z})`);
     }
   }
+});
+
+test("vertexMaskFromCells: a full cell mask marks every vertex", () => {
+  const gw = 5, gh = 4;
+  const cells = new Uint8Array((gw - 1) * (gh - 1)).fill(1);
+  const v = vertexMaskFromCells(cells, gw, gh);
+  assert.equal(v.length, gw * gh);
+  assert.ok(v.every((x) => x === 1), "every vertex is in a full footprint");
+});
+
+test("vertexMaskFromCells: one cell marks exactly its 4 corners", () => {
+  const gw = 3, gh = 3;                       // 2x2 cells
+  const cells = Uint8Array.from([0, 0, 0, 1]); // only cell (r=1,c=1)
+  const v = vertexMaskFromCells(cells, gw, gh);
+  // corners of cell (1,1) are vertices (1,1) (1,2) (2,1) (2,2) → ids 4,5,7,8
+  assert.deepEqual([...v], [0, 0, 0, 0, 1, 1, 0, 1, 1]);
+});
+
+// The rim is the point: a vertex on the footprint edge belongs to at least one
+// in-footprint cell and at least one discarded one. Requiring ALL incident cells
+// would drop it, and the skirt is built from exactly those vertices.
+test("vertexMaskFromCells: a hex footprint keeps its rim vertices", () => {
+  const z = 11;
+  const { wins } = cellWindows(CENTER, SCALE, W, /** @type {Cell[]} */ ([[0, 0]]), z, "hex");
+  const win = /** @type {Window} */ (wins.get("0,0"));
+  const ring = /** @type {[number,number][]} */ (footprintPx(CENTER, SCALE, W, [0, 0], z, "hex"));
+  const cells = footprintCellMaskPx(ring, win.gw, win.gh, win.gx0, win.gy0);
+  const v = vertexMaskFromCells(cells, win.gw, win.gh);
+  const setCells = cells.reduce((a, b) => a + b, 0);
+  const setVerts = v.reduce((a, b) => a + b, 0);
+  assert.ok(setCells > 0, "hex footprint is non-empty");
+  assert.ok(setVerts > setCells, `rim included: ${setVerts} verts > ${setCells} cells`);
 });

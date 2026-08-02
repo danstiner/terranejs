@@ -6,13 +6,19 @@
 import { MAX_MERCATOR_LAT } from "./tilemath.js";
 
 /** @typedef {import("./types.js").LatLon} LatLon */
+/** @typedef {import("./types.js").Shape} Shape */
 /**
  * @typedef {{ center: LatLon | null, scale: number, tileWmm: number, base: number,
- *   exag: number, flatten: boolean, recessMm: number, layerMm: number }} ShareableState
+ *   exag: number, flatten: boolean, recessMm: number, layerMm: number, shape: Shape }} ShareableState
  */
 
 /** Payload version. Bump only for a breaking key/meaning change; old links then decode to null. */
 export const STATE_VERSION = 1;
+
+// Absent means a link that predates shapes, when square was the only tile — so the default
+// is exact rather than a guess, and STATE_VERSION stays 1. Present-but-unrecognised still
+// rejects, matching the strict flatten T/F handling.
+const SHAPES = /** @type {Shape[]} */ (["square", "hex", "circle"]);
 
 // Print preferences are clamped, not rejected: their bounds are UI choices that may widen, and an
 // old link should still open. Geography is different — a bad coordinate has no sane fallback, so
@@ -41,7 +47,7 @@ const trim = (v, places) => String(Number(v.toFixed(places)));
  * @param {ShareableState} state
  * @returns {string}
  */
-export function encodeState({ center, scale, tileWmm, base, exag, flatten, recessMm, layerMm }) {
+export function encodeState({ center, scale, tileWmm, base, exag, flatten, recessMm, layerMm, shape }) {
   if (!center) return "";
   return [
     `v=${STATE_VERSION}`,
@@ -54,6 +60,7 @@ export function encodeState({ center, scale, tileWmm, base, exag, flatten, reces
     `flatten=${flatten ? "T" : "F"}`,
     `recess=${trim(recessMm, 2)}`,
     `layer=${trim(layerMm, 3)}`,
+    `shape=${shape}`,
   ].join("&");
 }
 
@@ -78,6 +85,9 @@ export function decodeState(hash) {
   if (lat === null || lon === null || scale === null || tileWmm === null || base === null ||
       exag === null || recessMm === null || layerMm === null) return null;
   if (flat !== "T" && flat !== "F") return null; // strict: a mangled flag is corruption, not false
+  const shapeRaw = p.get("shape");
+  const shape = shapeRaw === null ? "square" : shapeRaw;
+  if (!SHAPES.includes(/** @type {Shape} */ (shape))) return null;
   // Geography must be exact: past the Mercator band or the antimeridian there is no tile to
   // plan, and a non-positive scale divides by zero downstream.
   if (Math.abs(lat) > MAX_MERCATOR_LAT || Math.abs(lon) > 180 || !(scale > 0)) return null;
@@ -90,5 +100,6 @@ export function decodeState(hash) {
     flatten: flat === "T",
     recessMm: clamp(recessMm, LIMITS.recess),
     layerMm: clamp(layerMm, LIMITS.layer),
+    shape: /** @type {Shape} */ (shape),
   };
 }

@@ -114,3 +114,51 @@ test("applyWaterRecess: layerMm sets the flatten plane's land clearance (2 layer
   assert.equal(r1.lineElev, -8, "plane = landMin − 2·1");
   assert.equal(r2.lineElev, -10, "doubled layer → doubled clearance");
 });
+
+// A hex discards 25% of its own window and a circle 21.6%. Water in that discarded area is
+// not in the print, so it must not anchor the colour line — otherwise a corner clipping
+// a fjord would blue a tile whose printed surface holds no water at all.
+test("applyWaterRecess: water outside the footprint never sets the line", () => {
+  const grid = Float32Array.from([-10, 100, 100, 100]);
+  const water = Uint8Array.from([1, 0, 0, 0]);       // the only water cell...
+  const footprint = Uint8Array.from([0, 1, 1, 1]);   // ...is outside the footprint
+  const r = applyWaterRecess(grid, water, {
+    flatten: false, recessMm: 0, layerMm: 0.15, K: 0.01, footprint,
+  });
+  assert.equal(r.lineElev, -Infinity, "no water inside the footprint → no line at all");
+  assert.equal(r.landBluePct, 0);
+  assert.equal(grid[0], -10, "out-of-footprint water is left untouched");
+});
+
+test("applyWaterRecess: land outside the footprint is not counted as blue", () => {
+  const grid = Float32Array.from([-5, 100, 100, 0]); // the -5 m land is outside
+  const water = Uint8Array.from([0, 0, 0, 1]);       // one in-footprint water cell at 0 m
+  const footprint = Uint8Array.from([0, 1, 1, 1]);
+  const r = applyWaterRecess(grid, water, {
+    flatten: false, recessMm: 0, layerMm: 0.15, K: 0.01, footprint,
+  });
+  assert.equal(r.lineElev, 0, "in-footprint water anchors the default 0 m line");
+  assert.equal(r.landBluePct, 0, "land outside the print cannot print blue");
+});
+
+// flatten's plane clearance comes from landMin in the STATISTICS loop. If that loop forgot
+// the footprint guard, a hex's discarded low corner would set landMin and drag the whole
+// plane — and every in-print land pixel's clearance — down with it.
+test("applyWaterRecess: flatten plane anchors to in-footprint land only", () => {
+  const [grid, water] = tile([-1000, 0, 10, 20], [0, 1, 0, 0]); // -1000 sits outside the footprint
+  const footprint = Uint8Array.from([0, 1, 1, 1]);
+  const r = applyWaterRecess(grid, water, { flatten: true, recessMm: 0, layerMm: LAYER, K, footprint });
+  assert.equal(r.lineElev, -5, "plane = min(waterMin=0, inFootprintLandMin=10 − 2·lift=15) = −5");
+
+  const [gridNoFootprint, water2] = tile([-1000, 0, 10, 20], [0, 1, 0, 0]);
+  const rNoFootprint = applyWaterRecess(gridNoFootprint, water2, { flatten: true, recessMm: 0, layerMm: LAYER, K });
+  assert.equal(rNoFootprint.lineElev, -1015, "without the guard the discarded −1000 corner sets landMin");
+  assert.ok(rNoFootprint.lineElev < r.lineElev, "the footprint guard measurably raises the plane");
+});
+
+test("applyWaterRecess: no footprint argument keeps today's whole-window behaviour", () => {
+  const grid = Float32Array.from([-10, 100, 100, 100]);
+  const water = Uint8Array.from([1, 0, 0, 0]);
+  const r = applyWaterRecess(grid, water, { flatten: false, recessMm: 0, layerMm: 0.15, K: 0.01 });
+  assert.equal(r.lineElev, 0, "square path unchanged: the water anchors the 0 m line");
+});
