@@ -145,7 +145,10 @@ export function mosaicTiles({ tx0, tx1, ty0, ty1 }, z) {
  * @param {{ concurrency?: number, onProgress?: (done: number, total: number) => void }} [opts]
  * @returns {Promise<Mosaic>}
  */
-async function fetchTiles(urlTemplate, decode, retina, bbox, z, { concurrency = 4, onProgress } = {}) {
+// Serial by default: both sources are free, shared infrastructure we don't pay for, and a
+// preview is only a tile or two. The elevation and watermask fans still overlap each other
+// (bake.worker), so a bake holds at most two connections open to the host.
+async function fetchTiles(urlTemplate, decode, retina, bbox, z, { concurrency = 1, onProgress } = {}) {
   const world = 2 ** z;
   const { tx0, tx1, ty0: ry0, ty1: ry1 } = sourceTileRange(bbox, z);
   const ty0 = Math.max(0, ry0), ty1 = Math.min(world - 1, ry1);
