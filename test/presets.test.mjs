@@ -38,9 +38,19 @@ test("preset names are unique", () => {
   assert.equal(new Set(names).size, names.length, "duplicate preset name");
 });
 
-// Default-on-load must be a real member of PRESETS. (Currently Mount Rainier — the
-// "open on a terrane namesake" default is parked while the high-latitude terranes
-// carry source-DEM stitching artifacts.)
+// Default-on-load must be a real member of PRESETS. (Currently Mount Rainier, chosen
+// for legibility on first paint — see the DEFAULT_PRESET docblock.)
 test("DEFAULT_PRESET is a member of PRESETS", () => {
   assert.ok(PRESETS.includes(DEFAULT_PRESET), "DEFAULT_PRESET not in PRESETS");
+});
+
+// The northern terranes are the reason this preset set was reshuffled once already: they
+// were dropped when the elevation source stitched fallback data above 60°N, and restored
+// when it changed. Pin them so a future source swap has to confront the decision.
+test("the high-latitude Alaska terranes are present", () => {
+  const terranes = PRESETS.filter((p) => p.group === "Terrane");
+  for (const name of ["Wrangellia", "Yakutat", "Chugach"]) {
+    assert.ok(terranes.some((p) => p.name === name), `missing terrane: ${name}`);
+  }
+  assert.ok(terranes.some((p) => p.center[0] > 60), "a terrane above 60°N");
 });
