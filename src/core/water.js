@@ -15,6 +15,14 @@
  * carry no inherent blue fringe. */
 export const LAND_BLUE_WARN_PCT = 5;
 
+/** Warning threshold: % of the TILE that is masked water showing above the color line before the
+ * UI nudges toward the same checkbox. Share of tile, not of water, and low because of it: the
+ * bug that motivated this (noisy near-0 bathymetry speckling a bay) is only 3.1% of that tile's
+ * water but 1.5% of the tile, while a Rainier-style tile whose 0.3% water is alpine tarns is
+ * 100% of its water — share-of-water would shout at the default view and stay silent on the
+ * defect. See docs/superpowers/specs/2026-08-04-water-as-land-warning-design.md. */
+export const WATER_AS_LAND_WARN_PCT = 1;
+
 /**
  * Anchor the water colour line and optionally flatten/sink the water for one bake, in place.
  * No mask (or no water cells) → no mutation, lineElev −Infinity — NOT 0, which would blue
@@ -26,17 +34,17 @@ export const LAND_BLUE_WARN_PCT = 5;
  *   space); layerMm = slicer layer height (the colour-lift unit); K = mmPerM·exag;
  *   footprint = optional vertex mask; samples outside it are neither measured nor moved
  *   (hex/circle discard their window's corners).
- * @returns {{ lineElev: number, landBluePct: number }}
+ * @returns {{ lineElev: number, landBluePct: number, waterAsLandPct: number }}
  */
 export function applyWaterRecess(grid, mask, { flatten, recessMm, layerMm, K, footprint }) {
-  if (!mask) return { lineElev: -Infinity, landBluePct: 0 };
+  if (!mask) return { lineElev: -Infinity, landBluePct: 0, waterAsLandPct: 0 };
   let waterMin = Infinity, landMin = Infinity, landCount = 0;
   for (let i = 0; i < grid.length; i++) {
     if (footprint && !footprint[i]) continue; // discarded corner: not in the print
     if (mask[i]) { if (grid[i] < waterMin) waterMin = grid[i]; }
     else { if (grid[i] < landMin) landMin = grid[i]; landCount++; }
   }
-  if (waterMin === Infinity) return { lineElev: -Infinity, landBluePct: 0 };
+  if (waterMin === Infinity) return { lineElev: -Infinity, landBluePct: 0, waterAsLandPct: 0 };
   const lift = layerMm / K; // one print layer, in metres
   // Anchor: flatten targets a plane 2 lifts below the lowest land — the exported pause sits one
   // layer above the line, so the first lift is consumed by that offset and the second is the
@@ -47,11 +55,24 @@ export function applyWaterRecess(grid, mask, { flatten, recessMm, layerMm, K, fo
     : 0;
   const lineElev = anchor; // the true waterline; only the export pause is lifted a layer above it
   const sink = recessMm / K;
-  let landBlue = 0;
+  let landBlue = 0, waterAsLand = 0, cells = 0;
   for (let i = 0; i < grid.length; i++) {
     if (footprint && !footprint[i]) continue;
-    if (mask[i]) grid[i] = (flatten ? anchor : grid[i]) - sink;
-    else if (grid[i] <= lineElev) landBlue++; // export predicate: bandOf keeps the boundary blue
+    cells++;
+    if (mask[i]) {
+      // Test the float64 value, NOT grid[i] afterwards. anchor is rarely float32-representable,
+      // and the store rounds up in ~2.7% of slider combinations — enough to put every flattened
+      // cell a hair above the line and fire the warning at 100% with the checkbox already on.
+      // In float64 anchor − sink ≤ anchor = lineElev holds exactly (recessMm clamps to [0,5]).
+      const v = (flatten ? anchor : grid[i]) - sink;
+      grid[i] = v;
+      if (v > lineElev) waterAsLand++;
+    } else if (grid[i] <= lineElev) landBlue++; // export predicate: bandOf keeps the boundary blue
   }
-  return { lineElev, landBluePct: landCount > 0 ? (100 * landBlue) / landCount : 0 };
+  return {
+    lineElev,
+    landBluePct: landCount > 0 ? (100 * landBlue) / landCount : 0,
+    // Share of the TILE, unlike landBluePct's share of the land — see WATER_AS_LAND_WARN_PCT.
+    waterAsLandPct: cells > 0 ? (100 * waterAsLand) / cells : 0,
+  };
 }
