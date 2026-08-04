@@ -162,9 +162,18 @@ export async function tileTo3mf(name, solid, colorChanges) {
   return writer.finish();
 }
 
-// Default export name: the parameters that define the tile — hemisphere-tagged
-// centre, print width, and map scale — so the filename fully describes the tile
-// that produced it (e.g. "terrane_tile_47.6035N_122.3294W_200mm_1to250000").
+// Ground extent, not the 1:N ratio. Metres under 1 km so a small tile can't round to "0km",
+// and no decimals past 10 km where a tenth is noise. Mirrors the UI's "200 mm : ~50 km"
+// readout — one rounding rule for the two places a tile's size is named.
+/** @param {number} km @returns {string} */
+const groundLabel = (km) =>
+  km >= 10 ? `${Math.round(km)}km` : km >= 1 ? `${km.toFixed(1)}km` : `${Math.round(km * 1000)}m`;
+
+// Default export name: the parameters that define the tile — hemisphere-tagged centre, print
+// width, and the ground extent that width covers — so the filename fully describes the tile
+// that produced it (e.g. "terrane_tile_47.6035N_122.3294W_200mm_50km"). Ground extent rather
+// than the scale ratio: "50 km" is how a person recognizes a tile in a downloads folder, and
+// the ratio is recoverable from it and the print width.
 /**
  * @param {TileSettings} settings
  * @returns {string}
@@ -173,7 +182,7 @@ export function defaultTileName({ center: [lat, lon], tileWidthMm, scale, shape 
   const ns = `${Math.abs(lat).toFixed(4)}${lat >= 0 ? "N" : "S"}`;
   const ew = `${Math.abs(lon).toFixed(4)}${lon >= 0 ? "E" : "W"}`;
   const sh = shape === "square" ? "" : `_${shape}`; // square is the default; don't label it
-  return `terrane_tile_${ns}_${ew}_${tileWidthMm}mm${sh}_1to${Math.round(scale)}`;
+  return `terrane_tile_${ns}_${ew}_${tileWidthMm}mm${sh}_${groundLabel((tileWidthMm * scale) / 1e6)}`;
 }
 
 // Browser step: fetch the tile's terrarium mosaic and bake a validated solid.
