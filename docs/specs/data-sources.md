@@ -33,7 +33,7 @@ https://terrain.reearth.land/mapterhorn-egm08/watermask/{z}/{x}/{y}.png
   EGM2008. The watermask is derived from Protomaps/OpenStreetMap water
   polygons, not from the DEM itself.
 - **Ocean values:** flat ~0 m — no bathymetry. terranejs doesn't need sea
-  floor depth (§4a tints water at the sea-level colour line, or flattens it to
+  floor depth (§4 of `data-pipeline.md` tints water at the sea-level color line, or flattens it to
   one plane when recessing — either way the watermask, not elevation, supplies
   the coastline).
 - **Access:** keyless, CORS-enabled, open-source (BSD-3, self-hostable) —
@@ -71,7 +71,7 @@ carrying elevation only, no independent water mask:
    overwrites coastal ocean with a land DEM's flat near-sea-level fill, so
    thresholding elevation could no longer find the shoreline — a real
    bathymetric gradient visible at one zoom became a flat fill one zoom
-   deeper. terranejs picks its working zoom per-region (§2 of
+   deeper. terranejs picks its working zoom per-region ("Resolution floor" in
    `data-pipeline.md`), so any elevation-based coastline detection was one
    zoom bump away from silently breaking.
 2. **No independent watermask.** With only a DEM to work from, the coastline
@@ -81,4 +81,4 @@ carrying elevation only, no independent water mask:
 
 Re:Earth resolves both: a separate vector-derived watermask gives the exact
 coast regardless of what the DEM does at the zoom in use, decoupling water
-detection from elevation entirely (§4a of `data-pipeline.md`).
+detection from elevation entirely (§4 of `data-pipeline.md`).

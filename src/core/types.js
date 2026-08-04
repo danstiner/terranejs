@@ -21,11 +21,13 @@
  *   triangle in `indices`, outward-wound.
  * @typedef {{ r0: number, r1: number, c0: number, c1: number }} Span
  *   Half-open grid-cell span: rows [r0,r1), columns [c0,c1) selecting a tile's cells.
- * @typedef {{ inside: Uint8Array, idOf: Map<number, number>, col: number[], row: number[],
- *   ea: number[], eb: number[], et: number[], elev: Float64Array, gw: number, HBASE: number }} Clip
- *   Circle footprint clip. `inside` is a gw×gh vertex mask. `idOf` maps a grid-edge key to
- *   the vertex id at that edge's crossing — the same id for both cells sharing the edge,
- *   which is what keeps the clipped top surface free of interior boundary. Ids at or above
- *   gw*gh index col/row/ea/eb/et/elev at (id − gw*gh).
+ * @typedef {{ inside: Uint8Array, crossOf: Map<number, number[]>,
+ *   ringOf: Map<number, number[]>, bcells: Set<number>, col: number[], row: number[],
+ *   elev: Float64Array, gw: number, gh: number, HBASE: number }} Clip
+ *   Footprint clip. `inside` is a gw×gh vertex mask. `crossOf` maps a grid-edge key to the
+ *   vertex ids crossing it, ordered along the edge — the same ids for both cells sharing the
+ *   edge, which is what keeps the clipped top surface free of interior boundary. `ringOf`
+ *   maps a cell key to ring vertices strictly inside that cell; `bcells` is the set of cells
+ *   the boundary touches. Ids at or above gw*gh index col/row/elev at (id − gw*gh).
  */
 export {};

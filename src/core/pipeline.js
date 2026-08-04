@@ -2,11 +2,11 @@
 // Mercator pixel window + print geom → elevation grid → watertight solid →
 // validated .3mf. This is the "library" surface a thin UI drives. Single tile
 // (square, hex or circle), monochrome — color/multi-tile arrive in later features.
-import { cellsBbox, cellWindows, footprintPx, footprintCellMaskPx, vertexMaskFromCells, circlePx } from "./layout.js";
-import { sourceZoom, MAX_MERCATOR_LAT } from "./tilemath.js";
+import { cellsBbox, cellWindows, footprintPx } from "./layout.js";
+import { sourceZoom, MAX_MERCATOR_LAT, globalXToLon, globalYToLat } from "./tilemath.js";
 import { cropGrid, gridRange } from "./resample.js";
 import { buildSolid } from "./mesh.js";
-import { clipCircle, clipElevs, clipRange } from "./clip.js";
+import { clipPolygon, clipElevs, clipRange } from "./clip.js";
 import { applyWaterRecess } from "./water.js";
 import { checkWatertight, signedVolume } from "./validate.js";
 import { ThreeMFWriter } from "./threemf.js";
@@ -31,14 +31,12 @@ import { fetchMosaic } from "./terrain.js";
  *   in every shape.
  */
 /**
- * @typedef {{ z: number, bbox: BBox, window: Window, span: Span, gw: number, gh: number, dx: number, dy: number, mmPerM: number, shape: Shape, ring: Array<[number,number]> | null, circle: { cx: number, cy: number, R: number } | null }} TilePlan
+ * @typedef {{ z: number, bbox: BBox, window: Window, span: Span, gw: number, gh: number, dx: number, dy: number, mmPerM: number, shape: Shape, ring: Array<[number,number]> | null }} TilePlan
  *   z = source zoom; bbox = fetch bounds; window = exact Mercator pixel window;
  *   span = full-coverage cell span; gw/gh = window dims; dx/dy = print mm per
  *   pixel; mmPerM = print mm per metre of elevation (pre-exaggeration); shape =
  *   footprint kind; ring = footprint vertices in global px (null for square,
- *   which needs no clip); circle = centre/radius in global px, non-null only
- *   for shape === "circle" (what the mesh clip needs; ring is only for the
- *   map outline and the stair mask).
+ *   which needs no clip).
  */
 
 /** @type {Cell[]} */
@@ -65,12 +63,37 @@ export function planTile(settings, { z, maxTiles = 300 } = {}) {
       `planTile: tile latitude span [${s.toFixed(4)}, ${n.toFixed(4)}]° ` +
       `exceeds the ±${MAX_MERCATOR_LAT.toFixed(4)}° Web Mercator limit`);
   }
+  // For a clipped shape maxTiles is a SOFT budget: sourceZoom counts source tiles over the ring's
+  // bbox, but the window below is expanded outward past that ring, so the fetch can need one more
+  // tile row and column — bounded by (nx+1)(ny+1)/(nx·ny), measured at 9.1% over across the
+  // lat × size × scale sweep. Tightening it would mean picking z from a window that does not
+  // exist until z is picked; the budget only exists to stop runaway fetches, so it stays soft.
   const zoom = z ?? sourceZoom(bbox, lat, scale, maxTiles);
   const { spanPx, union } = cellWindows(center, scale, tileWmm, ORIGIN, zoom, shape);
+  // The bbox guard above validated the RING; a clipped shape's window is then expanded outward
+  // past it (layout.cellWindows), so a tile whose north edge sits exactly at the cap still
+  // yields gy0 = -2 — rows above the top of the Mercator world. Nothing downstream says so
+  // legibly: globalYToLat returns a latitude past the cap, tilesForBbox asks for source row -1,
+  // and cropGrid reads off the end of the mosaic. Integer world height rather than
+  // latToGlobalY(±MAX_MERCATOR_LAT), which lands on ±0 and would make the comparison a coin
+  // flip. Only y is checked — x wraps, so a window crossing the antimeridian is well-defined.
+  const worldPx = 256 * 2 ** zoom; // 256-px source tiles, as in tilemath
+  if (union.gy0 < 0 || union.gy0 + union.gh > worldPx) {
+    throw new Error(
+      `planTile: the ${shape} tile's pixel window [${union.gy0}, ${union.gy0 + union.gh}) ` +
+      `escapes the Web Mercator world [0, ${worldPx}) at z${zoom}`);
+  }
   const dx = tileWmm / spanPx; // Mercator is conformal: square cells → dx = dy
+  // A clipped shape's window is expanded outward past its ring (layout.cellWindows), so the
+  // ring's own bbox no longer bounds the pixels cropGrid will read. Derive the fetch bounds
+  // from the window instead — exact, and it cannot drift from the window it has to cover.
+  const fetchBbox = shape === "square" ? bbox : /** @type {BBox} */ ([
+    globalYToLat(union.gy0 + union.gh - 1, zoom), globalXToLon(union.gx0, zoom),
+    globalYToLat(union.gy0, zoom), globalXToLon(union.gx0 + union.gw - 1, zoom),
+  ]);
   return {
     z: zoom,
-    bbox,
+    bbox: fetchBbox,
     window: union,
     span: { r0: 0, r1: union.gh - 1, c0: 0, c1: union.gw - 1 },
     gw: union.gw,
@@ -79,14 +102,12 @@ export function planTile(settings, { z, maxTiles = 300 } = {}) {
     dy: dx,
     mmPerM: 1000 / scale,
     shape,
-    // The ring, not the mask: 6 or 64 points travel with the plan, while the mask is
-    // megabytes at export scale and is cheap to rebuild where it is used. For circles this
-    // is dead weight bakeTileSolid never reads (clip short-circuits the cellMask branch
-    // before ring is checked) — kept for hex, and because map.js draws its own ring anyway
-    // (cellRingLatLon), so dropping the field here would save nothing there either.
-    ring: footprintPx(center, scale, tileWmm, ORIGIN[0], zoom, shape),
-    // Only a circle is clipped; hex keeps the cell-centre mask until its seam work lands.
-    circle: shape === "circle" ? circlePx(center, scale, tileWmm, zoom) : null,
+    // The ring, not the mask: 6 or n points travel with the plan, while a mask would be
+    // megabytes at export scale. n is a min of two bounds — as fine as the grid can express
+    // (pi*D/2 keeps ring edges near 2 cells), never finer than accuracy requires (a 256-gon's
+    // sagitta is 7.5 um on a 200 mm tile, 50x below a 0.4 mm nozzle).
+    ring: footprintPx(center, scale, tileWmm, ORIGIN[0], zoom, shape,
+      Math.max(16, Math.min(256, Math.round((Math.PI * (union.gw - 1)) / 2)))),
   };
 }
 
@@ -105,26 +126,21 @@ export function planTile(settings, { z, maxTiles = 300 } = {}) {
  * @returns {{ solid: Solid, emin: number, emax: number, lineElev: number, landBluePct: number }}
  */
 export function bakeTileSolid(mosaic, plan, { base, exag, flatten = false, recessMm = 0, layerMm = 0.15 }, waterMask) {
-  const { window, span, gw, gh, dx, dy, mmPerM, ring, circle } = plan;
+  const { window, span, gw, gh, dx, dy, mmPerM, ring } = plan;
   const grid = cropGrid(mosaic, window);
   // Clip geometry first — applyWaterRecess mutates the grid, so crossing ELEVATIONS have
   // to wait for it, but the inside mask and crossing positions are pure geometry.
-  const clip = circle
-    ? clipCircle(gw, gh, circle.cx - window.gx0, circle.cy - window.gy0, circle.R)
-    : null;
+  const clip = ring ? clipPolygon(gw, gh, window.gx0, window.gy0, ring) : null;
   // Square fills its window, so it needs no clip and no footprint — keeping `footprint`
   // undefined there is what makes the square path bit-identical to before shapes existed.
-  const cellMask = clip || !ring
-    ? null
-    : footprintCellMaskPx(ring, gw, gh, window.gx0, window.gy0);
-  const footprint = clip ? clip.inside : (cellMask ? vertexMaskFromCells(cellMask, gw, gh) : undefined);
+  const footprint = clip ? clip.inside : undefined;
   const { lineElev, landBluePct } = applyWaterRecess(grid, waterMask, {
     flatten, recessMm, layerMm, K: mmPerM * exag, footprint,
   });
   if (clip) clipElevs(clip, grid);
-  const { min: emin, max: emax } = clip ? clipRange(grid, clip) : gridRange(grid, footprint);
+  const { min: emin, max: emax } = clip ? clipRange(grid, clip) : gridRange(grid);
   const solid = buildSolid(grid, gw, gh, span,
-    cellMask ?? (clip ? null : new Uint8Array((gw - 1) * (gh - 1)).fill(1)),
+    clip ? null : new Uint8Array((gw - 1) * (gh - 1)).fill(1),
     { dx, dy, mmPerM, emin, exag, base }, clip ?? undefined);
   const wt = checkWatertight(solid);
   if (!wt.closed) throw new Error(`pipeline: non-watertight solid (${wt.unmatched} unmatched edges)`);

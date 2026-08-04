@@ -49,7 +49,7 @@ const NEIGHBORS = {
   circle: [],
 };
 
-// Footprint vertices in global px at zoom z (hex 6 / circle 64); null for
+// Footprint vertices in global px at zoom z (hex 6 / circle n, default 64); null for
 // square (meshed by the plain grid path, no clip).
 /**
  * @param {LatLon} center
@@ -58,9 +58,10 @@ const NEIGHBORS = {
  * @param {Cell} cell
  * @param {number} z
  * @param {Shape} shape
+ * @param {number} [n] circle ring resolution; ignored for hex
  * @returns {Array<[number,number]> | null}
  */
-export function footprintPx([lat, lon], scale, tileWmm, [q, r], z, shape) {
+export function footprintPx([lat, lon], scale, tileWmm, [q, r], z, shape, n = 64) {
   if (shape === "square") return null;
   const S = tileSpanPx(lat, scale, tileWmm, z);
   const gxC = lonToGlobalX(lon, z), gyC = latToGlobalY(lat, z);
@@ -68,95 +69,18 @@ export function footprintPx([lat, lon], scale, tileWmm, [q, r], z, shape) {
     const hx = S / 4, hy = (Math.sqrt(3) / 4) * S;
     return HEX_XU.map((xu, kk) => [gxC + (3 * q + xu) * hx, gyC + (2 * r + q + HEX_YU[kk]) * hy]);
   }
-  // circle: single cell at the origin; 64-gon of diameter tileWmm
+  // circle: single cell at the origin; n-gon of diameter tileWmm
   const R = S / 2;
-  return Array.from({ length: 64 }, (_, kk) => {
-    const a = (2 * Math.PI * kk) / 64;
+  return Array.from({ length: n }, (_, kk) => {
+    const a = (2 * Math.PI * kk) / n;
     return [gxC + R * Math.cos(a), gyC + R * Math.sin(a)];
   });
 }
 
-// Circle centre and radius in global px — what mesh clipping needs, where footprintPx's
-// 64-gon is only what the map outline and the cell-mask rasteriser need. The polygon sits
-// R(1−cos(π/64)) inside the circle, ~0.12 mm at a 200 mm tile, which is coarser than an
-// export cell; clipping uses the circle itself.
-/**
- * @param {LatLon} center
- * @param {number} scale
- * @param {number} tileWmm
- * @param {number} z
- * @returns {{ cx: number, cy: number, R: number }}
- */
-export function circlePx([lat, lon], scale, tileWmm, z) {
-  return {
-    cx: lonToGlobalX(lon, z),
-    cy: latToGlobalY(lat, z),
-    R: tileSpanPx(lat, scale, tileWmm, z) / 2,
-  };
-}
-
-// Stair cell mask for a footprint ring, decided in GLOBAL pixel coordinates:
-// cell (r,c) of a window at (gx0,gy0) has its center at integer+0.5 globals,
-// and ring verts are bit-identical across adjacent tiles (half-unit lattice),
-// so every tile reaches the same verdict for the same cell — masks are
-// deterministic and never double-claim a seam cell. Per-row scanline:
-// crossings depend only on the row's gy.
-/**
- * @param {Array<[number,number]>} ring
- * @param {number} gw
- * @param {number} gh
- * @param {number} gx0
- * @param {number} gy0
- * @returns {Uint8Array}
- */
-export function footprintCellMaskPx(ring, gw, gh, gx0, gy0) {
-  const cw = gw - 1;
-  const mask = new Uint8Array(cw * (gh - 1));
-  const m = ring.length;
-  for (let r = 0; r < gh - 1; r++) {
-    const gy = gy0 + r + 0.5;
-    const xs = [];
-    for (let i = 0, j = m - 1; i < m; j = i++) {
-      const [xi, yi] = ring[i], [xj, yj] = ring[j];
-      if ((yi > gy) !== (yj > gy)) xs.push(((xj - xi) * (gy - yi)) / (yj - yi) + xi);
-    }
-    xs.sort((a, b) => a - b);
-    for (let c = 0; c < cw; c++) {
-      const gx = gx0 + c + 0.5;
-      let lo = 0, hi = xs.length;
-      while (lo < hi) { const mid = (lo + hi) >> 1; if (xs[mid] <= gx) lo = mid + 1; else hi = mid; }
-      mask[r * cw + c] = (xs.length - lo) & 1;
-    }
-  }
-  return mask;
-}
-
-// Cell mask → vertex mask. A vertex is in the footprint when ANY of its ≤4 incident
-// cells is: requiring all four would drop every rim vertex, which is exactly the set
-// the boundary skirt is built from. Consumers use this to keep discarded corners out
-// of the tile's statistics (elevation range, waterline) — see pipeline.bakeTileSolid.
-/**
- * @param {Uint8Array} cellMask  (gw-1)×(gh-1), row-major
- * @param {number} gw
- * @param {number} gh
- * @returns {Uint8Array} gw×gh, row-major
- */
-export function vertexMaskFromCells(cellMask, gw, gh) {
-  const cw = gw - 1, ch = gh - 1;
-  const out = new Uint8Array(gw * gh);
-  for (let r = 0; r < ch; r++) {
-    for (let c = 0; c < cw; c++) {
-      if (!cellMask[r * cw + c]) continue;
-      const a = r * gw + c;
-      out[a] = 1; out[a + 1] = 1; out[a + gw] = 1; out[a + gw + 1] = 1;
-    }
-  }
-  return out;
-}
-
-// Per-cell pixel windows at zoom z. Cell edges land on Math.round of the exact
-// Mercator crossing, so adjacent cells SHARE the edge pixel index and
-// physical tile size quantizes to pixel pitch (≤1 px).
+// Per-cell pixel windows at zoom z. A square's edges land on Math.round of the exact
+// Mercator crossing, so adjacent cells SHARE the edge pixel index. Clipped shapes (hex,
+// circle) instead expand outward past their ring, because their ring extremes coincide
+// with the window bounds and rounding would put geometry outside the grid — see the loop.
 // Windows are inclusive pixel-center ranges: {gx0, gy0, gw, gh}.
 /**
  * @param {LatLon} center
@@ -179,11 +103,22 @@ export function cellWindows([lat, lon], scale, tileWmm, cells, z, shape = "squar
   for (const cell of cells) {
     const [i, j] = cell;
     let x0, x1, y0, y1;
-    if (shape === "hex") {
-      x0 = Math.round(gxC + (3 * i - 2) * hx); x1 = Math.round(gxC + (3 * i + 2) * hx);
-      y0 = Math.round(gyC + (2 * j + i - 1) * hy); y1 = Math.round(gyC + (2 * j + i + 1) * hy);
-    } else { // square and circle: full S×S bbox around the cell center
+    if (shape === "square") {
+      // The square's rim IS the window border, so rounding is the definition of its extent.
       x0 = bx(i); x1 = bx(i + 1); y0 = by(j); y1 = by(j + 1);
+    } else {
+      // Clipped shapes: the ring's extremes are exactly these expressions, so rounding
+      // would leave a corner — or a whole flat hex edge — outside the grid, and two tiles
+      // sharing that edge would truncate it asymmetrically. Expand outward instead. The
+      // extra 1 px guarantees a full ring of outside vertices, so every boundary cell has
+      // all four corners in-grid and every crossing's floor() lands on a real edge key.
+      const [ex0, ex1, ey0, ey1] = shape === "hex"
+        ? [gxC + (3 * i - 2) * hx, gxC + (3 * i + 2) * hx,
+           gyC + (2 * j + i - 1) * hy, gyC + (2 * j + i + 1) * hy]
+        : [gxC + (i - 0.5) * S, gxC + (i + 0.5) * S,
+           gyC + (j - 0.5) * S, gyC + (j + 0.5) * S];
+      x0 = Math.floor(ex0) - 1; x1 = Math.ceil(ex1) + 1;
+      y0 = Math.floor(ey0) - 1; y1 = Math.ceil(ey1) + 1;
     }
     wins.set(key(cell), { gx0: x0, gy0: y0, gw: x1 - x0 + 1, gh: y1 - y0 + 1 });
     gx0 = Math.min(gx0, x0); gy0 = Math.min(gy0, y0);
@@ -245,6 +180,8 @@ export function cellsBbox(center, scale, tileWmm, cells, shape = "square") {
  */
 export function cellRingLatLon(center, scale, tileWmm, cell, shape) {
   if (shape === "hex" || shape === "circle") {
+    // Fixed 64 for display: the map outline is a few hundred screen pixels, so the bake's
+    // adaptive resolution would be wasted here.
     return /** @type {[number,number][]} */ (footprintPx(center, scale, tileWmm, cell, 0, shape))
       .map(([gx, gy]) => [globalYToLat(gy, 0), globalXToLon(gx, 0)]);
   }

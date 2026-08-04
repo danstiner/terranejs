@@ -20,7 +20,7 @@ import { HEX_H } from "../core/layout.js";
 
 // Max source-tile budget per bake, one per quality tier (passed as `maxTiles`). Preview
 // detail is scaled to the viewport, not the print — a small tile budget keeps the bake fast
-// and the fetch light on a free tile host. See docs/specs/data-pipeline.md §2.
+// and the fetch light on a free tile host. See data-pipeline.md "Resolution floor".
 const FAST_MAX_TILES = 1;      // one tile → instant relief while the detailed bake runs
 const CRISP_MAX_TILES = 16;    // ~4×4 tiles → one zoom deeper on wide tiles, still a light fetch
 const EXPORT_MAX_TILES = 300;  // full print resolution (core's default tile budget)
@@ -133,7 +133,7 @@ function renderLegend(bands) {
   /** @param {string} c @param {string} label */
   const row = (c, label) => `<li><span class="sw" style="background:${c}"></span><span>${label}</span></li>`;
   // Base filament first, then each M600 change in print order (ascending Z). Heights are
-  // approximate — the legend uses the preview bake's frame, not the export's (data-pipeline.md §8).
+  // approximate — the legend uses the preview bake's frame, not the export's (data-pipeline.md "Color bands").
   const rows = [row(bands.baseHex, `${bands.baseName} — base, no pause`)];
   for (const c of bands.changes)
     rows.push(row(hex(c.color), `${BAND_NAMES[c.band]} — Z ${c.z.toFixed(1)} mm (${c.boundary} · ${c.elev} m)`));

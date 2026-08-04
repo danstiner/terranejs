@@ -5,20 +5,6 @@ terranejs turns a region you pick on a map into a wall-mountable,
 tracks the real terrain, scaled down to fit a print bed. This is the
 end-to-end path from raw elevation data to a slicer-ready model file.
 
-```mermaid
-flowchart LR
-    A[Source tiles<br/>Re:Earth terrarium] --> B[Decode<br/>terrarium PNG → metres]
-    B --> C[Mosaic<br/>stitched elevation raster]
-    C --> D[Resample<br/>print sample grid]
-    D --> E[Mesh<br/>watertight solid]
-    E --> F[Validate<br/>watertight + volume]
-    F --> G[Export<br/>3MF file]
-
-    S1[Map scale] -.-> E
-    S2[Vertical exaggeration] -.-> E
-    S3[Base thickness] -.-> E
-```
-
 ## Key terms
 
 - **Source tile** — one elevation PNG from the data source, addressed by Web
@@ -33,7 +19,7 @@ flowchart LR
 - **Tile** (the product) — the physical 3D-printed square this whole
   pipeline produces. Not to be confused with a *source tile*.
 
-## 1. Data source
+## Data source
 
 Elevation and water extent come from **Re:Earth Terrain** (Mapterhorn),
 terrarium-encoded PNG tiles addressed as standard Web Mercator z/x/y tiles.
@@ -43,7 +29,16 @@ reading its pixels and applying that formula. Full source details, the
 watermask tile, and attribution are in
 [`data-sources.md`](data-sources.md).
 
-## 2. Choosing detail
+## Coordinate model
+
+Geometry throughout this pipeline is computed in **Web Mercator**, a flat
+projection of the Earth — not a curved or true-Earth model. Web Mercator
+cannot represent the poles, so its coverage stops at roughly ±85° latitude;
+a region reaching beyond that band has no source tiles and is rejected up
+front rather than exported. A curved-shell, true-Earth coordinate model is a
+potential future feature.
+
+## Resolution floor
 
 Printers have a practical resolution floor — consumer machines can't
 reliably repeat much finer than about 0.05 mm — so elevation data more
@@ -58,7 +53,17 @@ The live preview goes coarser still: the screen shows far less detail than the
 print, so a smaller tile budget bakes a faster, lighter mesh that looks identical
 on-screen. Only the exported model uses the full budget.
 
-## 3. Fetch + assemble
+# Pipeline stages
+
+```mermaid
+flowchart LR
+    A[<b>1. Fetch + assemble</b><br/><i>source tiles → mosaic</i>] --> B[<b>2. Resample</b><br/><i>mosaic → print grid</i>]
+    B --> C[<b>3. Clip</b><br/><i>hex/circle to true rim</i>] --> D[<b>4. Water</b><br/><i>recess + color line</i>]
+    D --> E[<b>5. Mesh</b><br/><i>watertight solid</i>] --> F[<b>6. Validate</b><br/><i>watertight + volume</i>]
+    F --> G[<b>7. Export</b><br/><i>3MF ± color changes</i>]
+```
+
+## 1. Fetch + assemble
 
 Given the region and the chosen zoom, terranejs works out which source
 tiles cover it, fetches them one at a time, decodes each to metres, and
@@ -69,7 +74,7 @@ infrastructure, and a preview needs only a tile or two. Elevation and
 watermask are fetched as two independent passes that overlap each other,
 so a bake holds at most two connections open.
 
-## 4. Resample
+## 2. Resample
 
 The mesh isn't built straight from mosaic pixels — it's built from the
 print's own sample grid, a lattice sized to the tile's footprint and map
@@ -78,72 +83,69 @@ lands on exactly one pixel: resampling reduces to a direct read, and
 adjacent tiles that share an edge sample identical seam data by
 construction.
 
-### Tile footprints
+## 3. Clip
 
 A tile prints as a square, a flat-top hexagon, or a circle. All three share one pixel window
-and one elevation grid. Squares fill their window exactly. Hexagons and circles apply a
-boundary — hexagons via a **cell mask** that stairs, circles via clipping to the true circle.
+and one elevation grid; they differ only at the boundary. A square's rim IS its window, so it
+needs no boundary work. Hexagons and circles carry a **footprint ring** — 6 vertices, or an
+adaptive n-gon — and one shared clipper cuts the grid to that ring, so the printed rim follows
+the true shape instead of the cell lattice. In code: `layout.footprintPx` (the ring) →
+`clip.clipPolygon` (inside mask + boundary crossings) → `mesh.buildSolid` (boundary-cell
+polygons fanned into the watertight solid).
 
-- `layout.footprintPx` returns the footprint ring in global pixels — 6 vertices for a hexagon
-  (on a half-unit integer lattice, so a vertex shared by two adjacent hexes is bit-identical),
-  64 for a circle, and `null` for a square, which fills its window and needs no clip.
-- `layout.footprintCellMaskPx` rasterises that ring by scanline at cell centres, decided in
-  global pixel coordinates so adjacent tiles reach the same verdict for a shared cell and
-  never double-claim a seam.
-- `mesh.buildSolid` applies the boundary (hexagon cell mask or circle clip), builds the
-  top surface, then closes it into a watertight solid with a skirt and flat base. Squares need
-  neither mask nor clip; they fill the window outright.
+**Why clip instead of mask.** The earlier design rasterised the ring to one bit per cell,
+which constrains the boundary to run along cell edges. A flat-top hex then printed two clean
+faces (its horizontal edges land on cell rows) and four stepped ones (its 60° edges jog every
+other row) — wrong at any resolution, because the defect is the inconsistency, not the step
+size. Clipping cuts boundary cells to the ring itself, at sub-cell resolution.
 
-**Circles are clipped to the true circle.** `clip.clipCircle` intersects the circle with the
-grid: boundary cells are cut rather than taken whole, and the rim follows the circle instead
-of the cell lattice. Crossings are keyed by grid edge so the two cells sharing an edge
-resolve one vertex id — that is what keeps the clipped surface free of interior boundary,
-and hence watertight. Because every crossing sits exactly on the circle, the printed
-footprint is an inscribed polygon whose area deficit is ~1e-7 relative; the cell-centre mask
-it replaced measured 0.78387 of the bounding box against π/4 = 0.78540.
+**Why one clipper for both shapes.** Hexes add a requirement circles never have: hexes tile,
+so neighbouring tiles must agree **bit-for-bit** on a shared edge or a multi-tile print grows
+a seam. Rather than a hex-specific path, the single convex-polygon clipper hardens that
+guarantee into its geometry — a circle is just a ring with more vertices:
 
-Elevation at a rim crossing is linear along its edge — the interior's piecewise-linear
-surface sampled at the boundary — so `emin`/`emax` are taken over inside samples **plus**
-crossing elevations. `emin` sets the base plane, and a crossing interpolated toward a lower
-outside sample can sit below every inside sample; statistics that missed it would put the
-surface under its own base.
+- Crossings are computed once into a table keyed by **grid edge, never by cell**: the two
+  cells sharing an edge resolve the same vertex, which keeps the surface free of interior
+  boundary. (Clipping each cell independently would emit coincident-but-distinct vertices
+  and build a wall through the tile.)
+- All boundary geometry **snap-rounds to a 1/256-cell lattice in global pixels**. A lattice,
+  unlike an epsilon threshold, is transitive and order-independent — no tolerance comparison
+  exists anywhere in the clipper.
+- Arithmetic is **canonicalised**: edge endpoints are ordered before intersecting and sums
+  are evaluated in the global frame, so a shared crossing computes to the same bits whichever
+  tile computes it, in either traversal direction.
+- Boundary-cell polygons are assembled by **convex hull**, not an angle sort: snapping moves
+  each point independently, so the collected set is only approximately convex — a hull
+  tolerates that where a sort silently self-intersects.
 
-**Hexagons still stair, and unevenly.** From the ring offsets (`layout.js:41-42`) a flat-top
-hex has two constant-y edges that land flush on cell rows and cut clean, and four edges at
-60° (Δy/Δx = √3) that stair, jogging about every other row. Two smooth faces and four
-stepped ones is wrong at any resolution — the inconsistency is the defect, not the step size
-(~0.12 mm at export, under both nozzle width and layer height). Clipping them is deferred:
-hexes tile, so neighbouring tiles must agree on a shared edge's height profile, which
-circles never need (`NEIGHBORS.circle` is empty).
+Consequences of clipping:
 
-**`tileWmm` is the bounding-square side** — the largest dimension — in every shape, so a tile
-always fits the same bed envelope. Enclosed area therefore differs by shape:
+- **Windows expand outward** past the ring instead of rounding: a ring's extremes coincide
+  with its window bounds, so rounding inward would cut a corner — or a whole flat hex edge —
+  out of the grid, asymmetrically between the two tiles sharing it.
+- **Circle resolution adapts to the grid** (16 ≤ n ≤ 256, ring edges ≈ 2 cells). A fixed n is
+  wrong at both ends: a preview-tier grid has fewer vertices than a fine n-gon, while export
+  visibly facets a coarse one. The cap is where accuracy saturates — ~7 µm deviation from the
+  true circle on a 200 mm tile, far under a nozzle width. The printed circle is the n-gon
+  (area deficit 2.5% at the n=16 floor, 0.01% at the cap).
+- **Statistics cover the footprint, not the window.** Terrain outside the ring never prints,
+  so it must not set the base plane, the color bands, or the waterline. The elevation range
+  scans inside samples plus the rim crossings' interpolated elevations — a crossing
+  interpolated toward a lower outside sample can sit below every inside sample, and missing
+  it would put the surface under its own base. Hex statistics shifted slightly when this
+  replaced the mask-derived footprint: the intended consequence of printing the true rim.
+- **`tileWmm` stays the bounding-square side in every shape**, so any tile fits the same bed
+  envelope; enclosed area differs — square 100%, circle → π/4 ≈ 78.5%, hex 3√3/8 ≈ 65%.
 
-| Shape  | Printed bbox at 200 mm | Area | vs. square |
-| ------ | ---------------------- | ---- | ---------- |
-| Square | 200 × 200 mm | 40000 mm² | 100% |
-| Circle | 200 × 200 mm | 31365 mm² | 78.4% (≈π/4) |
-| Hex    | 200 × 173.2 mm | 25981 mm² | 65.0% (3√3/8) |
-
-**Statistics are computed over the footprint, not the window.** A hexagon discards 25% of its
-own window and a circle 21.6% (window-relative — a different frame from the table's vs.-square
-column above). That terrain never reaches the print, so it must not set `emin`/`emax`
-(the base plane and the altitude colour bands) or the waterline. For hexagons, `layout.vertexMaskFromCells`
-derives a vertex footprint from the cell mask — a vertex counts when **any** of its ≤4 incident
-cells is set, since requiring all four would drop the rim vertices the skirt is built from — and
-`resample.gridRange` and `water.applyWaterRecess` both skip samples outside it. For circles,
-the footprint comes from `clip.inside` and statistics from `clipRange` (§105–109 above). The square path
-passes no footprint and uses the full window.
-
-## 4a. Water handling
+## 4. Water
 
 Water (ocean + lakes + rivers) is masked from the Re:Earth **watermask** tile, fetched at the
 same bbox and zoom as the elevation mosaic — pixel-aligned, so no detection or flood-fill is
-needed. Colour is per-print-Z, so water reads blue only at or below the water/land colour line;
+needed. Colour is per-print-Z, so water reads blue only at or below the water/land color line;
 two orthogonal controls decide where the water and that line sit:
 
 1. **Recess all water to lowest waterline** (checkbox, default off). Off: the terrain is
-   untouched and the colour line sits at 0 m exactly — classic sea-level tint at any map scale.
+   untouched and the color line sits at 0 m exactly — classic sea-level tint at any map scale.
    Ocean prints blue; land above sea level prints as terrain, however low; land at/below the
    line (polders) prints blue, with a warning naming the checkbox as the fix. On: every masked
    cell is pulled down to one plane two print layers below the lowest land — `min(lowest water,
@@ -151,16 +153,16 @@ two orthogonal controls decide where the water and that line sit:
    and land never does. Flattening is unbounded by design: a reservoir far above a river drops
    all the way to the shared plane.
 2. **Water recess** (slider, 0–5 mm). Sinks all water that much further in print space without
-   moving the colour line — a groove between water and land. With the checkbox off, a large
+   moving the color line — a groove between water and land. With the checkbox off, a large
    recess can sink even high water below the sea-level line — blue pits where lakes were;
    documented, not guarded.
 
 A tile with no masked water gets no water line at all: waterless below-sea-level land (Death
 Valley) prints as ordinary terrain.
 
-The colour line becomes `thresholds[0]` in §8's band array (the ecological lines clamp up to it,
+The color line becomes `thresholds[0]` in the Color bands array below (the ecological lines clamp up to it,
 staying ascending), so it drives the same per-print-Z filament changes as any other band
-boundary — no separate colour path. The **exported** water pause alone is lifted one print layer
+boundary — no separate color path. The **exported** water pause alone is lifted one print layer
 (Advanced layer-height setting, default 0.15 mm) above the line, so the water's top layer prints
 blue before the swap — a sub-layer offset the preview and warning do not carry, since they show
 the true line. With the base thickness divisible by the layer height, that pause lands exactly
@@ -200,9 +202,11 @@ The validated solid is written out as a **3MF** file — a standard,
 ZIP-based 3D model container that slicer software reads to generate
 printer instructions. Export is monochrome by default: one uncolored
 solid per tile — with an option to embed altitude color-change
-instructions (§8) for a color-banded print.
+instructions (Color bands, below) for a color-banded print.
 
-## 8. Color bands (altitude)
+# Appendix
+
+## Color bands (altitude)
 
 Terrain is shaded into a few discrete altitude bands — water, forest,
 tundra, rock, snow — whose boundaries track the timberline and snowline.
@@ -218,13 +222,13 @@ Export stays monochrome by default, but the color-changes option writes each
 band boundary as a filament-change-by-height instruction (a PrusaSlicer
 color change / `M600`) at its print-Z; the operator swaps filament at those
 heights to get an altitude-banded print with no multi-material hardware. So the
-changes actually load, the coloured `.3mf` is written as a minimal PrusaSlicer
-*project* (a settings-free config stub) — PrusaSlicer only reads colour changes
+changes actually load, the colored `.3mf` is written as a minimal PrusaSlicer
+*project* (a settings-free config stub) — PrusaSlicer only reads color changes
 from a file it recognises as a project, not a bare geometry import. The band
 model lives in `src/core/colors.js` and is deliberately approximate — a
 good-enough hypsometric look, not a climate dataset.
 
-## 9. Preview + UI
+## Preview + UI
 
 The website wraps this pipeline in an interactive loop: pick a region on a map
 (Leaflet), adjust print settings, watch a live 3D preview (three.js) re-bake and
@@ -241,12 +245,3 @@ render what it returns. That baking runs on a background worker thread — which
 per-vertex normals the preview needs for lighting, so nothing meshes them on the
 main thread — leaving the interface responsive even while a tile is built, and
 letting the sharper pass carry more detail without stalling the page.
-
-## 10. Coordinate model
-
-Geometry throughout this pipeline is computed in **Web Mercator**, a flat
-projection of the Earth — not a curved or true-Earth model. Web Mercator
-cannot represent the poles, so its coverage stops at roughly ±85° latitude;
-a region reaching beyond that band has no source tiles and is rejected up
-front rather than exported. A curved-shell, true-Earth coordinate model is a
-potential future feature.

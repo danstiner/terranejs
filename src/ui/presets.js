@@ -50,7 +50,7 @@ export const PRESETS = [
   { name: "Glacier", group: "Park", center: [48.7, -113.72], scale: 250000 },
   { name: "Great Smoky Mountains", group: "Park", center: [35.65, -83.5], scale: 250000 },
   { name: "Haleakalā", group: "Park", center: [20.71, -156.17], scale: 150000 },
-  // Water — tiles chosen because they stress the water model (data-pipeline.md §4a) in ways
+  // Water — tiles chosen because they stress the water model (data-pipeline.md §4) in ways
   // ordinary relief doesn't. Each is a different disagreement between the default sea-level
   // colour line and the "recess all water" checkbox.
   // Sub-sea land beside tidal ocean: unchecked, the polders print blue with the warning; the
