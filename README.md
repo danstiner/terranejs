@@ -9,7 +9,7 @@ No build step. Plain ES modules; browser dependencies load from a CDN importmap.
 
 ```bash
 npm install        # dev dependencies (TypeScript for typecheck, type stubs)
-npm run dev        # serve the repo at http://localhost:8000 (pass a port to override)
+npm run dev        # serve the repo at http://127.0.0.1:8000 (pass a port to override)
 npm test           # node --test over test/**/*.test.mjs
 npm run typecheck  # tsc --checkJs (JSDoc types; never emits)
 ```
