@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   CELL_CAP, tileSpanPx, cellWindows, cellBbox, cellsBbox, ghostCells,
   footprintPx, cellRingLatLon, pruneToOrigin, connectedToOrigin,
-  footprintCellMaskPx, pointInPolygon, vertexMaskFromCells,
+  pointInPolygon,
 } from "../src/core/layout.js";
 import { lonToGlobalX, latToGlobalY } from "../src/core/tilemath.js";
 
@@ -119,8 +119,12 @@ test("hex windows: bbox of the footprint, union covers, sane extents", () => {
   const { wins, union } = cellWindows(CENTER, SCALE, W, cells, 11, "hex");
   for (const cell of cells) {
     const w2 = /** @type {Window} */ (wins.get(`${cell[0]},${cell[1]}`));
-    assert.ok(Math.abs(w2.gw - 1 - S) <= 1, `width ${w2.gw - 1} vs ${S}`);
-    assert.ok(Math.abs(w2.gh - 1 - S * Math.sqrt(3) / 2) <= 1, `height ${w2.gh - 1}`);
+    // Clipped windows are floor(lo)-1 .. ceil(hi)+1 around a span-S extreme-to-extreme
+    // range, so width/height run S+2..S+4 (the +2 padding, plus up to 2 more from the two
+    // roundings) rather than matching S within 1 like the old round()-based window did.
+    const dw = w2.gw - 1 - S, dh = w2.gh - 1 - (S * Math.sqrt(3)) / 2;
+    assert.ok(dw >= 2 - 1e-9 && dw < 4 + 1e-9, `width ${w2.gw - 1} vs span ${S}`);
+    assert.ok(dh >= 2 - 1e-9 && dh < 4 + 1e-9, `height ${w2.gh - 1}`);
     assert.ok(w2.gx0 >= union.gx0 && w2.gy0 >= union.gy0, "inside union");
     assert.ok(w2.gx0 + w2.gw <= union.gx0 + union.gw && w2.gy0 + w2.gh <= union.gy0 + union.gh, "inside union hi");
   }
@@ -169,64 +173,6 @@ test("hex footprint: absolute vertex positions, order, and edge length", () => {
   }
 });
 
-test("footprintCellMaskPx: mask area matches the analytic footprint", () => {
-  for (const z of [10, 12]) {
-    for (const [shape, areaF] of /** @type {Array<[Shape, number]>} */ ([["hex", (3 * Math.sqrt(3)) / 8], ["circle", Math.PI / 4]])) {
-      const S = tileSpanPx(CENTER[0], SCALE, W, z);
-      const { wins } = cellWindows(CENTER, SCALE, W, /** @type {Cell[]} */ ([[0, 0]]), z, shape);
-      const win = /** @type {Window} */ (wins.get("0,0"));
-      const ring = /** @type {[number,number][]} */ (footprintPx(CENTER, SCALE, W, [0, 0], z, shape));
-      const mask = footprintCellMaskPx(ring, win.gw, win.gh, win.gx0, win.gy0);
-      const area = mask.reduce((a, b) => a + b, 0);
-      const want = areaF * S * S;
-      assert.ok(Math.abs(area - want) / want < 0.02, `${shape} z${z}: ${area} vs ${want}`);
-    }
-  }
-});
-
-test("hex stair masks: adjacent tiles never double-claim a global cell", () => {
-  let checked = 0;
-  for (const [dq, dr] of [[1, 0], [0, 1], [1, -1]]) {
-    for (const z of [10, 12]) {
-      const cells = /** @type {Cell[]} */ ([[0, 0], [dq, dr]]);
-      let wins;
-      try { ({ wins } = cellWindows(CENTER, SCALE, W, cells, z, "hex")); } catch { continue; }
-      const [wa, wb] = cells.map((c2) => /** @type {Window} */ (wins.get(`${c2[0]},${c2[1]}`)));
-      const [ra, rb] = cells.map((c2) => /** @type {[number,number][]} */ (footprintPx(CENTER, SCALE, W, c2, z, "hex")));
-      const [ma, mb] = /** @type {Array<[Window, [number,number][]]>} */ ([[wa, ra], [wb, rb]]).map(([w2, r2]) =>
-        footprintCellMaskPx(r2, w2.gw, w2.gh, w2.gx0, w2.gy0));
-      const ox0 = Math.max(wa.gx0, wb.gx0), ox1 = Math.min(wa.gx0 + wa.gw - 1, wb.gx0 + wb.gw - 1);
-      const oy0 = Math.max(wa.gy0, wb.gy0), oy1 = Math.min(wa.gy0 + wa.gh - 1, wb.gy0 + wb.gh - 1);
-      let both = 0, gaps = 0, cellsSeen = 0;
-      for (let gy = oy0; gy < oy1; gy++) {
-        for (let gx = ox0; gx < ox1; gx++) {
-          const inA = ma[(gy - wa.gy0) * (wa.gw - 1) + (gx - wa.gx0)];
-          const inB = mb[(gy - wb.gy0) * (wb.gw - 1) + (gx - wb.gx0)];
-          if (inA && inB) both++;
-          // gap = cell inside a footprint per the reference test but unclaimed
-          if (!inA && !inB) {
-            const ctr = /** @type {[number, number]} */ ([gx + 0.5, gy + 0.5]);
-            if (pointInPolygon(ctr, ra) || pointInPolygon(ctr, rb)) gaps++;
-          }
-          cellsSeen++;
-        }
-      }
-      if (dq === 0) {
-        // horizontal shared edge: tight-bbox windows abut at a single vertex
-        // row, so the cell overlap is empty — double-claim impossible
-        assert.equal(cellsSeen, 0, `direction ${dq},${dr} z${z}: windows abut`);
-        assert.equal(wa.gy0 + wa.gh - 1, wb.gy0, `direction ${dq},${dr} z${z}: shared vertex row`);
-      } else {
-        assert.ok(cellsSeen > 100, `direction ${dq},${dr} z${z}: overlap region non-trivial`);
-      }
-      assert.equal(both, 0, `direction ${dq},${dr} z${z}: ${both} double-claimed cells`);
-      assert.equal(gaps, 0, `direction ${dq},${dr} z${z}: ${gaps} unclaimed footprint cells`);
-      checked++;
-    }
-  }
-  assert.ok(checked >= 5, `enough combos ran (${checked})`);
-});
-
 // hex/circle "watertight solid" tests deferred to PR4 (need mesh.js + validate.js).
 
 test("pointInPolygon: square", () => {
@@ -245,40 +191,45 @@ test("hex windows sit consistently around their footprint centers (placement inv
       const ring = /** @type {[number,number][]} */ (footprintPx(CENTER, SCALE, W, [q, r], z, "hex"));
       const cx = (ring[0][0] + ring[3][0]) / 2, cy = (ring[0][1] + ring[3][1]) / 2;
       const w2 = /** @type {Window} */ (wins.get(`${q},${r}`));
-      assert.ok(Math.abs(w2.gx0 - (cx - S / 2)) <= 0.5 + 1e-9, `x origin vs center - S/2 (${q},${r} z${z})`);
-      assert.ok(Math.abs(w2.gy0 - (cy - (Math.sqrt(3) / 4) * S)) <= 0.5 + 1e-9, `y origin (${q},${r} z${z})`);
+      // Clipped windows expand outward: gx0/gy0 = floor(extreme) - 1, not round(extreme).
+      assert.equal(w2.gx0, Math.floor(cx - S / 2) - 1, `x origin vs center - S/2 (${q},${r} z${z})`);
+      assert.equal(w2.gy0, Math.floor(cy - (Math.sqrt(3) / 4) * S) - 1, `y origin (${q},${r} z${z})`);
     }
   }
-});
-
-test("vertexMaskFromCells: a full cell mask marks every vertex", () => {
-  const gw = 5, gh = 4;
-  const cells = new Uint8Array((gw - 1) * (gh - 1)).fill(1);
-  const v = vertexMaskFromCells(cells, gw, gh);
-  assert.equal(v.length, gw * gh);
-  assert.ok(v.every((x) => x === 1), "every vertex is in a full footprint");
-});
-
-test("vertexMaskFromCells: one cell marks exactly its 4 corners", () => {
-  const gw = 3, gh = 3;                       // 2x2 cells
-  const cells = Uint8Array.from([0, 0, 0, 1]); // only cell (r=1,c=1)
-  const v = vertexMaskFromCells(cells, gw, gh);
-  // corners of cell (1,1) are vertices (1,1) (1,2) (2,1) (2,2) → ids 4,5,7,8
-  assert.deepEqual([...v], [0, 0, 0, 0, 1, 1, 0, 1, 1]);
 });
 
 // The rim is the point: a vertex on the footprint edge belongs to at least one
 // in-footprint cell and at least one discarded one. Requiring ALL incident cells
 // would drop it, and the skirt is built from exactly those vertices.
-test("vertexMaskFromCells: a hex footprint keeps its rim vertices", () => {
-  const z = 11;
-  const { wins } = cellWindows(CENTER, SCALE, W, /** @type {Cell[]} */ ([[0, 0]]), z, "hex");
-  const win = /** @type {Window} */ (wins.get("0,0"));
-  const ring = /** @type {[number,number][]} */ (footprintPx(CENTER, SCALE, W, [0, 0], z, "hex"));
-  const cells = footprintCellMaskPx(ring, win.gw, win.gh, win.gx0, win.gy0);
-  const v = vertexMaskFromCells(cells, win.gw, win.gh);
-  const setCells = cells.reduce((a, b) => a + b, 0);
-  const setVerts = v.reduce((a, b) => a + b, 0);
-  assert.ok(setCells > 0, "hex footprint is non-empty");
-  assert.ok(setVerts > setCells, `rim included: ${setVerts} verts > ${setCells} cells`);
+// footprintPx puts the hex's extreme vertices at exactly the same expressions cellWindows
+// rounds to build the window, so a round that goes inward leaves a corner — or a whole flat
+// edge — outside the grid, where no vertex can express it. Sweep sub-pixel phase via lon so
+// the rounding lands both ways.
+test("cellWindows: the footprint ring lies strictly inside the window", () => {
+  for (const shape of /** @type {const} */ (["hex", "circle"])) {
+    for (let k = 0; k < 32; k++) {
+      const lon = -122.3294 + k * 0.0007;
+      const center = /** @type {[number, number]} */ ([47.6035, lon]);
+      const { union } = cellWindows(center, 250000, 200, [[0, 0]], 13, shape);
+      const ring = /** @type {Array<[number, number]>} */ (
+        footprintPx(center, 250000, 200, [0, 0], 13, shape));
+      for (const [gx, gy] of ring) {
+        assert.ok(gx > union.gx0 && gx < union.gx0 + union.gw - 1,
+          `${shape} k=${k}: x ${gx} outside [${union.gx0}, ${union.gx0 + union.gw - 1}]`);
+        assert.ok(gy > union.gy0 && gy < union.gy0 + union.gh - 1,
+          `${shape} k=${k}: y ${gy} outside [${union.gy0}, ${union.gy0 + union.gh - 1}]`);
+      }
+    }
+  }
+});
+
+test("footprintPx: circle ring resolution is a parameter, default 64", () => {
+  const c = /** @type {[number, number]} */ ([47.6035, -122.3294]);
+  assert.equal(/** @type {Array<[number, number]>} */
+    (footprintPx(c, 250000, 200, [0, 0], 13, "circle")).length, 64);
+  assert.equal(/** @type {Array<[number, number]>} */
+    (footprintPx(c, 250000, 200, [0, 0], 13, "circle", 256)).length, 256);
+  // hex ignores it
+  assert.equal(/** @type {Array<[number, number]>} */
+    (footprintPx(c, 250000, 200, [0, 0], 13, "hex", 256)).length, 6);
 });

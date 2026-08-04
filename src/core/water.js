@@ -6,7 +6,7 @@
 // sea-level tint, geometry untouched. `recessMm` sinks all water further and never moves the
 // line. The line is the TRUE waterline at any map scale; only the exported M600 pause is lifted
 // one layer above it (colors.colorChanges pauseLiftMm) so the water's top layer prints blue.
-// See docs/specs/data-pipeline.md §4a and
+// See docs/specs/data-pipeline.md §4 (Water) and
 // docs/superpowers/specs/2026-08-01-water-plane-simplification-design.md.
 
 /** Warning threshold: % of land printing blue before the UI nudges toward the flatten checkbox.

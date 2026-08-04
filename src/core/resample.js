@@ -72,18 +72,13 @@ export function resampleBilinear(mosaic, [s, w, n, e], gridW, gridH) {
 
 /**
  * Elevation min/max across the grid, for picking the height range used in meshing/scaling.
- * Optional `vmask` restricts the scan to a footprint (see layout.vertexMaskFromCells):
- * a hex or circle tile discards its window's corners, and terrain that never reaches the
- * print must not set emin/emax — that would lift the surface off the base plane and shift
- * every altitude colour band. Absent = scan everything (the square path).
+ * Clipped shapes use clip.clipRange instead, which scans the printed surface plus its rim.
  * @param {Float32Array} grid
- * @param {Uint8Array} [vmask]
  * @returns {{ min: number, max: number }}
  */
-export function gridRange(grid, vmask) {
+export function gridRange(grid) {
   let min = Infinity, max = -Infinity;
   for (let i = 0; i < grid.length; i++) {
-    if (vmask && !vmask[i]) continue;
     const v = grid[i];
     if (v < min) min = v;
     if (v > max) max = v;

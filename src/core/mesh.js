@@ -1,7 +1,7 @@
 // Heightfield → watertight indexed export solids, in tile-local mm (origin at
 // the tile's SW corner, +Y = north). The top surface is grid-cell triangles, +Z
 // wound: stair-clipped to a cell mask (gridTopTris) without a `clip`, or cut to
-// the true circle boundary (clippedTopTris, boundary cells fanned from their
+// the true footprint boundary (clippedTopTris, boundary cells fanned from their
 // clipped polygon) with one. Either way it's closed by a boundary skirt and a
 // flat z=0 base. The base degrades fan → ear-clip → mirror so any footprint
 // (full, multi-island, notched, holed) closes watertight.
@@ -185,10 +185,11 @@ function baseTriangles(loop, xy) {
       (ring[j][1] - ring[i][1]) * (ring[k][0] - ring[i][0]);
     // earclip's every-other ear is guarded by this same cross3>AREA2_EPS test, but its
     // final idx.length===3 remainder is pushed unconditionally — if that remainder is
-    // exactly collinear (e.g. a rim vertex that only reads inside via SNAP_EPS dilation,
-    // flanked by two independent crossings on the same grid line), it slips through as a
-    // zero-area triangle. Reject the whole loop here instead of shipping it: the caller
-    // falls back to mirroring, which needs nothing from this ring but a non-degenerate top.
+    // exactly collinear (e.g. a crossing snapped onto a grid vertex, forced inside at
+    // placement by clip.js's place() both-integral branch, flanked by two independent
+    // crossings snapped onto that same grid line), it slips through as a zero-area
+    // triangle. Reject the whole loop here instead of shipping it: the caller falls
+    // back to mirroring, which needs nothing from this ring but a non-degenerate top.
     if (Math.abs(a2) <= AREA2_EPS) return null;
     covered += Math.abs(a2);
     tris.push(i, k, j); // earclip yields CCW (+Z); flip to −Z
@@ -337,16 +338,27 @@ function gridTopTris(gw, span, mask) {
   return topTris;
 }
 
-// One boundary cell's clipped polygon, as vertex ids walked CCW into the module-scratch
-// `poly`; returns its length. Corners A=(r,c) B=(r,c+1) C=(r+1,c) D=(r+1,c+1); the walk is
-// C→D→B→A (SW→SE→NE→NW), which is CCW in xy because row 0 is north. Consecutive repeats
-// are dropped — SNAP_EPS can land a crossing on a corner already emitted.
+// One boundary cell's clipped polygon, as vertex ids in CCW order in the module scratch
+// `poly`; returns its length. cell ∩ P is an intersection of two convex sets and therefore
+// convex in EXACT arithmetic — but crossings and ring vertices are snapped onto the 1/256
+// lattice INDEPENDENTLY of each other (clip.js), and that can leave one point a hair inside
+// the true hull of its neighbours (observed: a crossing and a true ring vertex 1/256 apart
+// left a third point non-extremal by ~1e-3 doubled-area — far above AREA2_EPS's 1e-9, so an
+// exact-collinear test does not see it). Sorting by angle about the vertex-average centroid
+// has no way to notice a point isn't extremal — the centroid of a lopsided point cluster can
+// itself land close enough to the true hull's edge that the sort misorders it, which silently
+// produces a self-intersecting "polygon" and a non-manifold pinch downstream. A convex hull
+// (Andrew's monotone chain) is immune: it discovers the boundary from a global extremum and
+// simply excludes any point that isn't one, which also subsumes dropping collinear runs — a
+// hull never keeps a collinear middle point either. Marching squares on corner parity cannot
+// be used in its place: with two crossings on one side both endpoints read the same
+// insideness, so the crossings are invisible to it.
 //
-// 8 slots = 4 corners + at most one crossing per edge × 4 edges. That bound holds only
-// while every grid edge has at most one crossing — true for any realistic radius (R ≫ 1
-// cell), but not derived from convexity and not enforced: a radius near one grid cell
-// could cross an edge twice and overflow silently.
-const poly = new Int32Array(8);
+// Grown on demand rather than fixed: the buffer this replaces held 8, assumed at most one
+// crossing per side, and dropped writes past the end silently when that failed.
+let poly = new Int32Array(32);
+let polyX = new Float64Array(32);
+let polyY = new Float64Array(32);
 /**
  * @param {import("./types.js").Clip} clip
  * @param {number} r
@@ -354,25 +366,64 @@ const poly = new Int32Array(8);
  * @returns {number}
  */
 function cellPoly(clip, r, c) {
-  const { inside, idOf, HBASE, gw } = clip;
+  const { inside, crossOf, ringOf, col, row, gw, gh, HBASE } = clip;
+  const gv = gw * gh;
   const A = r * gw + c, B = A + 1, C = A + gw, D = C + 1;
   let m = 0;
   /** @type {(id: number) => void} */
-  const put = (id) => { if (m === 0 || poly[m - 1] !== id) poly[m++] = id; };
-  if (inside[C]) put(C);
-  if (inside[C] !== inside[D]) put(/** @type {number} */ (idOf.get((r + 1) * (gw - 1) + c)));
-  if (inside[D]) put(D);
-  if (inside[D] !== inside[B]) put(/** @type {number} */ (idOf.get(HBASE + r * gw + c + 1)));
-  if (inside[B]) put(B);
-  if (inside[B] !== inside[A]) put(/** @type {number} */ (idOf.get(r * (gw - 1) + c)));
-  if (inside[A]) put(A);
-  if (inside[A] !== inside[C]) put(/** @type {number} */ (idOf.get(HBASE + r * gw + c)));
-  while (m > 1 && poly[m - 1] === poly[0]) m--; // close the wrap-around duplicate
-  // Only exact id repeats are collapsed here. Near-coincidence is settled once per edge in
-  // clip.js's SNAP_EPS, where both cells sharing the edge reach the same verdict; doing it
-  // here instead would make the verdict depend on walk adjacency, which differs between
-  // those two cells — see the SNAP_EPS comment.
-  return m;
+  const add = (id) => {
+    for (let i = 0; i < m; i++) if (poly[i] === id) return;
+    if (m === poly.length) {
+      const g = new Int32Array(m * 2); g.set(poly); poly = g;
+      const gx = new Float64Array(m * 2); gx.set(polyX); polyX = gx;
+      const gy = new Float64Array(m * 2); gy.set(polyY); polyY = gy;
+    }
+    poly[m] = id;
+    polyX[m] = id < gv ? id % gw : col[id - gv];
+    polyY[m] = id < gv ? (id / gw) | 0 : row[id - gv];
+    m++;
+  };
+  if (inside[A]) add(A);
+  if (inside[B]) add(B);
+  if (inside[C]) add(C);
+  if (inside[D]) add(D);
+  const sides = [r * (gw - 1) + c, (r + 1) * (gw - 1) + c,
+    HBASE + r * gw + c, HBASE + r * gw + c + 1];
+  for (const key of sides) { const l = crossOf.get(key); if (l) for (const id of l) add(id); }
+  const rv = ringOf.get(r * (gw - 1) + c);
+  if (rv) for (const id of rv) add(id);
+  if (m < 3) return 0;
+
+  // Sort by x then y so the sweep below visits both hull chains monotonically — the
+  // precondition for a monotone-chain hull, unrelated to the polygon's final winding.
+  const idx = Array.from({ length: m }, (_, i) => i);
+  idx.sort((i, j) => polyX[i] - polyX[j] || polyY[i] - polyY[j]);
+  // A "right turn" (o,a,b): the same handedness as the fixed A→C→D→B walk every interior
+  // (unclipped) cell already uses (row grows south, so this is CCW after that flip — see
+  // clippedTopTris). Near-zero turns are treated as non-extremal so a collinear point is
+  // excluded rather than kept as a future zero-area fan apex, folding in what used to be a
+  // separate drop pass.
+  /** @type {(o: number, a: number, b: number) => number} */
+  const turn = (o, a, b) =>
+    (polyX[a] - polyX[o]) * (polyY[b] - polyY[o]) - (polyY[a] - polyY[o]) * (polyX[b] - polyX[o]);
+  /** @type {number[]} */
+  const hull = [];
+  for (const i of idx) {
+    while (hull.length >= 2 && turn(hull[hull.length - 2], hull[hull.length - 1], i) >= -AREA2_EPS) hull.pop();
+    hull.push(i);
+  }
+  const lower = hull.length;
+  for (let k = idx.length - 2; k >= 0; k--) {
+    const i = idx[k];
+    while (hull.length > lower && turn(hull[hull.length - 2], hull[hull.length - 1], i) >= -AREA2_EPS) hull.pop();
+    hull.push(i);
+  }
+  hull.pop(); // last point duplicates idx[0], the lower chain's start
+  const w = hull.length;
+  if (w < 3) return 0;
+  const ids = hull.map((i) => poly[i]), xs = hull.map((i) => polyX[i]), ys = hull.map((i) => polyY[i]);
+  for (let i = 0; i < w; i++) { poly[i] = ids[i]; polyX[i] = xs[i]; polyY[i] = ys[i]; }
+  return w;
 }
 
 // Clipped top triangulation (+Z wound): interior cells emit the same two triangles as
@@ -386,14 +437,16 @@ function cellPoly(clip, r, c) {
  */
 function clippedTopTris(gw, span, clip) {
   const { r0, r1, c0, c1 } = span;
-  const { inside } = clip;
+  const { inside, bcells } = clip; // buildSolid already asserts clip.gw === gw
   let n = 0;
   for (let r = r0; r < r1; r++) {
     for (let c = c0; c < c1; c++) {
       const A = r * gw + c;
       const k = inside[A] + inside[A + 1] + inside[A + gw] + inside[A + gw + 1];
-      if (k === 0) continue;
-      if (k === 4) { n += 2; continue; }
+      // A cell the boundary touches must be walked even when every corner reads outside: a
+      // convex corner can poke through one side, which corner parity alone cannot see.
+      const touched = bcells.has(r * (gw - 1) + c);
+      if (!touched) { if (k === 4) n += 2; continue; }
       const m = cellPoly(clip, r, c);
       if (m >= 3) n += m - 2;
     }
@@ -404,8 +457,8 @@ function clippedTopTris(gw, span, clip) {
     for (let c = c0; c < c1; c++) {
       const A = r * gw + c, B = A + 1, C = A + gw, D = C + 1;
       const k = inside[A] + inside[B] + inside[C] + inside[D];
-      if (k === 0) continue;
-      if (k === 4) {
+      if (!bcells.has(r * (gw - 1) + c)) {
+        if (k !== 4) continue;
         topTris[p++] = A; topTris[p++] = C; topTris[p++] = B;
         topTris[p++] = B; topTris[p++] = C; topTris[p++] = D;
         continue;
@@ -421,7 +474,7 @@ function clippedTopTris(gw, span, clip) {
 
 // Watertight export solid for one tile, in tile-local mm (origin at the tile's SW corner,
 // +Y = north), flat z=0 base. Without `clip`, `mask` stair-clips the top to a cell
-// footprint. With it, boundary cells are clipped to the circle instead and ids at or above
+// footprint. With it, boundary cells are clipped to the true polygon instead and ids at or above
 // gw*gh are rim crossings. `geom` maps grid samples to print-Z via base + relief·mmPerM·exag.
 /**
  * @param {Float32Array} grid
@@ -434,12 +487,13 @@ function clippedTopTris(gw, span, clip) {
  * @returns {Solid}
  */
 export function buildSolid(grid, gw, gh, span, mask, geom, clip) {
-  // clippedTopTris' cell-walk loops index by the `gw` param, but cellPoly (called from
-  // inside it) destructures gw from `clip.gw` — a disagreement would walk cell corners
-  // with two different strides. No caller can trigger this today (pipeline.js threads one
-  // consistent value), but silently indexing garbage is worse than throwing: the JSDoc cast
-  // on `cl` below means a missing idOf entry coerces to vertex id 0 instead of erroring.
+  // clippedTopTris' cell-walk loops index by the `gw`/`gh` params, but cellPoly (called from
+  // inside it) destructures both from `clip` — a disagreement would walk cell corners with a
+  // different stride or row bound, reading `clip.inside`/`crossOf`/`ringOf` at the wrong offset.
+  // No caller can trigger this today (pipeline.js threads one consistent pair), but silently
+  // indexing garbage is worse than throwing.
   if (clip && clip.gw !== gw) throw new Error(`buildSolid: gw=${gw} disagrees with clip.gw=${clip.gw}`);
+  if (clip && clip.gh !== gh) throw new Error(`buildSolid: gh=${gh} disagrees with clip.gh=${clip.gh}`);
   const { dx, dy, mmPerM, emin, exag, base } = geom;
   const { r1, c0 } = span;
   const gv = gw * gh;

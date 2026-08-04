@@ -92,16 +92,6 @@ test("gridRange", () => {
   assert.equal(r.max, 7);
 });
 
-// The footprint mask is what keeps a hex/circle tile's discarded corners from setting
-// the print's z-range. Without it a corner 500 m lower than anything in the footprint
-// would push the whole surface up off the base plane.
-test("gridRange: an out-of-footprint sample never sets the range", () => {
-  const grid = Float32Array.from([0, 0, 0, 0, -500, 0, 0, 0, 900]); // 3x3
-  const vmask = Uint8Array.from([1, 1, 1, 1, 0, 1, 1, 1, 0]);       // drop the -500 and the 900
-  assert.deepEqual(gridRange(grid), { min: -500, max: 900 }, "unmasked: unchanged behaviour");
-  assert.deepEqual(gridRange(grid, vmask), { min: 0, max: 0 }, "masked: corners ignored");
-});
-
 test("cropGrid: exact sample extraction by global pixel index", () => {
   const width = 8, height = 6;
   const data = Float32Array.from({ length: width * height }, (_, i) => i);

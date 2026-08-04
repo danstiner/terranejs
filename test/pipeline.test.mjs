@@ -5,9 +5,9 @@ import os from "node:os";
 import path from "node:path";
 import cp from "node:child_process";
 import { planTile, bakeTileSolid, tileTo3mf, defaultTileName } from "../src/core/pipeline.js";
-import { footprintCellMaskPx } from "../src/core/layout.js";
 import { checkWatertight, signedVolume } from "../src/core/validate.js";
-import { printPitchMm, PITCH_FLOOR_MM } from "../src/core/tilemath.js";
+import { printPitchMm, PITCH_FLOOR_MM, lonToGlobalX, latToGlobalY, MAX_MERCATOR_LAT } from "../src/core/tilemath.js";
+import { cellsBbox } from "../src/core/layout.js";
 
 /** @typedef {import("../src/core/pipeline.js").TileSettings} TileSettings */
 
@@ -51,6 +51,63 @@ test("planTile: rejects a pole-centred tile (bbox reaches ±90°, past the cap)"
   /** @type {TileSettings} */
   const pole = { center: [90, 0], scale: 61150, tileWmm: 100, base: 5, exag: 2 };
   assert.throws(() => planTile(pole), /Web Mercator/);
+});
+
+// The bbox guard admits a tile whose north edge lands exactly ON the cap, but a clipped shape's
+// window is expanded outward past its ring, so the WINDOW still escapes the top of the world
+// (gy0 = -1 here) while the ring does not. Latitudes are per-shape because each footprint puts
+// its north extreme at a different offset from the centre; both were found by bisecting for the
+// centre whose ring bbox lands on the cap. The northOK assertion is what keeps this a test of
+// the window guard — without it, a future change could make the ring itself illegal and this
+// would silently pass by re-testing the guard above.
+test("planTile: rejects a clipped tile whose expanded window escapes the world", () => {
+  for (const [shape, lat] of /** @type {const} */ ([["circle", 84.0271913], ["hex", 84.1550508]])) {
+    const center = /** @type {[number, number]} */ ([lat, 0]);
+    const [, , n] = cellsBbox(center, 5000000, 50, [[0, 0]], shape);
+    assert.ok(n <= MAX_MERCATOR_LAT, `${shape}: ring bbox must still be legal (north ${n})`);
+    assert.throws(
+      () => planTile({ center, scale: 5000000, tileWmm: 50, base: 5, exag: 2, shape }, { z: 6 }),
+      /pixel window \[-?\d+, \d+\) escapes/, `${shape}`);
+  }
+});
+
+// The clipped-shape window is expanded past the ring, so the fetch bbox has to be derived
+// from the window rather than the ring — otherwise cropGrid reads pixels the mosaic never
+// fetched. Assert coverage in pixel space at the plan's own zoom, which is what cropGrid uses.
+test("planTile: the fetch bbox covers the whole expanded window", () => {
+  for (const shape of /** @type {const} */ (["square", "hex", "circle"])) {
+    for (let k = 0; k < 16; k++) {
+      const settings = { ...SETTINGS, shape, center: /** @type {[number, number]} */
+        ([47.6035, -122.3294 + k * 0.0011]) };
+      const plan = planTile(settings, { z: 13 });
+      const [s, w, n, e] = plan.bbox;
+      const px0 = lonToGlobalX(w, plan.z), px1 = lonToGlobalX(e, plan.z);
+      const py0 = latToGlobalY(n, plan.z), py1 = latToGlobalY(s, plan.z);
+      // Square's bbox is the exact (unrounded) cell bbox, while its window is Math.round of the
+      // same expression (layout.cellWindows) — an inherent <=0.5px gap already covered by
+      // "cellBbox and cellWindows agree within quantization" in layout.test.mjs, unrelated to
+      // this fix and harmless since sourceTileRange pads every fetch by a further >=1px halo.
+      // Hex/circle derive their bbox FROM the window (pipeline.planTile), so they must match
+      // to float noise — any gap there is exactly the bug this test guards against.
+      const eps = shape === "square" ? 0.5 + 1e-6 : 1e-6;
+      assert.ok(px0 <= plan.window.gx0 + eps && px1 >= plan.window.gx0 + plan.gw - 1 - eps,
+        `${shape} k=${k}: x coverage [${px0}, ${px1}] vs window`);
+      assert.ok(py0 <= plan.window.gy0 + eps && py1 >= plan.window.gy0 + plan.gh - 1 - eps,
+        `${shape} k=${k}: y coverage [${py0}, ${py1}] vs window`);
+    }
+  }
+});
+
+// n is a min of two separately motivated bounds: pi*D/2 keeps ring edges near 2 cells and
+// binds on coarse preview grids; 256 is where accuracy saturates and binds at crisp/export.
+test("planTile: circle ring resolution adapts to the grid", () => {
+  for (const [D, want] of [[2, 16], [58, 91], [104, 163], [970, 256]]) {
+    const n = Math.max(16, Math.min(256, Math.round((Math.PI * D) / 2)));
+    assert.equal(n, want, `D=${D}`);
+  }
+  const plan = planTile({ ...SETTINGS, shape: "circle" }, { z: 13 });
+  const expected = Math.max(16, Math.min(256, Math.round((Math.PI * (plan.gw - 1)) / 2)));
+  assert.equal(/** @type {Array<[number, number]>} */ (plan.ring).length, expected);
 });
 
 // Build a mosaic that exactly covers a plan's window, elevation = smooth ramp.
@@ -142,8 +199,9 @@ test("bakeTileSolid: water recess anchors below the land, stays watertight", () 
 // synthetic grids, never through the pipeline. Pinning a volume here is what would have caught
 // the ordering bug pipeline.js shipped with once and fixed before the first commit landed.
 test("bakeTileSolid: circle + flatten reads post-recess elevations at the rim (ordering)", () => {
-  const plan = planTile({ ...SETTINGS, shape: "circle" }, { z: 10 }); // 41×41; R≈20 spans the window,
-  // so the rim runs through every edge of the grid, not just a corner.
+  const plan = planTile({ ...SETTINGS, shape: "circle" }, { z: 10 }); // 45×45: a clipped shape's
+  // window is expanded outward past its ring, so R≈20 centred at (22,22) sweeps x∈[2.0, 42.0] —
+  // the rim crosses interior rows and columns across the full width, not one corner.
   const mosaic = mosaicFor(plan); // ramp elevations, so every water cell's pre-flatten value differs
   // West half water, east half land. Column 20 (the mask split) passes through the circle's centre
   // (cx≈20), so the split crosses the rim near the top and bottom of the window: several of
@@ -155,11 +213,14 @@ test("bakeTileSolid: circle + flatten reads post-recess elevations at the rim (o
     for (let c = 0; c < plan.gw >> 1; c++) mask[r * plan.gw + c] = 1;
   const { solid } = bakeTileSolid(mosaic, plan, { ...SETTINGS, flatten: true }, mask);
   assert.ok(checkWatertight(solid).closed, "watertight");
-  // Golden value from the correct order (clipElevs after applyWaterRecess). Swapping the two
-  // call-site lines in bakeTileSolid moves this to 52200.09348442017 — a ~114 mm³ divergence on a
-  // ~52314 mm³ solid (~0.2%), confirmed by hand before this test was added; 1e-3 clears float
-  // noise by ~5 orders while catching that swap by ~5.
-  assert.ok(Math.abs(signedVolume(solid) - 52313.8190144107) < 1e-3,
+  // Golden value from the correct order (clipElevs after applyWaterRecess), re-derived for three
+  // independent reasons: the window is 2px larger (Task 1), the circle footprint is cut to the
+  // adaptive n-gon `ring` through clipPolygon (Task 4; at z=10 this is a 69-gon, not 64-gon),
+  // and the specific grid used here changed slightly with the adaptive n calculation. Swapping
+  // the two call-site lines in bakeTileSolid moves this to ~52249 — a ~72 mm³ divergence on a
+  // ~52321 mm³ solid (~0.1%), confirmed to be the wrong order; 1e-3 clears float noise by
+  // ~5 orders while catching that swap by ~5.
+  assert.ok(Math.abs(signedVolume(solid) - 52321.001580250064) < 1e-3,
     `circle+flatten volume drifted from the pinned order-correct value — got ${signedVolume(solid)}`);
 });
 
@@ -207,112 +268,32 @@ test("bakeTileSolid: every shape is watertight with positive volume", () => {
 test("bakeTileSolid: footprint areas match their analytic fractions", () => {
   /** @type {Record<string, number>} */
   const vol = {};
+  /** @type {Record<string, ReturnType<typeof planTile>>} */
+  const plans = {};
   for (const shape of /** @type {const} */ (["square", "hex", "circle"])) {
-    const plan = planTile({ ...SETTINGS, shape }, { z: 13 });
-    vol[shape] = signedVolume(bakeTileSolid(flatMosaic(plan), plan, SETTINGS).solid);
+    plans[shape] = planTile({ ...SETTINGS, shape }, { z: 13 });
+    vol[shape] = signedVolume(bakeTileSolid(flatMosaic(plans[shape]), plans[shape], SETTINGS).solid);
   }
   const hex = vol.hex / vol.square, circle = vol.circle / vol.square;
-  // Hex still takes the cell-centre mask, so it keeps the loose tolerance.
-  assert.ok(Math.abs(hex - (3 * Math.sqrt(3)) / 8) < 0.02, `hex ratio ${hex}`);
-  // Circle is clipped to the true circle now. The residual is not the rim — that is exact to
-  // ~1e-5 — but the window's whole-pixel rounding, which moves the square denominator by up to
-  // a cell. 1e-4 is chosen to discriminate, not just pass: it clears the clipped path's measured
-  // noise floor (4.8e-6) by two orders, while the pre-clip stairstep path (commit 93b88c7, ratio
-  // 0.7841015719764709 — 1.3e-3 off) still fails it by one. A looser tolerance like the 0.005
-  // this replaced does not: 1.3e-3 is inside 0.005, so that bound passed even with the clip
-  // reverted.
-  assert.ok(Math.abs(circle - Math.PI / 4) < 1e-4, `circle ratio ${circle}`);
+  // Hex is clipped to its true 6 edges now (footprintPx's hexagon is exact, not an
+  // approximation of some other curve), so the residual against 3√3/8 is window whole-pixel
+  // rounding only — measured 1.06e-5. 1e-3 clears that noise floor by two orders while still
+  // catching a real regression (e.g. falling back to the old cell-centre mask, whose stairstep
+  // error is two more orders up again).
+  assert.ok(Math.abs(hex - (3 * Math.sqrt(3)) / 8) < 1e-3, `hex ratio ${hex}`);
+  // Circle is clipped to the adaptive n-gon `ring` (clipPolygon consumes it directly), not the
+  // exact circle the deleted clipCircle intersected analytically — so the printed footprint's
+  // true target is the n-gon's own exact area (n/8)·sin(2π/n), not πR²/4. The adaptive n at
+  // z=13 is 256 (capped at the accuracy limit), so the target is a 256-gon. Residual against
+  // the 256-gon target is measured at ~1.03e-5, matching hex's noise floor almost exactly —
+  // both are now window whole-pixel rounding on an exactly-clipped polygon). 1e-3 clears that
+  // by two orders.
+  const n = /** @type {Array<[number, number]>} */ (plans.circle.ring).length;
+  const circleWant = (n / 8) * Math.sin((2 * Math.PI) / n); // exact n-gon / bounding-square area ratio
+  assert.ok(Math.abs(circle - circleWant) < 1e-3, `circle ratio ${circle} vs ${n}-gon exact ${circleWant}`);
 });
 
-// checkWatertight is edge-parity only, so a bowtie (two cells meeting at one corner) would pass
-// it while being unslicable. True when a 2x2 neighbourhood (a b / d e) has ONLY its diagonal set
-// — exactly that bowtie. Shared by the sweep below and the fixture that proves it can fire.
-/** @param {number} a @param {number} b @param {number} d @param {number} e @returns {boolean} */
-function isPinch(a, b, d, e) {
-  return !!((a && e && !b && !d) || (b && d && !a && !e));
-}
-
-test("pinch detector: flags a hand-built diagonal-only mask", () => {
-  // Proves isPinch (hence the sweep below) is not vacuously green: it must fire on a real
-  // bowtie and stay quiet on the patterns that aren't one.
-  assert.ok(isPinch(1, 0, 0, 1), "NE+SW diagonal only");
-  assert.ok(isPinch(0, 1, 1, 0), "NW+SE diagonal only");
-  assert.ok(!isPinch(1, 1, 0, 0), "adjacent pair, not a pinch");
-  assert.ok(!isPinch(1, 1, 1, 1), "full block, not a pinch");
-  assert.ok(!isPinch(0, 0, 0, 0), "empty block, not a pinch");
-});
-
-// Hex/circle ring for a single cell at the origin (q=r=0, where footprintPx's hex terms
-// 3q and 2r+q collapse to 0) — mirrors layout.js's math exactly, but parameterized by the
-// center directly in px so the sweep can place it at an arbitrary sub-pixel phase. A real
-// lat/lon center can't do that independent of span: Mercator ties latitude (hence S, via
-// cos(lat)) to the center's projected pixel position.
-/** @param {number} gxC @param {number} gyC @param {number} S @param {"hex" | "circle"} shape
- *  @returns {[number, number][]} */
-function ringAt(gxC, gyC, S, shape) {
-  if (shape === "hex") {
-    const XU = [2, 1, -1, -2, -1, 1], YU = [0, 1, 1, 0, -1, -1];
-    const hx = S / 4, hy = (Math.sqrt(3) / 4) * S;
-    return XU.map((xu, k) => [gxC + xu * hx, gyC + YU[k] * hy]);
-  }
-  const R = S / 2;
-  return Array.from({ length: 64 }, (_, k) => {
-    const a = (2 * Math.PI * k) / 64;
-    return [gxC + R * Math.cos(a), gyC + R * Math.sin(a)];
-  });
-}
-
-// Window for a ring: Math.round of each extreme, independently — the same rule cellWindows
-// applies per cell, so this reproduces exactly the window planTile hands footprintCellMaskPx.
-/** @param {[number, number][]} ring */
-function windowFor(ring) {
-  const xs = ring.map((p) => p[0]), ys = ring.map((p) => p[1]);
-  const gx0 = Math.round(Math.min(...xs)), gx1 = Math.round(Math.max(...xs));
-  const gy0 = Math.round(Math.min(...ys)), gy1 = Math.round(Math.max(...ys));
-  return { gx0, gy0, gw: gx1 - gx0 + 1, gh: gy1 - gy0 + 1 };
-}
-
-// Coarse-weighted spans (2.0 px is cellWindows' minimum, where rasterization is coarsest and a
-// pinch is most plausible) plus a few large-span spot checks — far more valuable per config than
-// a smooth run out to 300px. 8 phases x 40 spans x 2 shapes = 640 configurations: narrower than
-// the design doc's one-time 9552-configuration proof sweep (span 2.0-300.0 in half-pixel steps x
-// 8 phases; see "Non-goal: the vertex-pinch check" in
-// docs/superpowers/specs/2026-08-01-tile-shapes-design.md) but the same two swept dimensions, so
-// this is a live regression guard for that claim rather than a one-off.
-const PINCH_SWEEP_SPANS = [
-  ...Array.from({ length: 37 }, (_, k) => 2.0 + k * 0.5), // 2.0 .. 20.0 by 0.5
-  50, 150, 300,
-];
-// 8 sub-pixel phases; x steps by 1/8 and y by 3/8 (coprime with 8) so the pair sweeps the unit
-// square instead of walking its diagonal — the footprint centre lands on an arbitrary float in
-// both axes, not just one.
-const PINCH_SWEEP_PHASES = Array.from({ length: 8 }, (_, k) => [k / 8, ((k * 3) % 8) / 8]);
-
-test("footprint masks contain no diagonal-only adjacency", () => {
-  let checked = 0;
-  for (const shape of /** @type {const} */ (["hex", "circle"])) {
-    for (const S of PINCH_SWEEP_SPANS) {
-      for (const [fx, fy] of PINCH_SWEEP_PHASES) {
-        // The integer part of the center is arbitrary (translation-invariant); only the
-        // fractional part (fx, fy) — the sub-pixel phase — matters.
-        const ring = ringAt(1000 + fx, 1000 + fy, S, shape);
-        const { gx0, gy0, gw, gh } = windowFor(ring);
-        const m = footprintCellMaskPx(ring, gw, gh, gx0, gy0);
-        const cw = gw - 1, ch = gh - 1;
-        for (let r = 0; r + 1 < ch; r++) {
-          for (let c = 0; c + 1 < cw; c++) {
-            const a = m[r * cw + c], b = m[r * cw + c + 1];
-            const d = m[(r + 1) * cw + c], e = m[(r + 1) * cw + c + 1];
-            assert.ok(!isPinch(a, b, d, e),
-              `${shape} S=${S} phase=(${fx},${fy}): pinch at r=${r} c=${c}`);
-          }
-        }
-        checked++;
-      }
-    }
-  }
-  assert.equal(checked, 640, "sweep ran the configuration count this test documents");
-});
+// Bowtie detection now covered by test/mesh.test.mjs's pinchedVertices test.
 
 test("defaultTileName: names the shape only when it is not a square", () => {
   assert.ok(!defaultTileName(SETTINGS).includes("square"));

@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buildSolid } from "../src/core/mesh.js";
 import { signedVolume, checkWatertight } from "../src/core/validate.js";
-import { clipCircle, clipElevs } from "../src/core/clip.js";
+import { clipElevs, clipPolygon } from "../src/core/clip.js";
 
 // Flat tile: every grid sample at the same relief; geom maps relief mm 1:1, so
 // the enclosed volume is exactly footprint_area × (base + relief) — analytic,
@@ -15,6 +15,13 @@ function flatGrid(gw, gh, z = 2) {
   return { grid: new Float32Array(gw * gh).fill(z), gw, gh };
 }
 const GEOM = { dx: 1, dy: 1, mmPerM: 1, emin: 0, exag: 1, base: 1 };
+
+// clipCircle is gone; every circle fixture below drives clipPolygon with an inscribed n-gon.
+/** @param {number} cx @param {number} cy @param {number} R @param {number} n */
+const ngon = (cx, cy, R, n) => Array.from({ length: n }, (_, k) => {
+  const a = (2 * Math.PI * k) / n;
+  return /** @type {[number, number]} */ ([cx + R * Math.cos(a), cy + R * Math.sin(a)]);
+});
 
 test("flat base: full rectangle uses a fan, not a mirror", () => {
   const { grid, gw, gh } = flatGrid(9, 7);
@@ -64,19 +71,44 @@ test("flat base: donut footprint falls back to mirror and stays closed", () => {
 // signedVolume is exactly footprint_area × 3 — the area is read straight off the volume.
 const H = 3;
 
-// The clipped footprint's boundary is the chord polyline through the crossings, and every
-// crossing lies exactly on the circle — so the printed area is an INSCRIBED polygon whose
-// analytic deficit is 1 − (n/2π)·sin(2π/n) ≈ 1.3e-5 here. Asserting 1e-4 leaves headroom
-// while still being ~200× tighter than the cell-centre mask's 0.78387-vs-π/4.
-test("clip: circle footprint area matches pi*R^2", () => {
-  const gw = 201, gh = 201, R = 90;
+// A convex corner can poke through ONE cell side with all four of that cell's corners
+// outside, so corner parity classifies the cell empty and chops the corner to a chord —
+// watertight and area-neutral, which is exactly the defect class nothing downstream catches.
+// Apex (9.5, 9.125) pokes 0.125 into cell (9,9); both flanks leave through the y=9 side, so
+// that one grid edge carries two crossings and all four corners read outside.
+// 9.125 = 9 + 32/256 is exactly on the snap lattice, so the expected area is exact.
+test("clip: a corner wedge crossing one cell side is not dropped", () => {
+  const gw = 21, gh = 21;
   const { grid } = flatGrid(gw, gh);
-  const clip = clipCircle(gw, gh, 100.3, 100.7, R);
+  const clip = clipPolygon(gw, gh, 0, 0, /** @type {Array<[number, number]>} */
+    ([[9.5, 9.125], [3, 2], [16, 2]]));
+  const A = 9 * gw + 9;
+  assert.equal(clip.inside[A] + clip.inside[A + 1] + clip.inside[A + gw] + clip.inside[A + gw + 1],
+    0, "the construction requires all four corners of cell (9,9) to be outside");
+  assert.equal((clip.crossOf.get(9 * (gw - 1) + 9) ?? []).length, 2,
+    "both flanks leave through the same grid edge");
+  assert.ok(clip.bcells.has(9 * (gw - 1) + 9),
+    "the wedge cell must be enumerated despite every corner reading outside");
   clipElevs(clip, grid);
   const m = buildSolid(grid, gw, gh, { r0: 0, r1: gh - 1, c0: 0, c1: gw - 1 }, null, GEOM, clip);
-  const area = signedVolume(m) / H;
-  const rel = Math.abs(area / (Math.PI * R * R) - 1);
-  assert.ok(rel < 1e-4, `area ${area} vs ${Math.PI * R * R} (rel ${rel})`);
+  assertSane(m, "corner wedge");
+  const want = 0.5 * 13 * (9.125 - 2); // 46.3125
+  const rel = Math.abs(signedVolume(m) / H / want - 1);
+  assert.ok(rel < 1e-3, `area ${signedVolume(m) / H} vs ${want} (rel ${rel})`);
+});
+
+// The printed footprint is the inscribed n-gon, not the circle, so compare against the n-gon's
+// exact area (n/2)R²sin(2π/n). Asserting against πR² would need a tolerance looser than the
+// 256-gon's own 1.0e-4 deficit, which is most of the signal this test exists to carry.
+test("clip: circle footprint area matches the inscribed n-gon", () => {
+  const gw = 201, gh = 201, R = 90, N = 256;
+  const { grid } = flatGrid(gw, gh);
+  const clip = clipPolygon(gw, gh, 0, 0, ngon(100.3, 100.7, R, N));
+  clipElevs(clip, grid);
+  const m = buildSolid(grid, gw, gh, { r0: 0, r1: gh - 1, c0: 0, c1: gw - 1 }, null, GEOM, clip);
+  const want = (N / 2) * R * R * Math.sin((2 * Math.PI) / N);
+  const rel = Math.abs(signedVolume(m) / H / want - 1);
+  assert.ok(rel < 1e-4, `area ${signedVolume(m) / H} vs ${want} (rel ${rel})`);
 });
 
 // The circle centre lands on an arbitrary float in practice, so sweep sub-pixel phase as
@@ -86,7 +118,7 @@ test("clip: watertight and positive-volume across radii and phases", () => {
   const { grid } = flatGrid(gw, gh);
   for (const R of [10, 23.5, 47, 58.25]) {
     for (const [px, py] of [[0, 0], [0.25, 0.5], [0.5, 0.25], [0.75, 0.75]]) {
-      const clip = clipCircle(gw, gh, 60 + px, 60 + py, R);
+      const clip = clipPolygon(gw, gh, 0, 0, ngon(60 + px, 60 + py, R, 64));
       clipElevs(clip, grid);
       const m = buildSolid(grid, gw, gh, { r0: 0, r1: gh - 1, c0: 0, c1: gw - 1 }, null, GEOM, clip);
       const wt = checkWatertight(m);
@@ -103,7 +135,7 @@ test("clip: watertight and positive-volume across radii and phases", () => {
 test("clip: single boundary loop, so the base fans instead of mirroring", () => {
   const gw = 121, gh = 121, R = 50;
   const { grid } = flatGrid(gw, gh);
-  const clip = clipCircle(gw, gh, 60.5, 60.5, R);
+  const clip = clipPolygon(gw, gh, 0, 0, ngon(60.5, 60.5, R, 64));
   clipElevs(clip, grid);
   const m = buildSolid(grid, gw, gh, { r0: 0, r1: gh - 1, c0: 0, c1: gw - 1 }, null, GEOM, clip);
   let nTop = 0;
@@ -116,8 +148,8 @@ test("clip: single boundary loop, so the base fans instead of mirroring", () => 
   assert.ok(m.indices.length / 3 < 2 * nTop, `tris ${m.indices.length / 3} (mirror ≈ ${2 * nTop})`);
 });
 
-// SNAP_EPS exists to stop a crossing landing next to a grid vertex from producing a
-// degenerate triangle; this asserts the guarantee it buys.
+// The 1/256 snap lattice exists to stop a crossing landing next to a grid vertex from
+// producing a degenerate triangle; this asserts the guarantee it buys.
 /**
  * @param {{ positions: Float32Array, indices: Uint32Array }} m
  * @returns {number}
@@ -138,7 +170,7 @@ function worstTriArea(m) {
 test("clip: no zero-area triangles", () => {
   const gw = 121, gh = 121;
   const { grid } = flatGrid(gw, gh);
-  const clip = clipCircle(gw, gh, 60, 60, 40); // integer centre and radius: crossings hit vertices
+  const clip = clipPolygon(gw, gh, 0, 0, ngon(60, 60, 40, 64)); // integer centre and radius: crossings hit vertices
   clipElevs(clip, grid);
   const m = buildSolid(grid, gw, gh, { r0: 0, r1: gh - 1, c0: 0, c1: gw - 1 }, null, GEOM, clip);
   assert.ok(worstTriArea(m) > 1e-7, `smallest triangle area ${worstTriArea(m)}`);
@@ -154,7 +186,7 @@ test("clip: no zero-area triangles", () => {
 test("clip: no near-zero triangle at a near-miss corner (review repro)", () => {
   const gw = 151, gh = 151;
   const { grid } = flatGrid(gw, gh);
-  const clip = clipCircle(gw, gh, 60.232467, 60.858895, 36.468277);
+  const clip = clipPolygon(gw, gh, 0, 0, ngon(60.232467, 60.858895, 36.468277, 64));
   clipElevs(clip, grid);
   const m = buildSolid(grid, gw, gh, { r0: 0, r1: gh - 1, c0: 0, c1: gw - 1 }, null, GEOM, clip);
   assert.ok(worstTriArea(m) > 1e-7, `smallest triangle area ${worstTriArea(m)}`);
@@ -187,7 +219,7 @@ test("clip: no near-zero triangles or boundary leaks across a seeded sweep", () 
   for (let i = 0; i < 200; i++) {
     const R = 8 + rand() * 50;
     const cx = 55 + rand() * 10, cy = 55 + rand() * 10;
-    const clip = clipCircle(gw, gh, cx, cy, R);
+    const clip = clipPolygon(gw, gh, 0, 0, ngon(cx, cy, R, 64));
     clipElevs(clip, grid);
     const m = buildSolid(grid, gw, gh, { r0: 0, r1: gh - 1, c0: 0, c1: gw - 1 }, null, GEOM, clip);
     const wt = checkWatertight(m);
@@ -211,7 +243,7 @@ test("clip: no near-zero triangles or boundary leaks across a seeded sweep", () 
 test("clip: no collinear zero-area triangle from a snap/inside disagreement (round-2 repro)", () => {
   const gw = 121, gh = 121;
   const { grid } = flatGrid(gw, gh);
-  const clip = clipCircle(gw, gh, 56.02314373012632, 66.62650303449482, 25.135360596468672);
+  const clip = clipPolygon(gw, gh, 0, 0, ngon(56.02314373012632, 66.62650303449482, 25.135360596468672, 64));
   clipElevs(clip, grid);
   const m = buildSolid(grid, gw, gh, { r0: 0, r1: gh - 1, c0: 0, c1: gw - 1 }, null, GEOM, clip);
   assert.ok(worstTriArea(m) > 1e-7, `smallest triangle area ${worstTriArea(m)}`);
@@ -238,41 +270,13 @@ test("clip: no collinear zero-area triangle from a snap/inside disagreement (rou
 test("clip: no collinear zero-area triangle from an isolated dilated vertex (earclip terminal-triple gap)", () => {
   const gw = 121, gh = 121;
   const { grid } = flatGrid(gw, gh);
-  const clip = clipCircle(gw, gh, 56.48870502598584, 54.811413595452905, 31.489169746351216);
+  const clip = clipPolygon(gw, gh, 0, 0, ngon(56.48870502598584, 54.811413595452905, 31.489169746351216, 64));
   clipElevs(clip, grid);
   const m = buildSolid(grid, gw, gh, { r0: 0, r1: gh - 1, c0: 0, c1: gw - 1 }, null, GEOM, clip);
   assert.ok(worstTriArea(m) > 1e-7, `smallest triangle area ${worstTriArea(m)}`);
   const wt = checkWatertight(m);
   assert.ok(wt.closed, `${wt.unmatched} unmatched edges`);
   assert.ok(signedVolume(m) > 0, "non-positive volume");
-});
-
-// The snap/inside disagreement needs a grid vertex within SNAP_EPS (1e-4) of the true
-// circle — vanishingly rare under uniform (R, cx, cy) sampling (the reviewer measured a
-// ~0.03% rate; a 200-iteration uniform sweep has ~93% odds of missing it entirely). Bias the
-// sampler at the failure mode instead: pick a centre and a nearby integer grid vertex, then
-// set R to the exact centre-to-vertex distance plus a jitter of a few SNAP_EPS, so the
-// circle passes within a hair of that lattice point by construction.
-test("clip: no near-zero triangles across a jitter-biased sweep (near-lattice radii)", () => {
-  const gw = 121, gh = 121;
-  const { grid } = flatGrid(gw, gh);
-  const rand = mulberry32(0xb1a5ed);
-  const SNAP_EPS = 1e-4; // mirrors clip.js's private constant; the failure window this targets
-  for (let i = 0; i < 400; i++) {
-    const cx = 40 + rand() * 40, cy = 40 + rand() * 40;
-    const ang = rand() * 2 * Math.PI, rr = 5 + rand() * 45;
-    const vx = Math.round(cx + rr * Math.cos(ang)), vy = Math.round(cy + rr * Math.sin(ang));
-    const R0 = Math.hypot(vx - cx, vy - cy); // exact centre-to-lattice-point distance
-    const jitter = (Math.floor(rand() * 7) - 3) * SNAP_EPS; // -3..+3 SNAP_EPS
-    const R = Math.max(1, R0 + jitter);
-    const clip = clipCircle(gw, gh, cx, cy, R);
-    clipElevs(clip, grid);
-    const m = buildSolid(grid, gw, gh, { r0: 0, r1: gh - 1, c0: 0, c1: gw - 1 }, null, GEOM, clip);
-    const wt = checkWatertight(m);
-    assert.ok(wt.closed, `R=${R} c=(${cx},${cy}): ${wt.unmatched} unmatched edges`);
-    assert.ok(signedVolume(m) > 0, `R=${R} c=(${cx},${cy}): non-positive volume`);
-    assert.ok(worstTriArea(m) > 1e-7, `R=${R} c=(${cx},${cy}): smallest tri area ${worstTriArea(m)}`);
-  }
 });
 
 // worstTriArea only catches degenerate (near-zero) area; it misses a triangle that's
@@ -309,7 +313,7 @@ function minTopWinding(m, zTop) {
 test("clip: near-tangent row does not invert a fan triangle's winding (review repro)", () => {
   const gw = 41, gh = 41;
   const { grid } = flatGrid(gw, gh);
-  const clip = clipCircle(gw, gh, 22.26313118590042, 20.950106598902494, 5.263271871954203);
+  const clip = clipPolygon(gw, gh, 0, 0, ngon(22.26313118590042, 20.950106598902494, 5.263271871954203, 64));
   clipElevs(clip, grid);
   const m = buildSolid(grid, gw, gh, { r0: 0, r1: gh - 1, c0: 0, c1: gw - 1 }, null, GEOM, clip);
   assert.ok(minTopWinding(m, H) > 0, `worst top-triangle signed area ${minTopWinding(m, H)}`);
@@ -326,7 +330,7 @@ test("clip: near-tangent row does not invert a fan triangle's winding (review re
 test("clip: a hair-clipped corner leaves no interior wall", () => {
   const gw = 288, gh = 288;
   const { grid } = flatGrid(gw, gh);
-  const clip = clipCircle(gw, gh, 143.85532444444107, 143.40274986205623, 143.47514384332862);
+  const clip = clipPolygon(gw, gh, 0, 0, ngon(143.85532444444107, 143.40274986205623, 143.47514384332862, 64));
   clipElevs(clip, grid);
   const m = buildSolid(grid, gw, gh, { r0: 0, r1: gh - 1, c0: 0, c1: gw - 1 }, null, GEOM, clip);
   assert.ok(checkWatertight(m).closed, "still closed");
@@ -430,18 +434,48 @@ function pinchedVertices(m) {
   }
   let pinched = 0;
   for (const r of ring.values()) {
-    const seen = new Set();
-    let cycles = 0;
-    for (const s of r.keys()) {
-      if (seen.has(s)) continue;
-      cycles++;
-      let cur = /** @type {number | undefined} */ (s), guard = r.size + 2;
-      while (guard-- > 0 && cur !== undefined && !seen.has(cur)) { seen.add(cur); cur = r.get(cur); }
+    // Components of the undirected link graph {s—e}, not a walk along the directed chain: a
+    // walk started at an arbitrary key truncates an OPEN fan and then counts its true head as
+    // a second cycle, so it reported a plain shared-edge pair as pinched depending on the
+    // order the triangles happened to be listed in.
+    /** @type {Map<number, number>} */
+    const parent = new Map();
+    /** @type {(x: number) => number} */
+    const find = (x) => {
+      let root = x;
+      while (parent.get(root) !== root) root = /** @type {number} */ (parent.get(root));
+      return root;
+    };
+    for (const [s, e] of r) {
+      if (!parent.has(s)) parent.set(s, s);
+      if (!parent.has(e)) parent.set(e, e);
+      const rs = find(s), re = find(e);
+      if (rs !== re) parent.set(rs, re);
     }
-    if (cycles > 1) pinched++;
+    let comps = 0;
+    for (const x of parent.keys()) if (find(x) === x) comps++;
+    if (comps > 1) pinched++;
   }
   return pinched;
 }
+
+test("pinchedVertices: detects a bowtie (two disconnected fan rings)", () => {
+  // Bowtie: two triangles sharing a single vertex, no shared edge. The shared vertex has
+  // incident triangles that form two separate cycles (fans) instead of one — a topological
+  // defect that edge-parity cannot detect but is unslicable.
+  // Triangle 1: (0,1,2), Triangle 2: (0,3,4)
+  const indices = new Uint32Array([0, 1, 2, 0, 3, 4]);
+  const m = { indices };
+  assert.equal(pinchedVertices(m), 1, "bowtie vertex detected");
+});
+
+test("pinchedVertices: a shared-edge pair is one fan in either triangle order", () => {
+  // Two triangles sharing edge (0,2): an ordinary manifold fan, not a bowtie. Asserted both
+  // ways round because a directed chain walk gets this right in one order and wrong in the
+  // other — the control the bowtie fixture alone cannot provide.
+  assert.equal(pinchedVertices({ indices: new Uint32Array([0, 1, 2, 0, 2, 3]) }), 0, "T1 first");
+  assert.equal(pinchedVertices({ indices: new Uint32Array([0, 2, 3, 0, 1, 2]) }), 0, "T2 first");
+});
 
 /** @param {{positions: Float32Array, indices: Uint32Array}} m @param {string} label */
 function assertSane(m, label) {
@@ -451,10 +485,11 @@ function assertSane(m, label) {
   const { inward, worst, rim } = skirtOrientation(m);
   assert.equal(inward, 0, `${label}: ${inward} skirt triangles face inward (worst ${worst}) — interior wall`);
   assert.equal(pinchedVertices(m), 0, `${label}: bowtie vertex`);
-  // clip.js's SNAP_EPS is 1e-3 cells (dx=1 here); anything closer should have merged at the
-  // edge. 9e-4 leaves float slack while still catching the 5.4e-4 slit that shipped.
+  // Distinct vertices are interned by snapped position, so any two differ by at least
+  // 1/256 = 3.9e-3 cells in one coordinate. 3e-3 sits just under that: anything closer means
+  // two cells minted separate vertices for one crossing.
   const sep = closestPair(m, rim);
-  assert.ok(sep > 9e-4, `${label}: rim vertices ${sep} apart — cells disagreed on a shared crossing`);
+  assert.ok(sep > 3e-3, `${label}: rim vertices ${sep} apart — cells disagreed on a shared crossing`);
 }
 
 // Every clip defect so far lived in one regime: a lattice point sitting within a few
@@ -475,7 +510,7 @@ test("clip: invariant bundle holds across a rim-lattice-biased sweep", () => {
     const base = Math.hypot(li - cx, lj - cy);
     if (base < 8) continue;
     for (const d of deltas) {
-      const clip = clipCircle(gw, gh, cx, cy, base + d);
+      const clip = clipPolygon(gw, gh, 0, 0, ngon(cx, cy, base + d, 64));
       clipElevs(clip, grid);
       const m = buildSolid(grid, gw, gh, { r0: 0, r1: gh - 1, c0: 0, c1: gw - 1 }, null, GEOM, clip);
       assertSane(m, `R=${(base + d).toFixed(6)} c=(${cx.toFixed(4)},${cy.toFixed(4)})`);
@@ -483,4 +518,23 @@ test("clip: invariant bundle holds across a rim-lattice-biased sweep", () => {
     }
   }
   assert.ok(n >= 90, `sweep ran ${n} configs`);
+});
+
+// Hex's analogue of the radius-at-a-lattice-point regime: a flat edge landing exactly on a
+// grid row. That is the parallel-edge case — the intersection formula is 0/0 there — and
+// snapping makes it a positive-measure event rather than a curiosity.
+test("clip: invariant bundle holds with a hex flat edge on a grid line", () => {
+  const gw = 121, gh = 121;
+  const { grid } = flatGrid(gw, gh);
+  const hy = 30; // half-height in cells; flat edges land at y = 60 ± hy
+  for (const d of [-3e-3, -1 / 256, 0, 1 / 256, 3e-3, 0.5]) {
+    const cy = 60 + d, cx = 60.37, hx = hy / Math.sqrt(3); // flat-top: half-height = hx*sqrt(3)
+    const ring = /** @type {Array<[number, number]>} */ ([
+      [cx + 2 * hx, cy], [cx + hx, cy + hy], [cx - hx, cy + hy],
+      [cx - 2 * hx, cy], [cx - hx, cy - hy], [cx + hx, cy - hy]]);
+    const clip = clipPolygon(gw, gh, 0, 0, ring);
+    clipElevs(clip, grid);
+    const m = buildSolid(grid, gw, gh, { r0: 0, r1: gh - 1, c0: 0, c1: gw - 1 }, null, GEOM, clip);
+    assertSane(m, `hex flat-edge offset ${d}`);
+  }
 });
