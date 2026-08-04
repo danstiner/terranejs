@@ -92,15 +92,14 @@ function writeHash(s) {
   if (hash && hash !== lastHash) { lastHash = hash; history.replaceState(null, "", `#${hash}`); }
 }
 
-// gw*gh is the WINDOW's cell count, not the footprint's — a hex or circle discards part of
-// that window (mask/clip), so the raw product overstates their triangle count. Scale by how
-// much of its own window each footprint fills: square is exact; hex is 3/4 (a flat-top hexagon
-// fills exactly 3/4 of its bounding rectangle — (3√3/8)/(√3/2), the full-square ratio divided by
-// the window's own height fraction); circle is π/4 (the built 64-gon is 0.7841, within 0.2% —
-// fine for an estimate line that already says "≈"). gsd below needs no such fix: it divides by
-// gw alone (mesh spacing along the window's width), which every shape's window shares in full.
+// Both numbers below come off the FOOTPRINT, never the window: a clipped shape discards its
+// window's corners and its window is then expanded outward past the ring (layout.cellWindows),
+// so gw/gh overstate on both counts. spanPx — the tile's own width in cells — is the honest
+// denominator, and the footprint covers this fraction of the spanPx square it inscribes.
+// Circle is the limit its inscribed n-gon approaches: 2.5% under at the coarsest n = 16,
+// inside the "≈" this line already carries.
 /** @type {Record<import("../core/types.js").Shape, number>} */
-const WINDOW_FILL = { square: 1, hex: 3 / 4, circle: Math.PI / 4 };
+const AREA_FRAC = { square: 1, hex: (3 * Math.sqrt(3)) / 8, circle: Math.PI / 4 };
 
 // Resting status after the detailed preview lands: the resolution (real metres per
 // grid sample) and rough triangle count of what's on screen vs what Export will
@@ -108,12 +107,13 @@ const WINDOW_FILL = { square: 1, hex: 3 / 4, circle: Math.PI / 4 };
 // planned with the same pure planTile the worker uses; no fetch, no bake.
 /** @param {TileSettings} settings @returns {string} */
 function detailSummary(settings) {
-  const fill = WINDOW_FILL[settings.shape ?? "square"];
+  const frac = AREA_FRAC[settings.shape ?? "square"];
   /** @param {number} maxTiles */
   const part = (maxTiles) => {
-    const { gw, gh } = planTile(settings, { maxTiles });
-    const gsd = (settings.tileWidthMm * settings.scale) / (1000 * gw); // real metres between mesh vertices
-    const tris = (gw * gh * 2 * fill) / 1e6;                       // ≈ top-surface triangles, millions
+    const { dx } = planTile(settings, { maxTiles });
+    const spanPx = settings.tileWidthMm / dx;              // the tile's own width in cells
+    const gsd = (dx * settings.scale) / 1000;              // real metres between mesh vertices
+    const tris = (2 * frac * spanPx * spanPx) / 1e6;       // ≈ top-surface triangles, millions
     return `${gsd >= 10 ? Math.round(gsd) : gsd.toFixed(1)} m/vertex, ~${tris.toFixed(1)}M triangles`;
   };
   try {
