@@ -53,6 +53,22 @@ The live preview goes coarser still: the screen shows far less detail than the
 print, so a smaller tile budget bakes a faster, lighter mesh that looks identical
 on-screen. Only the exported model uses the full budget.
 
+The tile budget is a ceiling on the fetch, not a target for the mesh, and **how many
+tiles a zoom costs depends on how many source-tile borders the region straddles, not
+on how big it is**. A region smaller than one tile still needs two if it lies across a
+border. So the budget's *shape* decides whether it controls resolution at all: a
+budget of one tile requires the region to miss every border, which is a property of
+where it sits rather than what it needs, and has no lower bound — a region straddling
+a border the grid keeps refining through is forced coarser and coarser until the tile
+is a fraction of a pixel and cannot be meshed.
+
+A budget of four fixes that structurally, because four permits a 2×2 box: a region
+narrower than the tile spacing touches at most two tiles per axis, so the budget is
+satisfied *wherever* it sits, and the search stops at the deepest such zoom. That
+bounds the result from below at roughly half a tile. Three is not enough and two is
+worse — both still require dodging a border outright on one axis. The preview tiers
+budget in squares for this reason.
+
 # Pipeline stages
 
 ```mermaid

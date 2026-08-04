@@ -17,6 +17,11 @@ import { lonToGlobalX, latToGlobalY, globalXToLon, globalYToLat, printPitchMm }
 /** @type {number} */
 export const CELL_CAP = 64;
 
+/** Fewest Mercator pixels a tile edge may span: below 2 the tile has no interior cell and
+ * cellWindows can't build a window at all. Reachable only by pinning a zoom explicitly —
+ * the tile budgets in app.js all land orders of magnitude above it (see FAST_MAX_TILES). */
+export const MIN_SPAN_PX = 2;
+
 // Mercator-pixel span of one tile edge at zoom z (float; Mercator is conformal
 // so one span serves both axes — the print is tileWidthMm square at center lat)
 /**
@@ -93,7 +98,9 @@ export function footprintPx([lat, lon], scale, tileWidthMm, [q, r], z, shape, n 
  */
 export function cellWindows([lat, lon], scale, tileWidthMm, cells, z, shape = "square") {
   const S = tileSpanPx(lat, scale, tileWidthMm, z);
-  if (S < 2) throw new Error("tile smaller than one pixel at this zoom — raise the detail slider");
+  if (S < MIN_SPAN_PX) {
+    throw new Error(`tile spans ${S.toFixed(2)} px at z${z}, under the ${MIN_SPAN_PX}px minimum — use a deeper zoom`);
+  }
   const gxC = lonToGlobalX(lon, z), gyC = latToGlobalY(lat, z);
   const bx = (/** @type {number} */ i) => Math.round(gxC + (i - 0.5) * S);
   const by = (/** @type {number} */ j) => Math.round(gyC + (j - 0.5) * S);
