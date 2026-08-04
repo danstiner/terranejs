@@ -18,7 +18,7 @@ const el = (id) => {
 export function syncControls(s) {
   /** @param {string} id @param {string|number} v */
   const set = (id, v) => { /** @type {HTMLInputElement} */ (el(id)).value = String(v); };
-  set("tileW", s.tileWmm);
+  set("tileW", s.tileWidthMm);
   set("exag", s.exag);
   set("base", s.base);
   set("recess", s.recessMm);
@@ -57,7 +57,7 @@ export function wireControls(store) {
   });
   el("tileW").addEventListener("input", (e) => {
     const v = num(e);
-    if (Number.isFinite(v) && v >= 50 && v <= 1000) store.set({ tileWmm: v });
+    if (Number.isFinite(v) && v >= 50 && v <= 1000) store.set({ tileWidthMm: v });
   });
   el("shape").addEventListener("change", (e) => {
     const v = /** @type {HTMLSelectElement} */ (e.target).value;

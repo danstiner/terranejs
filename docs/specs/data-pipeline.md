@@ -134,7 +134,7 @@ Consequences of clipping:
   interpolated toward a lower outside sample can sit below every inside sample, and missing
   it would put the surface under its own base. Hex statistics shifted slightly when this
   replaced the mask-derived footprint: the intended consequence of printing the true rim.
-- **`tileWmm` stays the bounding-square side in every shape**, so any tile fits the same bed
+- **`tileWidthMm` stays the bounding-square side in every shape**, so any tile fits the same bed
   envelope; enclosed area differs — square 100%, circle → π/4 ≈ 78.5%, hex 3√3/8 ≈ 65%.
 
 ## 4. Water

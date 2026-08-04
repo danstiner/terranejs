@@ -64,7 +64,7 @@ export const fmtMmPerKm = (v) => String(parseFloat(v.toPrecision(3)));
 
 // Scale that makes the piece's long side ~targetLongMm. The 240 default is the
 // original one-bed target the presets were baked against; the GPX call site
-// passes a tileWmm-derived target explicitly.
+// passes a tileWidthMm-derived target explicitly.
 /**
  * @param {number} realW
  * @param {number} realH

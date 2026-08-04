@@ -2,7 +2,7 @@
 // the tile centre, and a map scale that frames the feature at the print width.
 // Data only — no DOM imports — so test/presets.test.mjs can import it under node.
 // A preset is a curated centre+scale SUBSET of the app state; it deliberately
-// omits tileWmm (a printer-bed constraint) and base/exag (user print prefs).
+// omits tileWidthMm (a printer-bed constraint) and base/exag (user print prefs).
 // Full-state export/import is a separate feature (see TODO.md).
 /** @typedef {import("../core/types.js").LatLon} LatLon */
 /**

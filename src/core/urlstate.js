@@ -8,7 +8,7 @@ import { MAX_MERCATOR_LAT } from "./tilemath.js";
 /** @typedef {import("./types.js").LatLon} LatLon */
 /** @typedef {import("./types.js").Shape} Shape */
 /**
- * @typedef {{ center: LatLon | null, scale: number, tileWmm: number, base: number,
+ * @typedef {{ center: LatLon | null, scale: number, tileWidthMm: number, base: number,
  *   exag: number, flatten: boolean, recessMm: number, layerMm: number, shape: Shape }} ShareableState
  */
 
@@ -24,7 +24,7 @@ const SHAPES = /** @type {Shape[]} */ (["square", "hex", "circle"]);
 // old link should still open. Geography is different — a bad coordinate has no sane fallback, so
 // it rejects the whole payload (see decodeState).
 const LIMITS = {
-  width: { min: 50, max: 1000 },   // tileWmm — printer bed
+  width: { min: 50, max: 1000 },   // tileWidthMm — printer bed
   base: { min: 1, max: 10 },       // mm
   exag: { min: 0.5, max: 4 },      // ×
   recess: { min: 0, max: 5 },      // mm
@@ -47,14 +47,14 @@ const trim = (v, places) => String(Number(v.toFixed(places)));
  * @param {ShareableState} state
  * @returns {string}
  */
-export function encodeState({ center, scale, tileWmm, base, exag, flatten, recessMm, layerMm, shape }) {
+export function encodeState({ center, scale, tileWidthMm, base, exag, flatten, recessMm, layerMm, shape }) {
   if (!center) return "";
   return [
     `v=${STATE_VERSION}`,
     `lat=${trim(center[0], 5)}`,
     `lon=${trim(center[1], 5)}`,
     `scale=${Math.round(scale)}`,
-    `width=${trim(tileWmm, 1)}`,
+    `width=${trim(tileWidthMm, 1)}`,
     `base=${trim(base, 2)}`,
     `exag=${trim(exag, 2)}`,
     `flatten=${flatten ? "T" : "F"}`,
@@ -79,10 +79,10 @@ export function decodeState(hash) {
     return p.get(k) !== null && p.get(k) !== "" && Number.isFinite(v) ? v : null;
   };
   const lat = num("lat"), lon = num("lon"), scale = num("scale");
-  const tileWmm = num("width"), base = num("base"), exag = num("exag");
+  const tileWidthMm = num("width"), base = num("base"), exag = num("exag");
   const recessMm = num("recess"), layerMm = num("layer");
   const flat = p.get("flatten"); // T/F, not 1/0 — reads as a flag in a hand-edited link
-  if (lat === null || lon === null || scale === null || tileWmm === null || base === null ||
+  if (lat === null || lon === null || scale === null || tileWidthMm === null || base === null ||
       exag === null || recessMm === null || layerMm === null) return null;
   if (flat !== "T" && flat !== "F") return null; // strict: a mangled flag is corruption, not false
   const shapeRaw = p.get("shape");
@@ -94,7 +94,7 @@ export function decodeState(hash) {
   return {
     center: [lat, lon],
     scale,
-    tileWmm: clamp(tileWmm, LIMITS.width),
+    tileWidthMm: clamp(tileWidthMm, LIMITS.width),
     base: clamp(base, LIMITS.base),
     exag: clamp(exag, LIMITS.exag),
     flatten: flat === "T",

@@ -188,12 +188,12 @@ test("clipElevs: an integral coordinate reproduces the edge lerp exactly", () =>
 // what this test must catch). 900, comfortably under half of that, still catches a near-empty
 // intersection without being tuned to today's exact geometry.
 test("clipPolygon: adjacent hex tiles agree exactly on their shared edge", () => {
-  const scale = 250000, tileWmm = 200, z = 13;
+  const scale = 250000, tileWidthMm = 200, z = 13;
   for (let k = 0; k < 24; k++) {
     const center = /** @type {[number, number]} */ ([47.6035, -122.3294 + k * 0.0009]);
     for (const [nbr, label] of /** @type {const} */ ([[[1, 0], "60deg"], [[0, 1], "flat"]])) {
-      const a = rimPoints(center, scale, tileWmm, [0, 0], z);
-      const b = rimPoints(center, scale, tileWmm, /** @type {[number, number]} */ (nbr), z);
+      const a = rimPoints(center, scale, tileWidthMm, [0, 0], z);
+      const b = rimPoints(center, scale, tileWidthMm, /** @type {[number, number]} */ (nbr), z);
       const coincidences = exactCoincidences(a, b, `k=${k} ${label}`);
       assert.ok(coincidences >= 900,
         `k=${k} ${label}: only ${coincidences} exact coincidences on the seam`);
@@ -208,12 +208,12 @@ test("clipPolygon: adjacent hex tiles agree exactly on their shared edge", () =>
 // Shrinking one tile's window must therefore destroy the agreement outright. If this ever
 // reports a coincidence again, the seam test above has stopped proving anything.
 test("clipPolygon: the seam test's rim points are window-sensitive", () => {
-  const scale = 250000, tileWmm = 200, z = 13;
+  const scale = 250000, tileWidthMm = 200, z = 13;
   const center = /** @type {[number, number]} */ ([47.6035, -122.3294]);
-  const a = rimPoints(center, scale, tileWmm, [0, 0], z);
-  assert.ok(exactCoincidences(a, rimPoints(center, scale, tileWmm, [0, 1], z), "intact") >= 900,
+  const a = rimPoints(center, scale, tileWidthMm, [0, 0], z);
+  assert.ok(exactCoincidences(a, rimPoints(center, scale, tileWidthMm, [0, 1], z), "intact") >= 900,
     "control: the intact pair must agree, or the shrink below proves nothing");
-  assert.equal(exactCoincidences(a, rimPoints(center, scale, tileWmm, [0, 1], z, 2), "shrunk"), 0,
+  assert.equal(exactCoincidences(a, rimPoints(center, scale, tileWidthMm, [0, 1], z, 2), "shrunk"), 0,
     "a 2px window shrink must leave no rim point in common");
 });
 
@@ -229,10 +229,10 @@ test("clipPolygon: the seam test's rim points are window-sensitive", () => {
 // y = 758624.0859375 in tile (1,0)'s — exactly 1/256 apart.
 test("clipPolygon: crossing snap is window-frame independent", () => {
   const center = /** @type {[number, number]} */ ([44.492, -76.11719999999991]);
-  const scale = 24000, tileWmm = 200, z = 13;
+  const scale = 24000, tileWidthMm = 200, z = 13;
   /** @param {[number, number]} cell */
   const yAt = (cell) => {
-    const ys = rimPoints(center, scale, tileWmm, cell, z)
+    const ys = rimPoints(center, scale, tileWidthMm, cell, z)
       .filter(([x, y]) => x === 605303 && Math.abs(y - 758624.088) < 0.02)
       .map(([, y]) => y);
     assert.equal(ys.length, 1, `(${cell}): one shared-edge crossing at x=605303, got [${ys}]`);
@@ -292,18 +292,18 @@ function exactCoincidences(a, b, label) {
 /**
  * `shrink` insets the window by that many px on every side, leaving the ring untouched — the
  * deliberate truncation the window-sensitivity test needs, and nothing a caller would ever do.
- * @param {[number, number]} center @param {number} scale @param {number} tileWmm
+ * @param {[number, number]} center @param {number} scale @param {number} tileWidthMm
  * @param {[number, number]} cell @param {number} z @param {number} [shrink]
  * @returns {Array<[number, number]>}
  */
-function rimPoints(center, scale, tileWmm, cell, z, shrink = 0) {
-  const { wins } = cellWindows(center, scale, tileWmm, [cell], z, "hex");
+function rimPoints(center, scale, tileWidthMm, cell, z, shrink = 0) {
+  const { wins } = cellWindows(center, scale, tileWidthMm, [cell], z, "hex");
   const full = /** @type {import("../src/core/types.js").Window} */
     (wins.get(`${cell[0]},${cell[1]}`));
   const win = shrink === 0 ? full : { ...full, gx0: full.gx0 + shrink, gy0: full.gy0 + shrink,
     gw: full.gw - 2 * shrink, gh: full.gh - 2 * shrink };
   const ring = /** @type {Array<[number, number]>} */
-    (footprintPx(center, scale, tileWmm, cell, z, "hex"));
+    (footprintPx(center, scale, tileWidthMm, cell, z, "hex"));
   const clip = clipPolygon(win.gw, win.gh, win.gx0, win.gy0, ring);
   const first = clip.gw * clip.gh; // clip.js: ids below this are grid vertices, not boundary ids
   /** @type {Set<number>} */
@@ -326,15 +326,15 @@ function rimPoints(center, scale, tileWmm, cell, z, shrink = 0) {
 // The seam's endpoints. A corner that snaps onto a grid vertex never reaches clip.col/row,
 // so assert on the rings, where both tiles' corners are unconditionally comparable.
 test("footprintPx: adjacent hex tiles mint identical shared corners", () => {
-  const scale = 250000, tileWmm = 200, z = 13;
+  const scale = 250000, tileWidthMm = 200, z = 13;
   for (let k = 0; k < 24; k++) {
     const center = /** @type {[number, number]} */ ([47.6035, -122.3294 + k * 0.0009]);
     for (const [nbr, label] of /** @type {const} */ ([[[1, 0], "60deg"], [[0, 1], "flat"]])) {
       const key = (/** @type {[number, number]} */ p) => `${p[0]},${p[1]}`;
       const a = /** @type {Array<[number, number]>} */
-        (footprintPx(center, scale, tileWmm, [0, 0], z, "hex")).map(key);
+        (footprintPx(center, scale, tileWidthMm, [0, 0], z, "hex")).map(key);
       const b = new Set(/** @type {Array<[number, number]>} */
-        (footprintPx(center, scale, tileWmm, /** @type {[number, number]} */ (nbr), z, "hex")).map(key));
+        (footprintPx(center, scale, tileWidthMm, /** @type {[number, number]} */ (nbr), z, "hex")).map(key));
       assert.equal(a.filter((p) => b.has(p)).length, 2,
         `k=${k} ${label}: adjacent hexes must share exactly 2 corners, bit-for-bit`);
     }

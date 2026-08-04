@@ -17,7 +17,7 @@ test("every preset yields a valid in-bounds plan", () => {
     assert.ok(Number.isFinite(p.scale) && p.scale > 0, `${p.name}: bad scale ${p.scale}`);
     // The core planner throws on an out-of-bounds tile; a preset must never do that.
     assert.doesNotThrow(
-      () => planTile({ ...p, tileWmm: 200, base: 6, exag: 1 }),
+      () => planTile({ ...p, tileWidthMm: 200, base: 6, exag: 1 }),
       `${p.name}: planTile threw`);
   }
 });
