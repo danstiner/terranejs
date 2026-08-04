@@ -10,7 +10,7 @@ import { defaultTileName, planTile } from "../core/pipeline.js";
 import { encodeState, decodeState } from "../core/urlstate.js";
 import { PRESETS, DEFAULT_PRESET } from "./presets.js";
 import { BAND_NAMES } from "../core/colors.js";
-import { LAND_BLUE_WARN_PCT } from "../core/water.js";
+import { LAND_BLUE_WARN_PCT, WATER_AS_LAND_WARN_PCT } from "../core/water.js";
 import { HEX_H } from "../core/layout.js";
 
 // The app state IS the shareable state — one typedef, so a new field can't be added here and
@@ -123,6 +123,25 @@ function detailSummary(settings) {
   }
 }
 
+// The mask and the color line can disagree in both directions, and both disagreements have the
+// same one-click remedy — so they compose into one sentence rather than two banners. Land below
+// the line prints blue (polders); masked water above it shows as terrain (a high lake, or noisy
+// near-0 bathymetry fragmenting a bay). Says "show", not "print": the exported M600 pause sits a
+// layer above the line, so water within one layer of it still prints blue — tens of metres of
+// elevation at map scale. Percentages are differently based on purpose — see WATER_AS_LAND_WARN_PCT.
+/** @param {{ landBluePct: number, waterAsLandPct: number }} data */
+function updateWaterWarning(data) {
+  const clauses = [];
+  if (data.landBluePct > LAND_BLUE_WARN_PCT) clauses.push(`${Math.round(data.landBluePct)}% of the land will print blue`);
+  // One decimal: rounding a firing 1.4% to "1%" would quote the threshold at which it stays silent.
+  if (data.waterAsLandPct > WATER_AS_LAND_WARN_PCT) clauses.push(`water covering ${data.waterAsLandPct.toFixed(1)}% of the tile will show as land`);
+  const warn = $("waterWarn");
+  warn.hidden = clauses.length === 0;
+  if (clauses.length) {
+    warn.textContent = `${clauses.join(" and ")} — enable "Recess all water to lowest waterline" to separate land from water.`;
+  }
+}
+
 /**
  * @param {{ changes: { z: number, band: number, color: [number, number, number], elev: number, boundary: string }[],
  *           baseName: string, baseHex: string }} bands
@@ -161,21 +180,15 @@ worker.onmessage = ({ data }) => {
   if (data.error) { setProgress(`Preview failed: ${data.error}`); previewPhase = "idle"; $("waterWarn").hidden = true; return; }
   preview.setTiles([{ positions: data.positions, indices: data.indices, normals: data.normals, bands: data.bands }], data.frame);
   renderLegend(data.bands);
-  // Low land below the colour line prints blue (possible only with the checkbox off — flatten
-  // holds the line below all land); the warning's one remedy is the checkbox. Gate on the bake's
-  // own data, not the current UI mode.
-  const warn = $("waterWarn");
-  if (data.landBluePct > LAND_BLUE_WARN_PCT) {
-    warn.textContent = `${Math.round(data.landBluePct)}% of the land will print blue — enable "Recess all water to lowest waterline" to separate land from water.`;
-    warn.hidden = false;
-  } else {
-    warn.hidden = true;
-  }
   if (previewPhase === "fast") {
     previewPhase = "crisp"; // fast relief is up; refine to viewport-sharp
     setProgress("Detailed preview…");
     worker.postMessage({ gen: previewGen, settings: previewSettings, maxTiles: CRISP_MAX_TILES, format: "mesh" });
   } else {
+    // Crisp pass only. The one-tile fast bake resolves the shoreline too coarsely to judge a
+    // 1%-of-tile threshold, and letting it drive the banner makes it flash and vanish a second
+    // later; the previous banner stays up until the sharp numbers land.
+    updateWaterWarning(data);
     previewPhase = "idle";
     setProgress(previewSettings ? detailSummary(previewSettings) : "");
   }

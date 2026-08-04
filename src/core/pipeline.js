@@ -123,7 +123,7 @@ export function planTile(settings, { z, maxTiles = 300 } = {}) {
  * @param {TilePlan} plan
  * @param {{ base: number, exag: number, flatten?: boolean, recessMm?: number, layerMm?: number }} settings
  * @param {Uint8Array} [waterMask]
- * @returns {{ solid: Solid, emin: number, emax: number, lineElev: number, landBluePct: number }}
+ * @returns {{ solid: Solid, emin: number, emax: number, lineElev: number, landBluePct: number, waterAsLandPct: number }}
  */
 export function bakeTileSolid(mosaic, plan, { base, exag, flatten = false, recessMm = 0, layerMm = 0.15 }, waterMask) {
   const { window, span, gw, gh, dx, dy, mmPerM, ring } = plan;
@@ -134,7 +134,7 @@ export function bakeTileSolid(mosaic, plan, { base, exag, flatten = false, reces
   // Square fills its window, so it needs no clip and no footprint — keeping `footprint`
   // undefined there is what makes the square path bit-identical to before shapes existed.
   const footprint = clip ? clip.inside : undefined;
-  const { lineElev, landBluePct } = applyWaterRecess(grid, waterMask, {
+  const { lineElev, landBluePct, waterAsLandPct } = applyWaterRecess(grid, waterMask, {
     flatten, recessMm, layerMm, K: mmPerM * exag, footprint,
   });
   if (clip) clipElevs(clip, grid);
@@ -145,7 +145,7 @@ export function bakeTileSolid(mosaic, plan, { base, exag, flatten = false, reces
   const wt = checkWatertight(solid);
   if (!wt.closed) throw new Error(`pipeline: non-watertight solid (${wt.unmatched} unmatched edges)`);
   if (signedVolume(solid) <= 0) throw new Error("pipeline: non-positive-volume (inside-out) solid");
-  return { solid, emin, emax, lineElev, landBluePct };
+  return { solid, emin, emax, lineElev, landBluePct, waterAsLandPct };
 }
 
 // One solid → a single-object .3mf blob (tile placed at the plate origin).
@@ -183,7 +183,7 @@ export function defaultTileName({ center: [lat, lon], tileWidthMm, scale, shape 
 /**
  * @param {TileSettings} settings
  * @param {{ z?: number, maxTiles?: number, onProgress?: (done: number, total: number) => void }} [opts]
- * @returns {Promise<{ solid: Solid, emin: number, emax: number, lineElev: number, landBluePct: number }>}
+ * @returns {Promise<{ solid: Solid, emin: number, emax: number, lineElev: number, landBluePct: number, waterAsLandPct: number }>}
  */
 export async function bakeTile(settings, opts = {}) {
   const plan = planTile(settings, opts);

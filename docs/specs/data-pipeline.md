@@ -160,6 +160,19 @@ two orthogonal controls decide where the water and that line sit:
 A tile with no masked water gets no water line at all: waterless below-sea-level land (Death
 Valley) prints as ordinary terrain.
 
+**The mask and the line can disagree in both directions, and one warning covers both** — they
+share the single remedy above, so the banner composes clauses into one sentence rather than
+stacking. `landBluePct` counts land at/below the line, as a share of the **land**, warning past
+5%. `waterAsLandPct` counts masked water above the line, as a share of the **tile**, warning
+past 1%. The denominators differ on purpose: a bay speckled by noisy near-0 bathymetry is only
+~3% of its water but ~1.5% of its tile, while a tile whose 0.3% water is alpine tarns is 100% of
+its water — measured against the water, the warning would shout at the quiet case and stay
+silent on the real one. Both are structurally 0 with the checkbox on, which is what makes the
+checkbox the remedy for either. The second says water will "show" as land, not print: the export
+pause sits a layer above the line, so water within one layer of it still prints blue — a sub-mm
+offset that is tens to hundreds of metres of *elevation* at map scale. See
+`docs/superpowers/specs/2026-08-04-water-as-land-warning-design.md`.
+
 The color line becomes `thresholds[0]` in the Color bands array below (the ecological lines clamp up to it,
 staying ascending), so it drives the same per-print-Z filament changes as any other band
 boundary — no separate color path. The **exported** water pause alone is lifted one print layer

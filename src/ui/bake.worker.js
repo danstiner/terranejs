@@ -41,7 +41,7 @@ async function handle({ gen, settings, maxTiles, format, name, color }) {
     for (let i = 0; i < wmGrid.length; i++) waterMask[i] = wmGrid[i] > 0.5 ? 1 : 0;
 
     post({ gen, baking: true }); // all tiles in hand → meshing + validation (synchronous, blocks the worker)
-    const { solid, emin, emax, lineElev, landBluePct } = bakeTileSolid(mosaic, plan, settings, waterMask);
+    const { solid, emin, emax, lineElev, landBluePct, waterAsLandPct } = bakeTileSolid(mosaic, plan, settings, waterMask);
     // Latitude-adjusted color changes for THIS bake's frame. Shared by the preview
     // (returned as `bands`) and, later, the export embed. K>0 since exag ∈ [0.5,4].
     const K = plan.mmPerM * settings.exag;
@@ -85,7 +85,7 @@ async function handle({ gen, settings, maxTiles, format, name, color }) {
         orig: probeGrid, mask: waterMask, gw: plan.gw, gh: plan.gh, dx: plan.dx, dy: plan.dy,
         recessed: (settings.flatten ?? false) || (settings.recessMm ?? 0) > 0,
       };
-      post({ gen, positions: solid.positions, indices: solid.indices, normals, bands, frame: probeFrame, landBluePct },
+      post({ gen, positions: solid.positions, indices: solid.indices, normals, bands, frame: probeFrame, landBluePct, waterAsLandPct },
         [solid.positions.buffer, solid.indices.buffer, normals.buffer, probeGrid.buffer, waterMask.buffer]);
     }
   } catch (err) {

@@ -21,14 +21,14 @@ test("applyWaterRecess: no mask → no-op, colour line below all terrain", () =>
   const grid = Float32Array.from([100, 200, 300]);
   const r = applyWaterRecess(grid, undefined, opts());
   assert.deepEqual([...grid], [100, 200, 300], "grid untouched");
-  assert.deepEqual(r, { lineElev: -Infinity, landBluePct: 0 });
+  assert.deepEqual(r, { lineElev: -Infinity, landBluePct: 0, waterAsLandPct: 0 });
 });
 
 test("applyWaterRecess: no water cells → no-op (waterless Death Valley stays green)", () => {
   const [grid, mask] = tile([100, -86, 300], [0, 0, 0]);
   const r = applyWaterRecess(grid, mask, opts());
   assert.deepEqual([...grid], [100, -86, 300]);
-  assert.deepEqual(r, { lineElev: -Infinity, landBluePct: 0 });
+  assert.deepEqual(r, { lineElev: -Infinity, landBluePct: 0, waterAsLandPct: 0 });
 });
 
 test("applyWaterRecess: default — line at true 0 m, ocean blue, land above 0 green, no mutation", () => {
@@ -161,4 +161,53 @@ test("applyWaterRecess: no footprint argument keeps today's whole-window behavio
   const water = Uint8Array.from([1, 0, 0, 0]);
   const r = applyWaterRecess(grid, water, { flatten: false, recessMm: 0, layerMm: 0.15, K: 0.01 });
   assert.equal(r.lineElev, 0, "square path unchanged: the water anchors the 0 m line");
+});
+
+// --- waterAsLandPct: masked water showing above the colour line (the counterpart to landBluePct) ---
+
+test("waterAsLandPct: default — water above the 0 m line counts, as a share of the TILE", () => {
+  const [grid, mask] = tile([1890, -5, 100, 200], [1, 1, 0, 0]); // high lake + ocean, 2 land
+  const r = applyWaterRecess(grid, mask, opts());
+  assert.equal(r.lineElev, 0);
+  assert.equal(r.waterAsLandPct, 25, "1 of 4 CELLS, not 1 of 2 water cells (50%)");
+});
+
+test("waterAsLandPct: default — ordinary coast, all water below the line, reads 0", () => {
+  const [grid, mask] = tile([0, -30, 5, 20], [1, 1, 0, 0]);
+  const r = applyWaterRecess(grid, mask, opts());
+  assert.equal(r.waterAsLandPct, 0, "water AT the line is blue (strict >), matching bandOf");
+});
+
+test("waterAsLandPct: flatten on → structurally 0, even for water starting far above the line", () => {
+  const [grid, mask] = tile([3812, 3812, 4000, 4200], [1, 1, 0, 0]); // Titicaca-style
+  const r = applyWaterRecess(grid, mask, opts({ flatten: true }));
+  assert.equal(r.waterAsLandPct, 0, "the plane IS the line, so no masked cell can sit above it");
+});
+
+// Regression for the float32 narrowing defect: `anchor` is float64 and rarely representable, so
+// reading grid[i] back after the store rounds UP in ~2.7% of slider combinations and reports 100%
+// of the water as land with the checkbox already ON. These values are deliberately NOT float-exact
+// (unlike the flatten tests above, which pick lift = 1 m and would pass either way).
+test("waterAsLandPct: flatten on with a float32-inexact plane still reads 0", () => {
+  const o = opts({ flatten: true, layerMm: 0.05, K: 0.15 }); // lift = 1/3 m, not representable
+  const [grid, mask] = tile([-2, -2, -7.31640625, 20], [1, 1, 0, 0]);
+  const r = applyWaterRecess(grid, mask, o);
+  assert.equal(r.lineElev, -7.983072916666667, "plane = landMin − 2·lift, in float64");
+  assert.ok(Math.fround(r.lineElev) > r.lineElev, "precondition: the store rounds this plane UP");
+  assert.equal(r.waterAsLandPct, 0, "counted before the narrowing store, so the rounding can't fire it");
+});
+
+test("waterAsLandPct: a large recess sinks water below the line and clears the warning", () => {
+  const [grid, mask] = tile([200, 200, 300, 400], [1, 1, 0, 0]); // high lake, flatten OFF
+  const before = applyWaterRecess(Float32Array.from([200, 200, 300, 400]), mask, opts());
+  assert.equal(before.waterAsLandPct, 50, "without a recess the lake shows as land");
+  const r = applyWaterRecess(grid, mask, opts({ recessMm: 5 })); // 5 mm = 250 m at K
+  assert.equal(r.waterAsLandPct, 0, "sunk below the 0 m line — §4's documented blue-pits escape hatch");
+});
+
+test("waterAsLandPct: water outside the footprint is in neither numerator nor denominator", () => {
+  const [grid, mask] = tile([1890, -5, 100, 200], [1, 1, 0, 0]);
+  const footprint = Uint8Array.from([0, 1, 1, 1]); // discard the high lake
+  const r = applyWaterRecess(grid, mask, { flatten: false, recessMm: 0, layerMm: LAYER, K, footprint });
+  assert.equal(r.waterAsLandPct, 0, "the only above-line water is a discarded corner");
 });
