@@ -21,7 +21,10 @@ import { HEX_H } from "../core/layout.js";
 // Max source-tile budget per bake, one per quality tier (passed as `maxTiles`). Preview
 // detail is scaled to the viewport, not the print — a small tile budget keeps the bake fast
 // and the fetch light on a free tile host. See data-pipeline.md "Resolution floor".
-const FAST_MAX_TILES = 1;      // one tile → instant relief while the detailed bake runs
+// 4 is a 2×2: a region narrower than the tile spacing touches at most two tiles per axis, so
+// the budget is met wherever it sits. 1 demands missing every border — a property of position,
+// not of need, with no floor under it. See data-pipeline.md "Resolution floor".
+const FAST_MAX_TILES = 4;      // 2×2 → instant relief while the detailed bake runs
 const CRISP_MAX_TILES = 16;    // ~4×4 tiles → one zoom deeper on wide tiles, still a light fetch
 const EXPORT_MAX_TILES = 300;  // full print resolution (core's default tile budget)
 

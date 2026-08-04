@@ -42,7 +42,7 @@ test("cellWindows: union covers exactly the per-cell windows", () => {
 
 test("cellWindows: sub-pixel tile throws", () => {
   // z0: span = 1.13 px < 2 for this fixture (z1 is already 2.26 px, meshable)
-  assert.throws(() => cellWindows(CENTER, SCALE, W, /** @type {Cell[]} */ ([[0, 0]]), 0), /tile smaller/);
+  assert.throws(() => cellWindows(CENTER, SCALE, W, /** @type {Cell[]} */ ([[0, 0]]), 0), /under the 2px minimum/);
 });
 
 test("cellBbox: origin centered on center; +x neighbor abuts in lon", () => {

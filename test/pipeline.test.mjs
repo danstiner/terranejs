@@ -6,8 +6,8 @@ import path from "node:path";
 import cp from "node:child_process";
 import { planTile, bakeTileSolid, tileTo3mf, defaultTileName } from "../src/core/pipeline.js";
 import { checkWatertight, signedVolume } from "../src/core/validate.js";
-import { printPitchMm, PITCH_FLOOR_MM, lonToGlobalX, latToGlobalY, MAX_MERCATOR_LAT } from "../src/core/tilemath.js";
-import { cellsBbox } from "../src/core/layout.js";
+import { printPitchMm, PITCH_FLOOR_MM, sourceZoom, lonToGlobalX, latToGlobalY, MAX_MERCATOR_LAT } from "../src/core/tilemath.js";
+import { cellsBbox, tileSpanPx, MIN_SPAN_PX } from "../src/core/layout.js";
 
 /** @typedef {import("../src/core/pipeline.js").TileSettings} TileSettings */
 
@@ -38,6 +38,29 @@ test("planTile: auto-zoom picks the deepest useful source zoom", () => {
   assert.ok(plan.z === 15 || printPitchMm(0, plan.z - 1, SETTINGS.scale) > PITCH_FLOOR_MM,
     "one zoom shallower would exceed the floor");
   assert.ok(plan.dx > 0 && Number.isFinite(plan.gw) && plan.gw > 1, "coherent plan");
+});
+
+// The argument for FAST_MAX_TILES — see data-pipeline.md "Resolution floor". The 1-tile arm
+// reads sourceZoom directly because planTile throws on the placements that make the point.
+test("planTile: a 2x2 budget is size-bound, where a 1-tile budget is alignment-bound", () => {
+  let seed = 99; const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  let min4 = Infinity, min1 = Infinity;
+  for (const shape of /** @type {const} */ (["square", "hex", "circle"])) {
+    for (let i = 0; i < 200; i++) {
+      const center = /** @type {[number, number]} */ ([(rnd() * 140) - 70, (rnd() * 360) - 180]);
+      const scale = [10000, 150000, 390625, 751880, 2e6][Math.floor(rnd() * 5)];
+      const tileWidthMm = [50, 200, 400][Math.floor(rnd() * 3)];
+      const settings = { center, scale, tileWidthMm, base: 6, exag: 1, shape };
+      min4 = Math.min(min4, tileWidthMm / planTile(settings, { maxTiles: 4 }).dx);
+      const bbox = cellsBbox(center, scale, tileWidthMm, [[0, 0]], shape);
+      min1 = Math.min(min1, tileSpanPx(center[0], scale, tileWidthMm,
+        sourceZoom(bbox, center[0], scale, 1)));
+    }
+  }
+  // 64, not the geometric ~127: a small tile at a fine scale hits the source's z15 cap first,
+  // which lands lower but is a resolution ceiling rather than a lottery. Still loud at 0.07.
+  assert.ok(min4 >= 64, `2x2 budget bottomed out at ${min4.toFixed(2)} cells`);
+  assert.ok(min1 < MIN_SPAN_PX, `sweep must contain hostile placements; 1-tile min was ${min1.toFixed(2)}`);
 });
 
 test("planTile: rejects a tile spilling past the ±85° Mercator cap", () => {
