@@ -1,9 +1,10 @@
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }
 html { color-scheme: light dark; } /* dark-theme native form controls (number inputs, sliders) with the page */
+/* height: 100% above, never 100vh: viewport units ignore scrollbars, so a horizontal one
+   leaves the body taller than the room left for it and overflows the other axis */
 body {
   display: flex;
-  height: 100vh;
   font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
   color: #1a1a1a;
 }
@@ -27,7 +28,8 @@ body {
 
 /* right column: 3D preview, then a results footer */
 #right { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-#preview { flex: 1; min-height: 0; background: #0e0e12; }
+/* clips: the canvas must not be able to scroll the document, which resizes the pane sizing it */
+#preview { flex: 1; min-height: 0; overflow: hidden; background: #0e0e12; }
 #preview canvas { display: block; }
 #results { flex: 0 0 auto; padding: 10px 16px; border-top: 1px solid #ddd; background: #fafafa; }
 #resultbar { display: flex; align-items: center; gap: 16px; }
