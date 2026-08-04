@@ -4,7 +4,7 @@ import { encodeState, decodeState, STATE_VERSION } from "../src/core/urlstate.js
 
 const FULL = {
   center: /** @type {[number, number]} */ ([46.8523, -121.7603]),
-  scale: 150000, tileWmm: 200, base: 6, exag: 1,
+  scale: 150000, tileWidthMm: 200, base: 6, exag: 1,
   flatten: false, recessMm: 0, layerMm: 0.15, shape: /** @type {const} */ ("square"),
 };
 
@@ -17,7 +17,7 @@ test("round-trip survives the leading # the browser reports", () => {
 });
 
 test("round-trip preserves non-default water settings", () => {
-  const s = { ...FULL, flatten: true, recessMm: 3, layerMm: 0.2, exag: 2.5, base: 8.5, tileWmm: 250 };
+  const s = { ...FULL, flatten: true, recessMm: 3, layerMm: 0.2, exag: 2.5, base: 8.5, tileWidthMm: 250 };
   assert.deepEqual(decodeState(encodeState(s)), s);
 });
 
@@ -64,9 +64,9 @@ test("flatten encodes as T/F, and a mangled flag is rejected not read as false",
 // Every UI-reachable value must survive its own link: the inputs' declared bounds and the
 // decoder's clamp ranges have to agree, or a user could build a tile the URL can't reproduce.
 test("the widest UI-reachable print settings round-trip unclamped", () => {
-  const extreme = { ...FULL, tileWmm: 1000, base: 10, exag: 4, recessMm: 5, layerMm: 0.6 };
+  const extreme = { ...FULL, tileWidthMm: 1000, base: 10, exag: 4, recessMm: 5, layerMm: 0.6 };
   assert.deepEqual(decodeState(encodeState(extreme)), extreme, "upper bounds survive");
-  const tight = { ...FULL, tileWmm: 50, base: 1, exag: 0.5, recessMm: 0, layerMm: 0.05 };
+  const tight = { ...FULL, tileWidthMm: 50, base: 1, exag: 0.5, recessMm: 0, layerMm: 0.05 };
   assert.deepEqual(decodeState(encodeState(tight)), tight, "lower bounds survive");
   // The scale input reads mm-per-km and the store holds 1:N, so its bounds invert. Both ends
   // must encode as plain integers: exponent form ("1e+36") loses its "+" to hash decoding, and
@@ -85,7 +85,7 @@ test("decodeState clamps print preferences instead of rejecting the link", () =>
   assert.equal(decodeState(bend("exag", "99"))?.exag, 4, "exaggeration clamped to the slider max");
   assert.equal(decodeState(bend("recess", "-2"))?.recessMm, 0, "recess clamped to zero");
   assert.equal(decodeState(bend("layer", "9"))?.layerMm, 0.6, "layer height clamped");
-  assert.equal(decodeState(bend("width", "5000"))?.tileWmm, 1000, "tile width clamped to the bed max");
+  assert.equal(decodeState(bend("width", "5000"))?.tileWidthMm, 1000, "tile width clamped to the bed max");
 });
 
 test("encodeState omits a null centre (nothing to share yet)", () => {

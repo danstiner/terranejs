@@ -15,7 +15,7 @@ import { cellsBbox } from "../src/core/layout.js";
 // exact and the assertions are clean. Elevations are synthetic; z is pinned so
 // the grid stays small (a full-detail tile is thousands of px per side).
 /** @type {TileSettings} */
-const SETTINGS = { center: [0, 0], scale: 61150, tileWmm: 100, base: 5, exag: 2 };
+const SETTINGS = { center: [0, 0], scale: 61150, tileWidthMm: 100, base: 5, exag: 2 };
 
 test("planTile: deterministic window + geom at a fixed zoom", () => {
   const plan = planTile(SETTINGS, { z: 10 });
@@ -23,7 +23,7 @@ test("planTile: deterministic window + geom at a fixed zoom", () => {
   assert.equal(plan.gw, 41);
   assert.equal(plan.gh, 41);
   assert.deepEqual(plan.span, { r0: 0, r1: 40, c0: 0, c1: 40 });
-  // dx = tileWmm/spanPx reduces exactly to the print pitch at this lat/z/scale
+  // dx = tileWidthMm/spanPx reduces exactly to the print pitch at this lat/z/scale
   assert.ok(Math.abs(plan.dx - printPitchMm(0, 10, 61150)) < 1e-9, `dx ${plan.dx}`);
   assert.equal(plan.dx, plan.dy); // Mercator conformal
   assert.ok(Math.abs(plan.mmPerM - 1000 / 61150) < 1e-9);
@@ -43,13 +43,13 @@ test("planTile: auto-zoom picks the deepest useful source zoom", () => {
 test("planTile: rejects a tile spilling past the ±85° Mercator cap", () => {
   // Large high-latitude tile: its north edge lands near 86.8°, outside the square.
   /** @type {TileSettings} */
-  const beyond = { center: [80, 0], scale: 500000, tileWmm: 5000, base: 5, exag: 2 };
+  const beyond = { center: [80, 0], scale: 500000, tileWidthMm: 5000, base: 5, exag: 2 };
   assert.throws(() => planTile(beyond), /Web Mercator/);
 });
 
 test("planTile: rejects a pole-centred tile (bbox reaches ±90°, past the cap)", () => {
   /** @type {TileSettings} */
-  const pole = { center: [90, 0], scale: 61150, tileWmm: 100, base: 5, exag: 2 };
+  const pole = { center: [90, 0], scale: 61150, tileWidthMm: 100, base: 5, exag: 2 };
   assert.throws(() => planTile(pole), /Web Mercator/);
 });
 
@@ -66,7 +66,7 @@ test("planTile: rejects a clipped tile whose expanded window escapes the world",
     const [, , n] = cellsBbox(center, 5000000, 50, [[0, 0]], shape);
     assert.ok(n <= MAX_MERCATOR_LAT, `${shape}: ring bbox must still be legal (north ${n})`);
     assert.throws(
-      () => planTile({ center, scale: 5000000, tileWmm: 50, base: 5, exag: 2, shape }, { z: 6 }),
+      () => planTile({ center, scale: 5000000, tileWidthMm: 50, base: 5, exag: 2, shape }, { z: 6 }),
       /pixel window \[-?\d+, \d+\) escapes/, `${shape}`);
   }
 });
@@ -227,14 +227,14 @@ test("bakeTileSolid: circle + flatten reads post-recess elevations at the rim (o
 test("defaultTileName: encodes center, width, and scale", () => {
   const g = { base: 6, exag: 1 }; // geom fields the name ignores
   assert.equal(
-    defaultTileName({ center: [47.6035, -122.3294], tileWmm: 200, scale: 250000, ...g }),
+    defaultTileName({ center: [47.6035, -122.3294], tileWidthMm: 200, scale: 250000, ...g }),
     "terrane_tile_47.6035N_122.3294W_200mm_1to250000");
   assert.equal(
-    defaultTileName({ center: [-33.8688, 151.2093], tileWmm: 150, scale: 100000, ...g }),
+    defaultTileName({ center: [-33.8688, 151.2093], tileWidthMm: 150, scale: 100000, ...g }),
     "terrane_tile_33.8688S_151.2093E_150mm_1to100000");
   // rounds coords to 4 decimals, pads a whole-number degree, rounds scale to an int
   assert.equal(
-    defaultTileName({ center: [47, 5.123456], tileWmm: 100, scale: 250000.7, ...g }),
+    defaultTileName({ center: [47, 5.123456], tileWidthMm: 100, scale: 250000.7, ...g }),
     "terrane_tile_47.0000N_5.1235E_100mm_1to250001");
 });
 
@@ -263,7 +263,7 @@ test("bakeTileSolid: every shape is watertight with positive volume", () => {
   }
 });
 
-// tileWmm is the bounding-square side in every shape, so hex and circle enclose less
+// tileWidthMm is the bounding-square side in every shape, so hex and circle enclose less
 // area for the same number. On a flat grid the volume ratio IS the area ratio.
 test("bakeTileSolid: footprint areas match their analytic fractions", () => {
   /** @type {Record<string, number>} */

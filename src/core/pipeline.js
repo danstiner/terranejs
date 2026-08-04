@@ -21,13 +21,13 @@ import { fetchMosaic } from "./terrain.js";
 /** @typedef {import("./types.js").Mosaic} Mosaic */
 /** @typedef {import("./types.js").Solid} Solid */
 /**
- * @typedef {{ center: LatLon, scale: number, tileWmm: number, base: number, exag: number,
+ * @typedef {{ center: LatLon, scale: number, tileWidthMm: number, base: number, exag: number,
  *   flatten?: boolean, recessMm?: number, layerMm?: number, shape?: Shape }} TileSettings
- *   center = [lat,lon] of the tile; scale = 1:N; tileWmm = print size of the tile
+ *   center = [lat,lon] of the tile; scale = 1:N; tileWidthMm = print size of the tile
  *   edge; base = base-plate thickness (mm); exag = vertical exaggeration; flatten = pull
  *   all water to one waterline below the land (default false); recessMm = extra water
  *   sink in print mm (default 0); layerMm = slicer layer height (default 0.15);
- *   shape = tile footprint (default "square"); tileWmm is the bounding-square side
+ *   shape = tile footprint (default "square"); tileWidthMm is the bounding-square side
  *   in every shape.
  */
 /**
@@ -50,9 +50,9 @@ const ORIGIN = [[0, 0]]; // single-tile layout: one cell at the origin
  * @returns {TilePlan}
  */
 export function planTile(settings, { z, maxTiles = 300 } = {}) {
-  const { center, scale, tileWmm, shape = "square" } = settings;
+  const { center, scale, tileWidthMm, shape = "square" } = settings;
   const [lat] = center;
-  const bbox = cellsBbox(center, scale, tileWmm, ORIGIN, shape);
+  const bbox = cellsBbox(center, scale, tileWidthMm, ORIGIN, shape);
   const [s, , n] = bbox;
   // Web Mercator only covers ±85.0511°; a tile spilling past it (a very large or
   // near-polar tile) has no source tiles. Reject up front with a clear message
@@ -69,7 +69,7 @@ export function planTile(settings, { z, maxTiles = 300 } = {}) {
   // lat × size × scale sweep. Tightening it would mean picking z from a window that does not
   // exist until z is picked; the budget only exists to stop runaway fetches, so it stays soft.
   const zoom = z ?? sourceZoom(bbox, lat, scale, maxTiles);
-  const { spanPx, union } = cellWindows(center, scale, tileWmm, ORIGIN, zoom, shape);
+  const { spanPx, union } = cellWindows(center, scale, tileWidthMm, ORIGIN, zoom, shape);
   // The bbox guard above validated the RING; a clipped shape's window is then expanded outward
   // past it (layout.cellWindows), so a tile whose north edge sits exactly at the cap still
   // yields gy0 = -2 — rows above the top of the Mercator world. Nothing downstream says so
@@ -83,7 +83,7 @@ export function planTile(settings, { z, maxTiles = 300 } = {}) {
       `planTile: the ${shape} tile's pixel window [${union.gy0}, ${union.gy0 + union.gh}) ` +
       `escapes the Web Mercator world [0, ${worldPx}) at z${zoom}`);
   }
-  const dx = tileWmm / spanPx; // Mercator is conformal: square cells → dx = dy
+  const dx = tileWidthMm / spanPx; // Mercator is conformal: square cells → dx = dy
   // A clipped shape's window is expanded outward past its ring (layout.cellWindows), so the
   // ring's own bbox no longer bounds the pixels cropGrid will read. Derive the fetch bounds
   // from the window instead — exact, and it cannot drift from the window it has to cover.
@@ -106,7 +106,7 @@ export function planTile(settings, { z, maxTiles = 300 } = {}) {
     // megabytes at export scale. n is a min of two bounds — as fine as the grid can express
     // (pi*D/2 keeps ring edges near 2 cells), never finer than accuracy requires (a 256-gon's
     // sagitta is 7.5 um on a 200 mm tile, 50x below a 0.4 mm nozzle).
-    ring: footprintPx(center, scale, tileWmm, ORIGIN[0], zoom, shape,
+    ring: footprintPx(center, scale, tileWidthMm, ORIGIN[0], zoom, shape,
       Math.max(16, Math.min(256, Math.round((Math.PI * (union.gw - 1)) / 2)))),
   };
 }
@@ -169,11 +169,11 @@ export async function tileTo3mf(name, solid, colorChanges) {
  * @param {TileSettings} settings
  * @returns {string}
  */
-export function defaultTileName({ center: [lat, lon], tileWmm, scale, shape = "square" }) {
+export function defaultTileName({ center: [lat, lon], tileWidthMm, scale, shape = "square" }) {
   const ns = `${Math.abs(lat).toFixed(4)}${lat >= 0 ? "N" : "S"}`;
   const ew = `${Math.abs(lon).toFixed(4)}${lon >= 0 ? "E" : "W"}`;
   const sh = shape === "square" ? "" : `_${shape}`; // square is the default; don't label it
-  return `terrane_tile_${ns}_${ew}_${tileWmm}mm${sh}_1to${Math.round(scale)}`;
+  return `terrane_tile_${ns}_${ew}_${tileWidthMm}mm${sh}_1to${Math.round(scale)}`;
 }
 
 // Browser step: fetch the tile's terrarium mosaic and bake a validated solid.

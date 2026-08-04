@@ -1,4 +1,4 @@
-// layout.js — Tile-first cell model. A layout is (center latlon, scale 1:N, tileWmm,
+// layout.js — Tile-first cell model. A layout is (center latlon, scale 1:N, tileWidthMm,
 // cells [[i,j],…]) with cell (0,0) centered on `center`, +i east, +j south.
 // The layout is uniform in Mercator space — the same space as the terrarium
 // pixel lattice — so cell edges quantize to shared lattice indices and
@@ -18,16 +18,16 @@ import { lonToGlobalX, latToGlobalY, globalXToLon, globalYToLat, printPitchMm }
 export const CELL_CAP = 64;
 
 // Mercator-pixel span of one tile edge at zoom z (float; Mercator is conformal
-// so one span serves both axes — the print is tileWmm square at center lat)
+// so one span serves both axes — the print is tileWidthMm square at center lat)
 /**
  * @param {number} centerLat
  * @param {number} scale
- * @param {number} tileWmm
+ * @param {number} tileWidthMm
  * @param {number} z
  * @returns {number}
  */
-export function tileSpanPx(centerLat, scale, tileWmm, z) {
-  return tileWmm / printPitchMm(centerLat, z, scale);
+export function tileSpanPx(centerLat, scale, tileWidthMm, z) {
+  return tileWidthMm / printPitchMm(centerLat, z, scale);
 }
 
 /** @type {(cell: Cell) => string} */
@@ -54,22 +54,22 @@ const NEIGHBORS = {
 /**
  * @param {LatLon} center
  * @param {number} scale
- * @param {number} tileWmm
+ * @param {number} tileWidthMm
  * @param {Cell} cell
  * @param {number} z
  * @param {Shape} shape
  * @param {number} [n] circle ring resolution; ignored for hex
  * @returns {Array<[number,number]> | null}
  */
-export function footprintPx([lat, lon], scale, tileWmm, [q, r], z, shape, n = 64) {
+export function footprintPx([lat, lon], scale, tileWidthMm, [q, r], z, shape, n = 64) {
   if (shape === "square") return null;
-  const S = tileSpanPx(lat, scale, tileWmm, z);
+  const S = tileSpanPx(lat, scale, tileWidthMm, z);
   const gxC = lonToGlobalX(lon, z), gyC = latToGlobalY(lat, z);
   if (shape === "hex") {
     const hx = S / 4, hy = (Math.sqrt(3) / 4) * S;
     return HEX_XU.map((xu, kk) => [gxC + (3 * q + xu) * hx, gyC + (2 * r + q + HEX_YU[kk]) * hy]);
   }
-  // circle: single cell at the origin; n-gon of diameter tileWmm
+  // circle: single cell at the origin; n-gon of diameter tileWidthMm
   const R = S / 2;
   return Array.from({ length: n }, (_, kk) => {
     const a = (2 * Math.PI * kk) / n;
@@ -85,14 +85,14 @@ export function footprintPx([lat, lon], scale, tileWmm, [q, r], z, shape, n = 64
 /**
  * @param {LatLon} center
  * @param {number} scale
- * @param {number} tileWmm
+ * @param {number} tileWidthMm
  * @param {Cell[]} cells
  * @param {number} z
  * @param {Shape} [shape]
  * @returns {{ spanPx: number, wins: Map<string, Window>, union: Window }}
  */
-export function cellWindows([lat, lon], scale, tileWmm, cells, z, shape = "square") {
-  const S = tileSpanPx(lat, scale, tileWmm, z);
+export function cellWindows([lat, lon], scale, tileWidthMm, cells, z, shape = "square") {
+  const S = tileSpanPx(lat, scale, tileWidthMm, z);
   if (S < 2) throw new Error("tile smaller than one pixel at this zoom — raise the detail slider");
   const gxC = lonToGlobalX(lon, z), gyC = latToGlobalY(lat, z);
   const bx = (/** @type {number} */ i) => Math.round(gxC + (i - 0.5) * S);
@@ -132,12 +132,12 @@ export function cellWindows([lat, lon], scale, tileWmm, cells, z, shape = "squar
 /**
  * @param {LatLon} center
  * @param {number} scale
- * @param {number} tileWmm
+ * @param {number} tileWidthMm
  * @param {Cell} cell
  * @returns {BBox}
  */
-export function cellBbox([lat, lon], scale, tileWmm, [i, j]) {
-  const S = tileSpanPx(lat, scale, tileWmm, 0);
+export function cellBbox([lat, lon], scale, tileWidthMm, [i, j]) {
+  const S = tileSpanPx(lat, scale, tileWidthMm, 0);
   const gxC = lonToGlobalX(lon, 0), gyC = latToGlobalY(lat, 0);
   const w = globalXToLon(gxC + (i - 0.5) * S, 0), e = globalXToLon(gxC + (i + 0.5) * S, 0);
   const n = globalYToLat(gyC + (j - 0.5) * S, 0), s = globalYToLat(gyC + (j + 0.5) * S, 0);
@@ -147,22 +147,22 @@ export function cellBbox([lat, lon], scale, tileWmm, [i, j]) {
 /**
  * @param {LatLon} center
  * @param {number} scale
- * @param {number} tileWmm
+ * @param {number} tileWidthMm
  * @param {Cell[]} cells
  * @param {Shape} [shape]
  * @returns {BBox}
  */
-export function cellsBbox(center, scale, tileWmm, cells, shape = "square") {
+export function cellsBbox(center, scale, tileWidthMm, cells, shape = "square") {
   let bb = /** @type {BBox} */ ([Infinity, Infinity, -Infinity, -Infinity]);
   if (shape === "square") {
     for (const c of cells) {
-      const [s, w, n, e] = cellBbox(center, scale, tileWmm, c);
+      const [s, w, n, e] = cellBbox(center, scale, tileWidthMm, c);
       bb = [Math.min(bb[0], s), Math.min(bb[1], w), Math.max(bb[2], n), Math.max(bb[3], e)];
     }
     return bb;
   }
   for (const c of cells) {
-    for (const [lat, lon] of cellRingLatLon(center, scale, tileWmm, c, shape)) {
+    for (const [lat, lon] of cellRingLatLon(center, scale, tileWidthMm, c, shape)) {
       bb = [Math.min(bb[0], lat), Math.min(bb[1], lon), Math.max(bb[2], lat), Math.max(bb[3], lon)];
     }
   }
@@ -173,19 +173,19 @@ export function cellsBbox(center, scale, tileWmm, cells, shape = "square") {
 /**
  * @param {LatLon} center
  * @param {number} scale
- * @param {number} tileWmm
+ * @param {number} tileWidthMm
  * @param {Cell} cell
  * @param {Shape} shape
  * @returns {LatLon[]}
  */
-export function cellRingLatLon(center, scale, tileWmm, cell, shape) {
+export function cellRingLatLon(center, scale, tileWidthMm, cell, shape) {
   if (shape === "hex" || shape === "circle") {
     // Fixed 64 for display: the map outline is a few hundred screen pixels, so the bake's
     // adaptive resolution would be wasted here.
-    return /** @type {[number,number][]} */ (footprintPx(center, scale, tileWmm, cell, 0, shape))
+    return /** @type {[number,number][]} */ (footprintPx(center, scale, tileWidthMm, cell, 0, shape))
       .map(([gx, gy]) => [globalYToLat(gy, 0), globalXToLon(gx, 0)]);
   }
-  const [s, w, n, e] = cellBbox(center, scale, tileWmm, cell);
+  const [s, w, n, e] = cellBbox(center, scale, tileWidthMm, cell);
   return [[s, w], [s, e], [n, e], [n, w]];
 }
 

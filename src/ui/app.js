@@ -30,7 +30,7 @@ const EXPORT_MAX_TILES = 300;  // full print resolution (core's default tile bud
 // unreadable hash decodes to null, so a mangled link opens the default region instead of failing.
 const restored = decodeState(location.hash);
 const store = createStore(restored ?? /** @type {AppState} */ ({
-  center: DEFAULT_PRESET.center, scale: DEFAULT_PRESET.scale, tileWmm: 200, base: 6, exag: 1,
+  center: DEFAULT_PRESET.center, scale: DEFAULT_PRESET.scale, tileWidthMm: 200, base: 6, exag: 1,
   flatten: false, recessMm: 0, layerMm: 0.15, // sea-level tint by default; checkbox flattens
   shape: "square",
 }));
@@ -56,7 +56,7 @@ const map = initMap({
   start: {
     center: store.get().center ?? DEFAULT_PRESET.center,
     scale: store.get().scale,
-    tileWmm: store.get().tileWmm,
+    tileWidthMm: store.get().tileWidthMm,
     shape: store.get().shape,
   },
   onPlace: (c) => { presetSelect.value = ""; store.set({ center: c }); },
@@ -112,7 +112,7 @@ function detailSummary(settings) {
   /** @param {number} maxTiles */
   const part = (maxTiles) => {
     const { gw, gh } = planTile(settings, { maxTiles });
-    const gsd = (settings.tileWmm * settings.scale) / (1000 * gw); // real metres between mesh vertices
+    const gsd = (settings.tileWidthMm * settings.scale) / (1000 * gw); // real metres between mesh vertices
     const tris = (gw * gh * 2 * fill) / 1e6;                       // ≈ top-surface triangles, millions
     return `${gsd >= 10 ? Math.round(gsd) : gsd.toFixed(1)} m/vertex, ~${tris.toFixed(1)}M triangles`;
   };
@@ -211,13 +211,13 @@ function loadPreview() {
 
 store.subscribe((s) => {
   map.setLayout(s);
-  const km = (s.tileWmm * s.scale) / 1e6; // print mm × 1:N scale → real km the tile spans
-  // tileWmm is the bounding-square side, so only the hex prints shorter than it is wide.
+  const km = (s.tileWidthMm * s.scale) / 1e6; // print mm × 1:N scale → real km the tile spans
+  // tileWidthMm is the bounding-square side, so only the hex prints shorter than it is wide.
   const tile = s.shape === "hex"
-    ? `hex tile · ${s.tileWmm} × ${Math.round(s.tileWmm * HEX_H)} mm`
+    ? `hex tile · ${s.tileWidthMm} × ${Math.round(s.tileWidthMm * HEX_H)} mm`
     : s.shape === "circle"
-      ? `circle tile · ${s.tileWmm} mm across`
-      : `square tile · ${s.tileWmm} mm`;
+      ? `circle tile · ${s.tileWidthMm} mm across`
+      : `square tile · ${s.tileWidthMm} mm`;
   $("readout").textContent = s.center
     ? `1 ${tile} : ~${km >= 10 ? Math.round(km) : km.toFixed(1)} km`
     : "No tile placed.";
@@ -242,7 +242,7 @@ for (const key of /** @type {const} */ (["Park", "Water", "Terrane"])) {
 function applyPreset(preset) {
   store.set({ center: preset.center, scale: preset.scale });
   syncScaleInput(preset.scale);
-  map.focus({ center: preset.center, scale: preset.scale, tileWmm: store.get().tileWmm, shape: store.get().shape });
+  map.focus({ center: preset.center, scale: preset.scale, tileWidthMm: store.get().tileWidthMm, shape: store.get().shape });
 }
 presetSelect.addEventListener("change", () => {
   const preset = PRESETS.find((p) => p.name === presetSelect.value);
@@ -273,7 +273,7 @@ window.addEventListener("hashchange", () => {
   syncControls(s);
   syncScaleInput(s.scale);
   store.set(s);
-  if (s.center) map.focus({ center: s.center, scale: s.scale, tileWmm: s.tileWmm, shape: s.shape });
+  if (s.center) map.focus({ center: s.center, scale: s.scale, tileWidthMm: s.tileWidthMm, shape: s.shape });
 });
 
 $("export").addEventListener("click", () => {
