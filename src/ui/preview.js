@@ -12,6 +12,14 @@ import { MAX_CHANGES } from "../core/colors.js";
  *   worker payload for the mesh path; applyBands reads changes+baseColor, the app legend reads baseHex+baseName.
  */
 
+// Hover-probe elevation. Terrarium quantises to 1/256 m, and three decimals is the fewest that
+// keeps all 256 sub-metre levels distinct — two collapses them to 101 and renders the smallest
+// nonzero reading as "-0.00". Only under 1 m: above that it is noise against a DEM accurate to
+// metres, and the reason for the precision is the SIGN near the 0 m colour line, where a bay
+// speckling at ±0.1 m is straddling it.
+/** @param {number} m @returns {string} */
+const metres = (m) => `${m.toFixed(Math.abs(m) < 1 ? 3 : 1)} m`;
+
 // A lit terrain material that recolors by print-height: everything below a change's
 // Z prints in the lower filament, so banding by object-space position.z is the
 // faithful M600 preview. Fixed-size uniform arrays (never a per-bake length) keep the
@@ -136,25 +144,32 @@ export function initPreview(container) {
     if (probeDirty && frame && group.children.length) {
       raycaster.setFromCamera(pointer, camera);
       const hit = raycaster.intersectObjects(group.children, false)[0];
-      if (hit) {
+      // Only the TOP surface answers. The base and skirt share the tile's XY footprint exactly,
+      // so a wall hit still maps to a valid cell — it would be tagged with a neighbouring cell's
+      // verdict and an elevation read off its own mid-height, both wrong with total confidence.
+      // Face normals are world-aligned here: the group only translates, never rotates or scales.
+      if (hit && (hit.face?.normal.z ?? 0) > 0.01) {
         // group only translates → undo it to get tile-local print coordinates
         const lx = hit.point.x - group.position.x;
         const ly = hit.point.y - group.position.y;
         const lz = hit.point.z - group.position.z;
         // Grid cell under the cursor — inverts mesh.js's single-tile layout
-        // (x = c·dx, y = (gh−1−r)·dy); out-of-range hits (side walls) fall back to land.
+        // (x = c·dx, y = (gh−1−r)·dy); a hit off the top surface (side wall) has no cell.
         const c = Math.round(lx / frame.dx);
         const r = frame.gh - 1 - Math.round(ly / frame.dy);
         const i = r >= 0 && r < frame.gh && c >= 0 && c < frame.gw ? r * frame.gw + c : -1;
         if (i >= 0 && frame.mask[i]) {
-          probe.textContent = `${frame.orig[i].toFixed(1)} m · water${frame.recessed ? " (recessed)" : ""}`;
+          probe.textContent = `${metres(frame.orig[i])} · water${frame.recessed ? " (recessed)" : ""}`;
         } else {
           const elev = frame.emin + (lz - frame.base) / (frame.mmPerM * frame.exag);
-          probe.textContent = `${elev.toFixed(1)} m`; // interpolated across the hit triangle, not rounded
+          // Tag land explicitly: with only "· water" marked, a bare reading was ambiguous
+          // between "the mask says land" and "you missed the suffix" — which is exactly the
+          // question being asked when a bay reads as terrain.
+          probe.textContent = `${metres(elev)} · land`; // interpolated across the hit triangle, not rounded
         }
         probe.style.display = "block";
       } else {
-        probe.style.display = "none";
+        probe.style.display = "none"; // nothing under the cursor, or a wall — neither is terrain
       }
       probeDirty = false;
     }
