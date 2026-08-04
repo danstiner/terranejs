@@ -8,7 +8,9 @@ it presents as a code defect, not a cache hit, and survives a hard reload. `no-s
 opts out of that entirely.
 
 Note that localhost and 127.0.0.1 are separate cache origins, so switching between
-them can look like a fix while the stale entry is still there.
+them can look like a fix while the stale entry is still there. That is why the URL
+below is printed from the bound socket rather than written out: one advertised
+address, one cache origin, and no way for the two to drift apart.
 """
 
 import sys
@@ -31,5 +33,6 @@ if __name__ == "__main__":
     root = Path(__file__).resolve().parent.parent
     handler = partial(NoStoreHandler, directory=str(root))
     with ThreadingHTTPServer(("127.0.0.1", port), handler) as httpd:
-        print(f"serving {root} at http://localhost:{port}/ — Cache-Control: no-store")
+        host, bound = httpd.server_address[:2]
+        print(f"serving {root} at http://{host}:{bound}/ — Cache-Control: no-store")
         httpd.serve_forever()
