@@ -50,9 +50,19 @@ export function applyWaterRecess(grid, mask, { flatten, recessMm, layerMm, K, fo
   // layer above the line, so the first lift is consumed by that offset and the second is the
   // land's real clearance (see the flatten-margin pin in colors.test). Unchecked anchors at 0 m:
   // classic sea-level tint, land-blind by design (landBluePct warns instead).
-  const anchor = flatten
+  // fround, and not as a nicety: the line has to be a value the GRID can hold. `grid` is a
+  // Float32Array and every consumer compares its samples against this line — baseBand and
+  // colorChanges against emin, landBluePct and the preview shader against each sample. A raw
+  // float64 anchor is generally not float32-representable, and when the store rounds it UP,
+  // emin lands ABOVE the tile's own waterline: baseBand then folds the water band into the base
+  // (it folds a threshold strictly below emin), colorChanges puts the water→land change at
+  // z < base and drops it, and the tile prints with no water at all. Measured on a 150 km
+  // Puget Sound tile: line −227.41165625, stored −227.41165161, a 4.6e-6 m gap and every drop
+  // of water gone. Snapping here makes emin === lineElev exactly, which is the equality both
+  // functions are already written around (see their comments on the ocean-floor tile).
+  const anchor = Math.fround(flatten
     ? (landCount > 0 ? Math.min(waterMin, landMin - 2 * lift) : waterMin)
-    : 0;
+    : 0);
   const lineElev = anchor; // the true waterline; only the export pause is lifted a layer above it
   const sink = recessMm / K;
   let landBlue = 0, waterAsLand = 0, cells = 0;
@@ -60,13 +70,13 @@ export function applyWaterRecess(grid, mask, { flatten, recessMm, layerMm, K, fo
     if (footprint && !footprint[i]) continue;
     cells++;
     if (mask[i]) {
-      // Test the float64 value, NOT grid[i] afterwards. anchor is rarely float32-representable,
-      // and the store rounds up in ~2.7% of slider combinations — enough to put every flattened
-      // cell a hair above the line and fire the warning at 100% with the checkbox already on.
-      // In float64 anchor − sink ≤ anchor = lineElev holds exactly (recessMm clamps to [0,5]).
-      const v = (flatten ? anchor : grid[i]) - sink;
-      grid[i] = v;
-      if (v > lineElev) waterAsLand++;
+      // Compare the STORED sample, now that lineElev is itself float32: fround is monotonic and
+      // recessMm clamps to [0,5], so fround(anchor − sink) ≤ fround(anchor) = lineElev holds
+      // exactly and a flattened tile can't fire the warning against its own plane. (Comparing
+      // the float64 value instead was the fix while the line was float64; with a snapped line it
+      // is the bug, in mirror image — the raw anchor sits above a line the store rounded down.)
+      grid[i] = (flatten ? anchor : grid[i]) - sink;
+      if (grid[i] > lineElev) waterAsLand++;
     } else if (grid[i] <= lineElev) landBlue++; // export predicate: bandOf keeps the boundary blue
   }
   return {

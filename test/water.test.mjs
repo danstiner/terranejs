@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { applyWaterRecess } from "../src/core/water.js";
 import { decodeWatermask } from "../src/core/terrain.js";
-import { bandOf } from "../src/core/colors.js";
+import { bandOf, baseBand, colorChanges, bandThresholds, waterLineThresholds } from "../src/core/colors.js";
 
 /** @param {number[]} elev @param {number[]} water @returns {[Float32Array, Uint8Array]} */
 const tile = (elev, water) => [Float32Array.from(elev), Uint8Array.from(water)];
@@ -184,17 +184,50 @@ test("waterAsLandPct: flatten on → structurally 0, even for water starting far
   assert.equal(r.waterAsLandPct, 0, "the plane IS the line, so no masked cell can sit above it");
 });
 
-// Regression for the float32 narrowing defect: `anchor` is float64 and rarely representable, so
-// reading grid[i] back after the store rounds UP in ~2.7% of slider combinations and reports 100%
-// of the water as land with the checkbox already ON. These values are deliberately NOT float-exact
-// (unlike the flatten tests above, which pick lift = 1 m and would pass either way).
-test("waterAsLandPct: flatten on with a float32-inexact plane still reads 0", () => {
+// Regression for the float32 narrowing defect. landMin − 2·lift is float64 and rarely
+// representable; these values are deliberately NOT float-exact (unlike the flatten tests above,
+// which pick lift = 1 m and would pass either way) and the raw plane here rounds UP when stored.
+test("flatten on with a float32-inexact plane: the line IS the stored plane", () => {
   const o = opts({ flatten: true, layerMm: 0.05, K: 0.15 }); // lift = 1/3 m, not representable
+  const raw = -7.31640625 - 2 * (0.05 / 0.15); // landMin − 2·lift, before any narrowing
+  assert.ok(Math.fround(raw) > raw, "precondition: this plane is one the store rounds UP");
   const [grid, mask] = tile([-2, -2, -7.31640625, 20], [1, 1, 0, 0]);
   const r = applyWaterRecess(grid, mask, o);
-  assert.equal(r.lineElev, -7.983072916666667, "plane = landMin − 2·lift, in float64");
-  assert.ok(Math.fround(r.lineElev) > r.lineElev, "precondition: the store rounds this plane UP");
-  assert.equal(r.waterAsLandPct, 0, "counted before the narrowing store, so the rounding can't fire it");
+  assert.equal(r.lineElev, Math.fround(raw), "line snapped to what the grid can hold");
+  assert.equal(grid[0], r.lineElev, "and the water sits exactly ON it, not a rounding above");
+  assert.equal(r.waterAsLandPct, 0, "so the rounding cannot fire the warning");
+});
+
+// The bug this snapping exists for, end to end: a float64 line the store rounds UP leaves emin
+// ABOVE the tile's own waterline, and the colour model reads that as "no water on this tile" —
+// baseBand folds the water band into the base plate and colorChanges drops the water→land change
+// for landing under the base. Reported live on a 150 km Puget Sound tile that rendered with no
+// blue at all. Swept, because whether a given plane rounds up is a coin flip on its low bit.
+test("the flattened plane never lands above emin, so water keeps its own band", () => {
+  let inexact = 0;
+  for (const layerMm of [0.05, 0.15, 0.2, 0.3]) {
+    for (const K of [0.00133, 0.0132998, 0.02, 0.15, 0.5]) {
+      for (const landMin of [0, -1.5, -7.31640625, 123.4, 1998.75]) {
+        const raw = landMin - 2 * (layerMm / K);
+        if (Math.fround(raw) !== raw) inexact++;
+        const [grid, mask] = tile([landMin - 0.5, landMin - 0.5, landMin, landMin + 100], [1, 1, 0, 0]);
+        const r = applyWaterRecess(grid, mask, opts({ flatten: true, layerMm, K }));
+        const emin = Math.min(...grid); // what gridRange hands the colour model
+        // Built exactly as the worker builds it, clamp and all — an unclamped array would put an
+        // ecological threshold below a high-altitude waterline and fail for the wrong reason.
+        const th = waterLineThresholds(bandThresholds(47), r.lineElev);
+        const label = `layer ${layerMm} K ${K} landMin ${landMin}`;
+        assert.equal(emin, r.lineElev, `${label}: emin IS the line`);
+        assert.equal(baseBand(emin, th), 0, `${label}: base stays water`);
+        // A change AT the base is what bounds the water band; the bug dropped it for landing
+        // under the base. Its band is ≥ 1, not always 1: a waterline above the timberline
+        // collapses the two boundaries and colorChanges keeps the higher one, by design.
+        const changes = colorChanges(th, { emin, base: 6, mmPerM: K, exag: 1, zmax: 6 + (landMin + 100 - emin) * K });
+        assert.ok(changes.some((c) => c.z === 6 && c.band >= 1), `${label}: water band still bounded at the base`);
+      }
+    }
+  }
+  assert.ok(inexact > 40, `${inexact} of 100 planes are float32-inexact — the sweep must exercise them`);
 });
 
 test("waterAsLandPct: a large recess sinks water below the line and clears the warning", () => {

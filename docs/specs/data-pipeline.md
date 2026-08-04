@@ -160,6 +160,12 @@ two orthogonal controls decide where the water and that line sit:
 A tile with no masked water gets no water line at all: waterless below-sea-level land (Death
 Valley) prints as ordinary terrain.
 
+The line is quantized to the elevation grid's own precision, so it is always a height the grid
+can hold exactly. Water flattened onto the plane then sits *on* the line rather than a rounding
+step above it — which matters because the colour model treats "the line is the lowest printed
+elevation" as the ocean-floor case and colours the base plate itself blue. A line the grid
+could only round to would land above its own water and take the whole water band with it.
+
 **The mask and the line can disagree in both directions, and one warning covers both** — they
 share the single remedy above, so the banner composes clauses into one sentence rather than
 stacking. `landBluePct` counts land at/below the line, as a share of the **land**, warning past
