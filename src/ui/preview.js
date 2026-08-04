@@ -116,8 +116,12 @@ export function initPreview(container) {
   const group = new THREE.Group();
   scene.add(group);
 
+  // Round down: clientWidth/clientHeight round to nearest, so a fractional pane yields a
+  // canvas wider than its box. Where scrollbars take layout space that overflow adds one,
+  // which shrinks the pane, which resizes the canvas — a loop with no fixed point.
   const resize = () => {
-    const w = container.clientWidth || 1, h = container.clientHeight || 1;
+    const r = container.getBoundingClientRect();
+    const w = Math.floor(r.width) || 1, h = Math.floor(r.height) || 1;
     renderer.setSize(w, h);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
