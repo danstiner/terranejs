@@ -224,18 +224,28 @@ test("bakeTileSolid: circle + flatten reads post-recess elevations at the rim (o
     `circle+flatten volume drifted from the pinned order-correct value — got ${signedVolume(solid)}`);
 });
 
-test("defaultTileName: encodes center, width, and scale", () => {
+test("defaultTileName: encodes center, print width, and ground extent", () => {
   const g = { base: 6, exag: 1 }; // geom fields the name ignores
   assert.equal(
     defaultTileName({ center: [47.6035, -122.3294], tileWidthMm: 200, scale: 250000, ...g }),
-    "terrane_tile_47.6035N_122.3294W_200mm_1to250000");
+    "terrane_tile_47.6035N_122.3294W_200mm_50km");
   assert.equal(
     defaultTileName({ center: [-33.8688, 151.2093], tileWidthMm: 150, scale: 100000, ...g }),
-    "terrane_tile_33.8688S_151.2093E_150mm_1to100000");
-  // rounds coords to 4 decimals, pads a whole-number degree, rounds scale to an int
+    "terrane_tile_33.8688S_151.2093E_150mm_15km");
+  // rounds coords to 4 decimals and pads a whole-number degree; a tenth of a km past 10 is noise
   assert.equal(
     defaultTileName({ center: [47, 5.123456], tileWidthMm: 100, scale: 250000.7, ...g }),
-    "terrane_tile_47.0000N_5.1235E_100mm_1to250001");
+    "terrane_tile_47.0000N_5.1235E_100mm_25km");
+});
+
+test("defaultTileName: ground extent stays legible below 10 km", () => {
+  const g = { center: /** @type {[number, number]} */ ([0, 0]), base: 6, exag: 1 };
+  //                       tileWidthMm, scale  → km
+  assert.match(defaultTileName({ ...g, tileWidthMm: 100, scale: 25000 }), /_2\.5km$/);
+  assert.match(defaultTileName({ ...g, tileWidthMm: 200, scale: 5000 }), /_1\.0km$/);
+  // Metres under 1 km — the smallest tile the UI allows (50 mm at 1 mm = 1 km) would
+  // otherwise round to "0km" and name every such tile identically.
+  assert.match(defaultTileName({ ...g, tileWidthMm: 50, scale: 1000 }), /_50m$/);
 });
 
 /** Flat synthetic mosaic covering a plan's window, with a 2 px halo. Constant elevation
