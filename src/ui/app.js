@@ -294,6 +294,16 @@ window.addEventListener("hashchange", () => {
   if (s.center) map.focus({ center: s.center, scale: s.scale, tileWidthMm: s.tileWidthMm, shape: s.shape });
 });
 
+// View mode is a way of LOOKING at the bake, not a property of the tile, so it stays out of
+// the store: a viewing preference in the shareable state would make every link mean "this
+// tile, seen this way".
+for (const b of $("viewmodes").querySelectorAll("button")) {
+  b.addEventListener("click", () => {
+    for (const o of $("viewmodes").querySelectorAll("button")) o.classList.toggle("on", o === b);
+    preview.setViewMode(Number(b.dataset.mode));
+  });
+}
+
 $("export").addEventListener("click", () => {
   const s = store.get();
   if (!s.center) return;

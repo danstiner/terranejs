@@ -7,6 +7,7 @@ import { planTile, bakeTileSolid, tileTo3mf } from "../core/pipeline.js";
 import { vertexNormals } from "../core/normals.js";
 import { fetchMosaic, fetchWaterMask } from "../core/terrain.js";
 import { cropGrid } from "../core/resample.js";
+import { detailMap } from "../core/detail.js";
 import { BAND_COLORS, BAND_NAMES, BOUNDARY_NAMES, bandThresholds, baseBand, colorChanges, baseColorHex, waterLineThresholds } from "../core/colors.js";
 
 /** @typedef {import("../core/pipeline.js").TileSettings} TileSettings */
@@ -80,13 +81,16 @@ async function handle({ gen, settings, maxTiles, format, name, color }) {
       // bakeTileSolid mutated its own copy in place), so the probe can report a water
       // cell's ORIGINAL elevation, which the printed surface no longer encodes once water moves.
       const probeGrid = cropGrid(mosaic, plan.window);
+      // Detail overlay, off the PRE-recess grid for the same reason as the probe: flattened
+      // water would read as zero detail. Cheap (O(cells)), so it rides every bake.
+      const detail = detailMap(probeGrid, plan.gw, plan.gh);
       const probeFrame = {
         emin, base: settings.base, mmPerM: plan.mmPerM, exag: settings.exag,
-        orig: probeGrid, mask: waterMask, gw: plan.gw, gh: plan.gh, dx: plan.dx, dy: plan.dy,
+        orig: probeGrid, mask: waterMask, detail, gw: plan.gw, gh: plan.gh, dx: plan.dx, dy: plan.dy,
         recessed: (settings.flatten ?? false) || (settings.recessMm ?? 0) > 0,
       };
       post({ gen, positions: solid.positions, indices: solid.indices, normals, bands, frame: probeFrame, landBluePct, waterAsLandPct },
-        [solid.positions.buffer, solid.indices.buffer, normals.buffer, probeGrid.buffer, waterMask.buffer]);
+        [solid.positions.buffer, solid.indices.buffer, normals.buffer, probeGrid.buffer, waterMask.buffer, detail.buffer]);
     }
   } catch (err) {
     post({ gen, error: err instanceof Error ? err.message : String(err) });

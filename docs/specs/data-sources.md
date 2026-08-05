@@ -17,7 +17,7 @@ https://terrain.reearth.land/mapterhorn-egm08/watermask/{z}/{x}/{y}.png
   native to z14, so a z14 tile carries z15-equivalent detail); the watermask
   is 256×256 px. terranejs works in a 256-px grid, reading the native quadrant
   of each elevation tile, so its internal pyramid reaches z15.
-- **Elevation encoding:** terrarium RGB, metres, 1/256 m steps:
+- **Elevation encoding:** terrarium RGB, meters, 1/256 m steps:
 
   ```
   elevation_m = (R * 256 + G + B / 256) - 32768
@@ -28,14 +28,51 @@ https://terrain.reearth.land/mapterhorn-egm08/watermask/{z}/{x}/{y}.png
   (ocean + lakes + rivers), transparent is land. Covers the same ground as the
   elevation at the same `z/x/y`; terranejs samples both into one 256-px grid,
   keeping them pixel-aligned.
-- **Composition (Mapterhorn):** Copernicus GLO-30 for global land,
-  swissALTI3D at 0.5 m resolution inside Switzerland, all geoid-corrected to
-  EGM2008. The watermask is derived from Protomaps/OpenStreetMap water
-  polygons, not from the DEM itself.
+- **Composition (Mapterhorn):** Copernicus GLO-30 as the global base, with
+  **134 higher-resolution national and regional datasets laid over it** where
+  they exist — 33 separate USGS 3DEP 1 m collections in the US, plus 3DEP
+  1/3 arc-second, swissALTI3D, Australia's 5 m lidar grid, Japan's 基盤地図情報,
+  and others; all geoid-corrected to EGM2008. The live list is
+  [attribution.json](https://download.mapterhorn.com/attribution.json) (the
+  `mapterhorn.com/attribution` page renders it). The watermask is derived from
+  Protomaps/OpenStreetMap water polygons, not from the DEM itself.
+- **Provenance:** queryable per location. Mapterhorn publishes a coverage
+  vector tileset — a `coverage` layer whose polygons carry one field, `source`,
+  joining to the catalog above:
+
+  ```
+  https://single-archive-tiles.mapterhorn.com/coverage.json        (TileJSON, maxzoom 14)
+  https://single-archive-tiles.mapterhorn.com/coverage/{z}/{x}/{y}.mvt
+  https://download.mapterhorn.com/attribution.json                 (source → name, resolution, producer, license)
+  ```
+
+  Both are `Access-Control-Allow-Origin: *`, and the tiles are tiny (100 B–2.5 KB
+  over the test area, cached a week), so a tile's real provenance and best
+  available posting can be read at bake time. Point-in-polygon against the
+  decoded layer at Mount Larrabee returns `glo30 + usgs3dep13` on one side of the
+  seam and `glo30 + usgs3dep13 + us1cc` (**1 m**) on the other; at the Matterhorn
+  it returns `glo30 + itaosta + tinitaly + swissalti3d` (**0.5 m**).
+
+  **Catalog resolution is grid spacing, not information content, and the two
+  can differ by an order of magnitude.** The Larrabee smooth side advertises 10 m
+  (3DEP 1/3 arc-second) but carries nothing below ~100 m, because 3DEP's 1/3″
+  product there is 1983 contour-derived data interpolated onto a 10 m grid. The
+  catalog says what was *available*; only measuring the samples says what is
+  *in* them. `src/core/detail.js` measures the latter — they are complementary.
+
+  **Resolution is therefore not uniform, and the seams are visible when a tile
+  is small enough.** A national lidar dataset covers the footprint of the
+  acquisition that produced it, and those footprints have arbitrary shapes and
+  hard edges. A tile straddling one shows genuinely different detail on each
+  side — not a terranejs artifact, and not fixable downstream. Worked example:
+  a 2.7 km tile at Mount Larrabee, WA straddles the north edge of 3DEP's
+  `WA_Western_WA_QL1_LiDAR_2016_B16`; south of the line the data resolves
+  detail down to ~12 m, north of it there is no lidar at all and nothing
+  below ~100 m survives.
 - **Ocean values:** flat ~0 m — no bathymetry. terranejs doesn't need sea
-  floor depth (§4 of `data-pipeline.md` tints water at the sea-level color line, or flattens it to
-  one plane when recessing — either way the watermask, not elevation, supplies
-  the coastline).
+  floor depth (§4 of `data-pipeline.md` tints water at the sea-level color
+  line, or flattens it to one plane when recessing — either way the watermask,
+  not elevation, supplies the coastline).
 - **Access:** keyless, CORS-enabled, open-source (BSD-3, self-hostable) —
   see [terrain.reearth.land](https://terrain.reearth.land/) and
   [mapterhorn.com](https://mapterhorn.com/).

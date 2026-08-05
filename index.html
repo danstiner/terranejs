@@ -114,7 +114,15 @@
 
   <!-- right column: 3D preview, then a results footer -->
   <div id="right">
-    <div id="preview"></div>
+    <div id="preview">
+      <!-- Diagnostics over the same mesh. Preview only — the export never reads these. -->
+      <div id="viewmodes" role="group" aria-label="Preview view mode">
+        <button type="button" data-mode="0" class="on">Print colors</button>
+        <button type="button" data-mode="1">Water mask</button>
+        <button type="button" data-mode="2">Elevation</button>
+        <button type="button" data-mode="3" title="Where the source data carries fine structure. Descriptive, not a quality score.">Detail</button>
+      </div>
+    </div>
     <div id="results">
       <div id="resultbar">
         <p id="credits" class="hint">Elevation & water © <a href="https://terrain.reearth.land/" target="_blank" rel="noopener">Re:Earth Terrain</a> / <a href="https://mapterhorn.com/" target="_blank" rel="noopener">Mapterhorn</a></p>
