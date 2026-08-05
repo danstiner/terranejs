@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { applyWaterRecess } from "../src/core/water.js";
 import { decodeWatermask } from "../src/core/terrain.js";
+import { clipPolygon, clipElevs, clipRange } from "../src/core/clip.js";
 import { bandOf, baseBand, colorChanges, bandThresholds, waterLineThresholds } from "../src/core/colors.js";
 
 /** @param {number[]} elev @param {number[]} water @returns {[Float32Array, Uint8Array]} */
@@ -127,7 +128,40 @@ test("applyWaterRecess: water outside the footprint never sets the line", () => 
   });
   assert.equal(r.lineElev, -Infinity, "no water inside the footprint → no line at all");
   assert.equal(r.landBluePct, 0);
-  assert.equal(grid[0], -10, "out-of-footprint water is left untouched");
+  assert.equal(grid[0], -10, "and with no line to move it to, that water stays put");
+});
+
+// The footprint gates MEASUREMENT, not mutation. Water outside it still moves, because a clipped
+// rim vertex is a bilinear sample straddling the footprint edge: leave the outside half raw and
+// the rim climbs back toward it. See the end-to-end crossing test below for the consequence.
+test("applyWaterRecess: water outside the footprint still moves onto the plane", () => {
+  const grid = Float32Array.from([0, -2, -6, 20]); // [0] is out-of-footprint water at 0 m
+  const water = Uint8Array.from([1, 1, 0, 0]);
+  const footprint = Uint8Array.from([0, 1, 1, 1]);
+  const r = applyWaterRecess(grid, water, { flatten: true, recessMm: 0, layerMm: 0.5, K: 0.5, footprint });
+  assert.equal(r.lineElev, -8, "line still anchored by IN-footprint water and land only");
+  assert.equal(grid[1], -8, "in-footprint water on the plane");
+  assert.equal(grid[0], -8, "and the outside cell too, so a rim crossing between them lands on it");
+});
+
+test("applyWaterRecess: the slider moves outside water as well, for the same reason", () => {
+  const grid = Float32Array.from([0, 0, 100, 200]);
+  const water = Uint8Array.from([1, 1, 0, 0]);
+  const footprint = Uint8Array.from([0, 1, 1, 1]);
+  applyWaterRecess(grid, water, { flatten: false, recessMm: 2, layerMm: 0.15, K: 0.02, footprint });
+  assert.equal(grid[1], -100, "in-footprint water sank 2 mm / K");
+  assert.equal(grid[0], -100, "outside water sank with it");
+});
+
+test("applyWaterRecess: moving outside water does not let it into the measurements", () => {
+  //                          out            in
+  const grid = Float32Array.from([500, 0, -6, 20]); // a 500 m out-of-footprint lake
+  const water = Uint8Array.from([1, 1, 0, 0]);
+  const footprint = Uint8Array.from([0, 1, 1, 1]);
+  const r = applyWaterRecess(grid, water, { flatten: false, recessMm: 0, layerMm: 0.5, K: 0.5, footprint });
+  assert.equal(r.lineElev, 0, "the 500 m lake neither raised nor anchored the line");
+  assert.equal(r.waterAsLandPct, 0, "nor counted as water showing as land — it is not in the print");
+  assert.equal(r.landBluePct, 50, "denominator is in-footprint land only (the −6 m cell of two)");
 });
 
 test("applyWaterRecess: land outside the footprint is not counted as blue", () => {
@@ -243,4 +277,48 @@ test("waterAsLandPct: water outside the footprint is in neither numerator nor de
   const footprint = Uint8Array.from([0, 1, 1, 1]); // discard the high lake
   const r = applyWaterRecess(grid, mask, { flatten: false, recessMm: 0, layerMm: LAYER, K, footprint });
   assert.equal(r.waterAsLandPct, 0, "the only above-line water is a discarded corner");
+});
+
+// End-to-end regressions for the rim lip, through the real clipper. A rim crossing is a bilinear
+// sample of the grid at a fractional (col, row) that straddles the footprint edge, so when only
+// the inside half was moved the crossing landed between the moved water and the raw water —
+// ALWAYS on the raw side, never with the water. Squares never showed it: no clip, no crossings.
+// Both controls move water, so both need pinning here, not just the checkbox.
+/** A 9×9 all-water grid with one land cell, and a square ring inset so its boundary cuts water
+ * on all four sides. @returns {[Float32Array, Uint8Array, import("../src/core/types.js").Clip]} */
+function waterTileWithRim() {
+  const GW = 9, GH = 9, GX0 = 1000, GY0 = 2000;
+  const grid = new Float32Array(GW * GH).fill(0); // sea level everywhere...
+  grid[4 * GW + 4] = -6;                          // ...but one land cell in the middle
+  const mask = new Uint8Array(GW * GH).fill(1);
+  mask[4 * GW + 4] = 0;
+  const ring = /** @type {Array<[number, number]>} */ (
+    [[2.5, 2.5], [6.5, 2.5], [6.5, 6.5], [2.5, 6.5]].map(([x, y]) => [GX0 + x, GY0 + y]));
+  return [grid, mask, clipPolygon(GW, GH, GX0, GY0, ring)];
+}
+
+test("clipped rim: flatten — an all-water crossing lands ON the waterline, not above it", () => {
+  const [grid, mask, clip] = waterTileWithRim();
+  const r = applyWaterRecess(grid, mask, {
+    flatten: true, recessMm: 0, layerMm: 0.5, K: 0.5, footprint: clip.inside,
+  });
+  assert.equal(r.lineElev, -8, "plane = landMin − 2·lift");
+  clipElevs(clip, grid);
+  assert.ok(clip.elev.length > 0, "the ring must actually produce crossings");
+  let above = 0;
+  for (const e of clip.elev) if (e > r.lineElev) above++;
+  assert.equal(above, 0, `${above}/${clip.elev.length} crossings sit above the waterline`);
+  assert.equal(clipRange(grid, clip).min, r.lineElev, "and the rim never dips below it either");
+});
+
+test("clipped rim: the slider sinks the rim with the water, not just the interior", () => {
+  const [grid, mask, clip] = waterTileWithRim();
+  const K = 0.5, recessMm = 2, sink = recessMm / K; // 4 m
+  const r = applyWaterRecess(grid, mask, { flatten: false, recessMm, layerMm: 0.5, K, footprint: clip.inside });
+  assert.equal(r.lineElev, 0, "flatten off: line at sea level, unmoved by the slider");
+  clipElevs(clip, grid);
+  assert.ok(clip.elev.length > 0, "the ring must actually produce crossings");
+  for (const e of clip.elev) {
+    assert.equal(e, -sink, `crossing at ${e} m, expected the sunk water plane at ${-sink} m`);
+  }
 });

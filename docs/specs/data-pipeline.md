@@ -134,6 +134,12 @@ Consequences of clipping:
   interpolated toward a lower outside sample can sit below every inside sample, and missing
   it would put the surface under its own base. Hex statistics shifted slightly when this
   replaced the mask-derived footprint: the intended consequence of printing the true rim.
+- **Edits, unlike statistics, cover the whole window.** A rim vertex is interpolated from the
+  grid on both sides of the ring, so anything that moves terrain — the water recess above all —
+  has to move it outside the ring as well. Editing only the inside builds a step along exactly
+  the line the rim samples across, and the rim then climbs it: water recessed inside the ring
+  but left raw outside it lifts the rim back to the original waterline, as a wall around the
+  tile's edge. Measure inside the footprint; edit across the window.
 - **`tileWidthMm` stays the bounding-square side in every shape**, so any tile fits the same bed
   envelope; enclosed area differs — square 100%, circle → π/4 ≈ 78.5%, hex 3√3/8 ≈ 65%.
 
