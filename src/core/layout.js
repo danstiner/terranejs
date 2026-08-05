@@ -256,7 +256,8 @@ export function pruneToOrigin(cells, shape = "square") {
 }
 
 // Pure point-in-polygon (ray casting). polygon is [[a,b],…]; point is [a,b] in
-// the SAME coordinate pair order (we test lat/lon against a lat/lon polygon).
+// the SAME coordinate pair order — lat/lon here, grid pixels in coverage.sourcesAt.
+// Which pair order is used doesn't matter; mixing two of them in one call does.
 /**
  * @param {[number,number]} point
  * @param {Array<[number,number]>} polygon

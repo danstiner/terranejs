@@ -2,10 +2,11 @@
 // (settings, maxTiles, format) it runs the headless pipeline (fetch → bake →
 // optional .3mf) and posts the result back, transferring the buffers zero-copy. It
 // knows nothing about preview vs export vs fast vs crisp; that policy lives in
-// app.js. `format` is an output selector, not render policy. One job at a time.
+// app.js. `format` and `coverage` are output selectors, not render policy. One job at a time.
 import { planTile, bakeTileSolid, tileTo3mf } from "../core/pipeline.js";
 import { vertexNormals } from "../core/normals.js";
 import { fetchMosaic, fetchWaterMask } from "../core/terrain.js";
+import { fetchCoverage, fetchCatalog } from "../core/coverage.js";
 import { cropGrid } from "../core/resample.js";
 import { detailMap } from "../core/detail.js";
 import { BAND_COLORS, BAND_NAMES, BOUNDARY_NAMES, bandThresholds, baseBand, colorChanges, baseColorHex, waterLineThresholds } from "../core/colors.js";
@@ -24,10 +25,31 @@ const post = /** @type {(msg: unknown, transfer?: Transferable[]) => void} */ (
 // scale, behind a 500 ms debounce. Retaining decoded mosaics to skip that meant holding tens
 // of MB (an export mosaic is ~25 MB, and its watermask another ~25 MB) for an imperceptible
 // win, so the bake decodes fresh every time.
-/** @param {{ gen: number, settings: TileSettings, maxTiles: number, format: "mesh" | "3mf", name?: string, color?: boolean }} data */
-async function handle({ gen, settings, maxTiles, format, name, color }) {
+
+// Once per session, and a failure is cached too — including for the rest of the session, so one
+// blip means raw ids until reload. The catalog only supplies resolutions for ranking, so that
+// degrades the probe rather than failing provenance, and it beats refetching on every bake.
+/** @type {Promise<import("../core/coverage.js").Catalog | null> | null} */
+let catalogPromise = null;
+const catalogOnce = () => (catalogPromise ??= fetchCatalog().catch(() => null));
+
+/** @param {{ gen: number, settings: TileSettings, maxTiles: number, format: "mesh" | "3mf", name?: string, color?: boolean, coverage?: boolean }} data */
+async function handle({ gen, settings, maxTiles, format, name, color, coverage }) {
   try {
     const plan = planTile(settings, { maxTiles });
+    // Started with the raster fans but never awaited in this path: it rides its own message
+    // (below), so a slow or hung coverage host delays neither the mesh nor the next queued job.
+    // Errors are folded into the payload here so the promise can never reject unhandled.
+    // `format` is also checked here, not left to app.js: coverage is a preview diagnostic, and an
+    // export has no probe to read it.
+    const coverageJob = coverage && format === "mesh"
+      ? Promise.all([fetchCoverage(plan.bbox, plan.z, plan.window), catalogOnce()])
+        // lat and z ride along because the probe cannot derive them: the maxzoom ranking key is
+        // Mercator metres (stretched by 1/cos(lat)) and the feather width is 150 of them. One
+        // latitude for the whole tile — a print tile spans a few km, far below a zoom bucket.
+        .then(([features, catalog]) => ({ features, catalog, lat: (plan.bbox[0] + plan.bbox[2]) / 2, z: plan.z }))
+        .catch((err) => ({ error: err instanceof Error ? err.message : String(err) }))
+      : null;
     // Water mask from the Re:Earth watermask tile — pixel-aligned with the elevation at the
     // same bbox+zoom, so no detection/flood-fill: fetch, crop to the window, threshold alpha.
     // Water is always considered: applyWaterRecess (in the bake) no-ops when the tile has no
@@ -91,9 +113,19 @@ async function handle({ gen, settings, maxTiles, format, name, color }) {
       };
       post({ gen, positions: solid.positions, indices: solid.indices, normals, bands, frame: probeFrame, landBluePct, waterAsLandPct },
         [solid.positions.buffer, solid.indices.buffer, normals.buffer, probeGrid.buffer, waterMask.buffer, detail.buffer]);
+      // Deliberately not awaited — see above. Detached from the job's own catch, so it carries
+      // the same guard: a post() that throws here has no other handler.
+      coverageJob?.then((c) => post({ gen, coverage: c })).catch((e) => { console.error("bake worker coverage:", e); });
     }
   } catch (err) {
     post({ gen, error: err instanceof Error ? err.message : String(err) });
+    // The mesh post never happened, so the coverage post above never fires — without this the
+    // probe sits in its transient "source loading…" forever, claiming a fetch is still in flight. Report
+    // the failure, never the features: they are projected against THIS plan's window, while the
+    // mesh still on screen is the previous pass's grid, so applying them would index the wrong
+    // cells with total confidence. Keyed off the request, not off coverageJob: planTile throws
+    // before the job is built, and that must still answer the probe.
+    if (coverage && format === "mesh") post({ gen, coverage: { error: "bake failed before coverage could be applied" } });
   }
 }
 

@@ -4,6 +4,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { MAX_CHANGES } from "../core/colors.js";
+import { sourcesAt, describeSources, rankSources, edgeDistance, featherPx, maxzoomFor } from "../core/coverage.js";
 
 /** @typedef {import("../core/types.js").Solid} Solid */
 /** @typedef {import("../core/colors.js").ColorChange} ColorChange */
@@ -17,6 +18,14 @@ import { MAX_CHANGES } from "../core/colors.js";
 /**
  * @typedef {{ changes: ColorChange[], baseColor: [number,number,number], baseHex: string, baseName: string }} Bands
  *   worker payload for the mesh path; applyBands reads changes+baseColor, the app legend reads baseHex+baseName.
+ */
+/**
+ * @typedef {{ features: import("../core/coverage.js").PlacedFeature[],
+ *   catalog: import("../core/coverage.js").Catalog | null, lat: number, z: number }
+ *   | { error: string }} Coverage
+ *   lat/z come from the plan: the ranking key is Mercator metres and the feather width is 150 of
+ *   them, neither of which the probe can derive from the grid alone.
+ *   arrives on its own message after the mesh, so the probe reads null until it lands.
  */
 
 // Hover-probe elevation. Terrarium quantises to 1/256 m, and three decimals is the fewest that
@@ -182,13 +191,21 @@ export function initPreview(container) {
   // the printed surface no longer encodes it once water is flattened or sunk.
   if (!container.style.position) container.style.position = "relative";
   const probe = document.createElement("div");
+  // Right-aligned, and the source gets its own line: source ids vary in width, and in a
+  // right-anchored box a longer one drags the elevation sideways mid-hover — the one number
+  // being read is the one that must not move.
   probe.style.cssText = "position:absolute;right:8px;bottom:8px;padding:3px 7px;font:12px/1.3 ui-monospace,monospace;" +
-    "color:#e8e8e8;background:rgba(0,0,0,0.55);border-radius:4px;pointer-events:none;display:none;";
+    "color:#e8e8e8;background:rgba(0,0,0,0.55);border-radius:4px;pointer-events:none;display:none;" +
+    // pre-wrap, not pre: a blended-plus-unranked clause runs long, and the pane clips its overflow —
+    // an unwrappable line would lose its leading source id off the left edge without a mark.
+    "white-space:pre-wrap;text-align:right;max-width:calc(100% - 16px);";
   container.appendChild(probe);
   const raycaster = new THREE.Raycaster();
   const pointer = new THREE.Vector2();
   /** @type {ProbeFrame | null} */
   let frame = null;
+  /** @type {Coverage | null} */
+  let coverage = null;
   let viewMode = 0;                                   // index into VIEW_MODES; session state, not in the URL
   /** @type {THREE.DataTexture | null} */
   let overlay = null;
@@ -230,6 +247,26 @@ export function initPreview(container) {
   new ResizeObserver(resize).observe(container);
   resize();
 
+  // Provenance for a cell. Three distinct states, because a silent unknown is indistinguishable
+  // from terrain that genuinely has no source polygon over it.
+  // gw is a parameter, not read off the closure's `frame`: TS can't carry the caller's
+  // `if (frame)` narrowing across a function boundary, and frame can turn null between calls.
+  /** @param {number} i cell index into the frame's grids @param {number} gw frame.gw @returns {string} */
+  function sourceLabel(i, gw) {
+    if (!coverage) return "source loading…"; // the quick pass never fetches it; the detailed one is in flight
+    if ("error" in coverage) return "source unavailable";
+    const c = i % gw, r = (i - c) / gw;
+    const here = sourcesAt(coverage.features, c, r);
+    if (!here.length || !coverage.catalog) return describeSources(here, coverage.catalog, coverage.lat);
+    // Within a feather band the merge blended two sources, so name both. The partner is the next
+    // source down the stack — the one that filled in past the winner's edge.
+    const { ranked } = rankSources(here, coverage.catalog, coverage.lat);
+    const mz = maxzoomFor(coverage.catalog.get(ranked[0]) ?? 0, coverage.lat);
+    const blend = ranked.length > 1
+      && edgeDistance(coverage.features, c, r, ranked[0]) < featherPx(coverage.z, mz) ? ranked[1] : null;
+    return describeSources(here, coverage.catalog, coverage.lat, blend);
+  }
+
   let raf = 0;
   const loop = () => {
     raf = requestAnimationFrame(loop);
@@ -260,6 +297,9 @@ export function initPreview(container) {
           // question being asked when a bay reads as terrain.
           probe.textContent = `${metres(elev)} · land`; // interpolated across the hit triangle, not rounded
         }
+        // No cell means no honest provenance claim: elevation still comes off the hit point, but a
+        // source needs an (i % gw) that indexes a real cell. Silence beats a confident wrong answer.
+        if (i >= 0) probe.textContent += `\n${sourceLabel(i, frame.gw)}`;
         probe.style.display = "block";
       } else {
         probe.style.display = "none"; // nothing under the cursor, or a wall — neither is terrain
@@ -296,6 +336,7 @@ export function initPreview(container) {
    */
   function setTiles(solids, probeFrame = null) {
     frame = probeFrame;
+    coverage = null; // the new bake's provenance rides a later message; never show the old one against it
     for (const c of group.children) {
       const m = /** @type {THREE.Mesh} */ (c);
       m.geometry.dispose();
@@ -332,5 +373,13 @@ export function initPreview(container) {
     controls.update();
   }
 
-  return { setTiles, setViewMode, resize, dispose: () => cancelAnimationFrame(raf) };
+  // Re-probe when coverage lands, or a cursor held still through the crisp pass keeps reading the
+  // transient "source loading…" it was about to stop being. Only when the probe is already shown: display
+  // is the record of the cursor being over terrain, so this cannot resurrect it after pointerleave.
+  // Set, never assign: a pointermove can have marked probeDirty in this same frame, and clearing
+  // it here would drop that raycast — the probe then fails to appear until the next pointer event.
+  /** @param {Coverage | null} c */
+  function setCoverage(c) { coverage = c; if (probe.style.display === "block") probeDirty = true; }
+
+  return { setTiles, setCoverage, setViewMode, resize, dispose: () => cancelAnimationFrame(raf) };
 }

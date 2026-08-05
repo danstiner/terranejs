@@ -88,7 +88,15 @@ the **mosaic**. This is the raw material every later stage samples from.
 The fetch is deliberately serial: the tile hosts are free, shared
 infrastructure, and a preview needs only a tile or two. Elevation and
 watermask are fetched as two independent passes that overlap each other,
-so a bake holds at most two connections open.
+so the raster fetch holds at most two connections open.
+
+The detailed preview pass starts a third, optional fan alongside those two:
+**source provenance** — Mapterhorn's coverage polygons and its source
+catalog, from hosts separate from the elevation tiles (see "Provenance" in
+[`data-sources.md`](data-sources.md)). It is never awaited: the mesh posts
+without it and provenance follows on its own message, so a hung provenance
+host costs the bake nothing. It feeds only the preview's hover probe; the
+export path never fetches it.
 
 ## 2. Resample
 
@@ -281,6 +289,14 @@ re-render as you go, then export — which reruns the same pipeline at full prin
 resolution and downloads the resulting 3MF. The preview bakes at a lower,
 viewport-matched detail level than the export, and lands in two passes: a coarse
 mesh almost immediately, then a sharper one a moment later.
+
+Hovering the preview raises a probe for the cell under the cursor: elevation
+(a water cell's *original* elevation, which the recess no longer prints), water
+or land, and — once the sharp pass lands — which source dataset supplied the
+terrain there (`us1cc 1 m`), read from the provenance fan of stage 1. That line
+keeps three states distinct — a source, `no source data` (no coverage polygon
+there), `source unavailable` (the fetch failed) — because a silent unknown
+would read exactly like ground no source covers.
 
 The pipeline itself is headless — it lives in `src/core/`, has no DOM
 dependency, and is testable outside a browser. The browser-facing pieces

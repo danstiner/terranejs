@@ -177,6 +177,9 @@ worker.onmessage = ({ data }) => {
     return;
   }
   if (data.gen !== previewGen) return; // superseded preview — drop
+  // Provenance rides its own message, arriving after the mesh it belongs to. The gen check above
+  // already keeps a stale bake's coverage from landing against a newer one's mesh.
+  if (data.coverage) { preview.setCoverage(data.coverage); return; }
   const mode = previewPhase === "fast" ? "Quick preview" : "Detailed preview";
   if (data.progress) { setProgress(`${mode} — fetching terrain ${data.progress.done}/${data.progress.total}`); return; }
   if (data.baking) { setProgress(`${mode} — baking…`); return; }
@@ -187,7 +190,7 @@ worker.onmessage = ({ data }) => {
   if (previewPhase === "fast") {
     previewPhase = "crisp"; // fast relief is up; refine to viewport-sharp
     setProgress("Detailed preview…");
-    worker.postMessage({ gen: previewGen, settings: previewSettings, maxTiles: CRISP_MAX_TILES, format: "mesh" });
+    worker.postMessage({ gen: previewGen, settings: previewSettings, maxTiles: CRISP_MAX_TILES, format: "mesh", coverage: true });
   } else {
     // Crisp pass only. The one-tile fast bake resolves the shoreline too coarsely to judge a
     // 1%-of-tile threshold, and letting it drive the banner makes it flash and vanish a second
