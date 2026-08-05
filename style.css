@@ -1,4 +1,4 @@
-* { box-sizing: border-box; }
+*, *::before, *::after { box-sizing: border-box; } /* `*` alone never matches pseudo-elements */
 html, body { margin: 0; height: 100%; }
 html { color-scheme: light dark; } /* dark-theme native form controls (number inputs, sliders) with the page */
 /* height: 100% above, never 100vh: viewport units ignore scrollbars, so a horizontal one
@@ -22,7 +22,10 @@ body {
 #brand { padding: 14px 16px 12px; border-bottom: 1px solid #eee; display: flex; align-items: baseline; gap: 10px; }
 #brand h1 { margin: 0; }
 #brand .sub { margin: 0; flex: 1; min-width: 0; }
-#map { height: 42vh; min-height: 260px; }
+/* Square, because the footprint it frames is square-ish (hex 1:0.87, circle 1:1) and fitBounds
+   fits the LIMITING axis: at 42vh the aspect ran 1.20 at a 700px window to 0.52 at 1600px, so
+   the same tile either filled the frame or floated in dead space depending on window height. */
+#map { aspect-ratio: 1; }
 #maphint { margin: 6px 0 0; } /* just under the map; panel padding already aligns it with the section content */
 #panel { padding: 16px; }
 
@@ -52,10 +55,57 @@ select { width: 100%; padding: 6px; }
 input[type="range"] { width: 100%; }
 input.num { width: 72px; padding: 4px; }
 #scale { width: 96px; padding: 4px; }
-details { margin: 12px 0; }
-summary { cursor: pointer; color: #555; }
+summary { cursor: pointer; }
+/* Checkbox rows are the one label that isn't a caption for the control below it — flex so the
+   box and its text sit on one baseline with a gap, and lighter than a heading-weight label. */
+label.check { display: flex; align-items: center; gap: 8px; font-weight: 500; margin: 10px 0 4px; }
+label.check input { margin: 0; }
 
-.row { display: flex; justify-content: space-between; align-items: center; }
+/* Exactly two heading levels in the panel, so a heading's weight always says which it is:
+   `#panel h2` names a top-level section (Region, Print settings), `.group` names a subsection
+   inside one (Water, Advanced). A <details> is a group whose summary IS its heading. Controls
+   with no group heading belong directly to the section above them. */
+.group { margin: 18px 0; padding-top: 14px; border-top: 1px solid #e2e2e2; }
+.group > h3, .group > summary {
+  margin: 0 0 4px; font-size: 12px; font-weight: 700;
+  letter-spacing: 0.06em; text-transform: uppercase; color: #777;
+}
+
+/* The ? itself. Its bubble is a page-level popover positioned by controls.wireHelp, not a child
+   of this button — these rules only style the affordance. :focus-visible matches the styling to
+   the JS, which opens on focus as well as hover so keyboard and touch both reach it. */
+.help {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 17px; height: 17px; padding: 0; margin-left: 6px; vertical-align: middle;
+  border-radius: 50%; border: 1px solid #bbb; background: transparent;
+  font-size: 11px; line-height: 1; color: #777; cursor: help;
+}
+.help:hover, .help:focus-visible { background: #2d6cdf; border-color: #2d6cdf; color: #fff; }
+/* The row owns the vertical spacing; a label keeping its own asymmetric margin would have its
+   MARGIN box centred by align-items, sitting the text off-centre from the ? beside it. */
+.labelrow { display: flex; align-items: center; margin: 10px 0 4px; }
+.labelrow > label { margin: 0; }
+/* Lives on <body>, not in the column — see controls.wireHelp. pointer-events:none so the bubble
+   can never take the hover away from the button that opened it. */
+#tip {
+  /* inset/margin/border reset the UA's [popover] rules, which centre it in the viewport. */
+  position: fixed; inset: auto; margin: 0; border: 0; z-index: 10;
+  max-width: min(300px, calc(100vw - 16px)); /* the JS clamps left/top; this bounds the width */
+  padding: 7px 9px; border-radius: 4px; pointer-events: none;
+  background: #26262a; color: #ececec; font: 400 12px/1.45 system-ui, sans-serif;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
+}
+
+/* Amber banner, not a `.hint`: hints are grey chrome the eye skips, and this one has to be
+   noticed from across the panel. No `display` here — that would defeat the `hidden` attribute. */
+#waterWarn {
+  margin: 10px 0; padding: 8px 10px; font-size: 12px; line-height: 1.45;
+  color: #6b4e00; background: #fff8e1; border-left: 3px solid #e0a800; border-radius: 3px;
+}
+
+/* Only wraps the scale input now; the margin replaces the hint paragraph that used to sit
+   under it and carry the gap to the next control. */
+.row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
 button {
   padding: 4px 10px; border: 1px solid #bbb; border-radius: 4px;
   background: #fff; cursor: pointer;
@@ -79,10 +129,14 @@ button.primary:disabled { background: #9bb4de; border-color: #9bb4de; cursor: de
   #left { border-right-color: #333; background: #1c1c1e; }
   #brand { border-bottom-color: #333; }
   #results { background: #1c1c1e; border-top-color: #333; }
-  .sub, .hint, summary { color: #999; }
+  .sub, .hint { color: #999; }
   button { background: #2c2c2e; border-color: #444; color: #e8e8e8; }
   button:hover { background: #3a3a3c; }
   .readout { background: #111; border-color: #333; }
+  .help { border-color: #555; color: #9a9a9a; }
+  .group { border-top-color: #333; }
+  .group > h3, .group > summary { color: #9a9a9a; }
+  #waterWarn { color: #f0d68a; background: #2a2418; }
   #credits a, #credits a:visited { color: #7fb0ff; } /* UA default blue is ~1.8:1 on the dark footer — fails WCAG */
   #resultbar #ghlink { color: #999; }
   #resultbar #ghlink:hover { color: #e8e8e8; }

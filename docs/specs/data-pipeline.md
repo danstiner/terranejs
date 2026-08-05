@@ -166,14 +166,18 @@ same bbox and zoom as the elevation mosaic — pixel-aligned, so no detection or
 needed. Colour is per-print-Z, so water reads blue only at or below the water/land color line;
 two orthogonal controls decide where the water and that line sit:
 
-1. **Recess all water to lowest waterline** (checkbox, default off). Off: the terrain is
+1. **Flatten all water to one level** (checkbox, default off). Off: the terrain is
    untouched and the color line sits at 0 m exactly — classic sea-level tint at any map scale.
    Ocean prints blue; land above sea level prints as terrain, however low; land at/below the
    line (polders) prints blue, with a warning naming the checkbox as the fix. On: every masked
    cell is pulled down to one plane two print layers below the lowest land — `min(lowest water,
    lowest land − 2 layers)` — and the line sits at that plane, so every water body prints blue
-   and land never does. Flattening is unbounded by design: a reservoir far above a river drops
-   all the way to the shared plane.
+   and land never does. The second term nearly always wins, because the source carries no
+   bathymetry and clamps ocean to ~0 m: the plane therefore sits BELOW the lowest water, not at
+   it, by 75 m on a Zeeland tile and 1794 m on a Titicaca one. Flattening is unbounded by
+   design: a reservoir far above a river drops all the way to the shared plane, and how far any
+   given water body falls depends on where it started — a single number cannot describe it. On
+   one 667 km Peru tile the ocean falls 0.3 mm of print while a 5009 m lake falls 6.3 mm.
 2. **Water recess** (slider, 0–5 mm). Sinks all water that much further in print space without
    moving the color line — a groove between water and land. With the checkbox off, a large
    recess can sink even high water below the sea-level line — blue pits where lakes were;

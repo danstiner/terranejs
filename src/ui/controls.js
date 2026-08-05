@@ -27,7 +27,7 @@ export function syncControls(s) {
   /** @type {HTMLInputElement} */ (el("flatten")).checked = s.flatten;
   el("exagVal").textContent = s.exag.toFixed(1);
   el("baseVal").textContent = s.base.toFixed(1);
-  el("recessVal").textContent = String(s.recessMm);
+  el("recessVal").textContent = `${s.recessMm} mm`;
 }
 
 /**
@@ -70,10 +70,63 @@ export function wireControls(store) {
   el("recess").addEventListener("input", (e) => {
     const v = num(e);
     store.set({ recessMm: v });
-    el("recessVal").textContent = String(v); // integer steps — no decimals
+    el("recessVal").textContent = `${v} mm`; // integer steps — no decimals
   });
   el("layerMm").addEventListener("input", (e) => {
     const v = num(e);
     if (Number.isFinite(v) && v >= 0.05 && v <= 0.6) store.set({ layerMm: v });
   });
+}
+
+/**
+ * One tooltip for the whole page, in the TOP LAYER via the popover API. Deliberately not a child
+ * of the control it describes: a positioned bubble inside #left joins that container's scrollable
+ * overflow, and the scrollbar it can summon shifts the cursor off the very button holding it
+ * open — plus `overflow-y: auto` clips anything reaching past the column. The top layer escapes
+ * both, and unlike a z-index it cannot be covered by some later stacking context. `title` would
+ * also escape, but it delays ~1s, cannot be styled, and shows nothing on focus or touch.
+ *
+ * Driven manually rather than by `popovertarget`, because that toggles on CLICK and this wants
+ * hover; `manual` also skips light-dismiss, which would fight the pointerleave below. Placement
+ * is JS because CSS anchor positioning is not yet everywhere.
+ */
+export function wireHelp() {
+  const tip = document.createElement("div");
+  tip.id = "tip";
+  tip.setAttribute("role", "tooltip");
+  tip.setAttribute("popover", "manual");
+  tip.hidden = true;                          // also the fallback state where popover is unsupported
+  document.body.appendChild(tip);
+
+  /** @param {HTMLElement} btn */
+  const show = (btn) => {
+    tip.textContent = btn.dataset.help ?? "";
+    btn.setAttribute("aria-describedby", "tip"); // else the text is visible but never announced
+    tip.hidden = false;
+    // showPopover throws if already open, and the API may be absent — the fixed position below
+    // renders correctly either way.
+    if (!tip.matches(":popover-open")) tip.showPopover?.();
+    const b = btn.getBoundingClientRect();
+    const { offsetWidth: w, offsetHeight: h } = tip;   // measured after showing, before paint
+    // Clamp into the viewport, and flip above when there is no room below — these buttons sit
+    // low in a tall panel, exactly where a bubble would otherwise run off the bottom.
+    const x = Math.min(Math.max(8, b.left + b.width / 2 - w / 2), window.innerWidth - w - 8);
+    const below = b.bottom + 6;
+    tip.style.left = `${x}px`;
+    tip.style.top = `${below + h > window.innerHeight - 8 ? b.top - h - 6 : below}px`;
+  };
+  /** @param {HTMLElement} btn */
+  const hide = (btn) => {
+    btn.removeAttribute("aria-describedby");
+    if (tip.matches(":popover-open")) tip.hidePopover?.();
+    tip.hidden = true;
+  };
+
+  for (const node of document.querySelectorAll("[data-help]")) {
+    const btn = /** @type {HTMLElement} */ (node);  // not `el` — that is this module's id lookup
+    btn.addEventListener("pointerenter", () => show(btn));
+    btn.addEventListener("pointerleave", () => hide(btn));
+    btn.addEventListener("focus", () => show(btn));
+    btn.addEventListener("blur", () => hide(btn));
+  }
 }
