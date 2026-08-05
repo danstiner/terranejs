@@ -213,14 +213,14 @@ test("bakeTileSolid: circle + flatten reads post-recess elevations at the rim (o
     for (let c = 0; c < plan.gw >> 1; c++) mask[r * plan.gw + c] = 1;
   const { solid } = bakeTileSolid(mosaic, plan, { ...SETTINGS, flatten: true }, mask);
   assert.ok(checkWatertight(solid).closed, "watertight");
-  // Golden value from the correct order (clipElevs after applyWaterRecess), re-derived for three
-  // independent reasons: the window is 2px larger (Task 1), the circle footprint is cut to the
-  // adaptive n-gon `ring` through clipPolygon (Task 4; at z=10 this is a 69-gon, not 64-gon),
-  // and the specific grid used here changed slightly with the adaptive n calculation. Swapping
-  // the two call-site lines in bakeTileSolid moves this to ~52249 — a ~72 mm³ divergence on a
-  // ~52321 mm³ solid (~0.1%), confirmed to be the wrong order; 1e-3 clears float noise by
-  // ~5 orders while catching that swap by ~5.
-  assert.ok(Math.abs(signedVolume(solid) - 52321.001580250064) < 1e-3,
+  // Golden value from the correct order (clipElevs after applyWaterRecess). Re-derived when the
+  // flatten started moving out-of-footprint water too: the rim no longer climbs back toward raw
+  // water, which takes 447 mm³ of spurious material off this fixture (52321.00 → 51873.70) —
+  // that drop IS the rim-lip fix, measured. Swapping the two call-site lines in bakeTileSolid
+  // now moves this to ~52262, a ~389 mm³ divergence on a ~51874 mm³ solid (0.75%, up from 0.1%
+  // before — flattening both sides of the footprint edge makes the wrong order diverge further).
+  // 1e-3 clears float noise by ~5 orders while catching that swap by ~5.
+  assert.ok(Math.abs(signedVolume(solid) - 51873.701948798065) < 1e-3,
     `circle+flatten volume drifted from the pinned order-correct value — got ${signedVolume(solid)}`);
 });
 

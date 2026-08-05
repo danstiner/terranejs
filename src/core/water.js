@@ -32,8 +32,9 @@ export const WATER_AS_LAND_WARN_PCT = 1;
  * @param {{ flatten: boolean, recessMm: number, layerMm: number, K: number, footprint?: Uint8Array }} opts
  *   flatten = pull all water to one plane below the land; recessMm = extra sink (mm, print
  *   space); layerMm = slicer layer height (the colour-lift unit); K = mmPerM·exag;
- *   footprint = optional vertex mask; samples outside it are neither measured nor moved
- *   (hex/circle discard their window's corners).
+ *   footprint = optional vertex mask; samples outside it are not MEASURED (hex/circle discard
+ *   their window's corners, and water there must not anchor the line) but masked water outside
+ *   it is still moved with the rest — the rim interpolates across that edge, see the loop.
  * @returns {{ lineElev: number, landBluePct: number, waterAsLandPct: number }}
  */
 export function applyWaterRecess(grid, mask, { flatten, recessMm, layerMm, K, footprint }) {
@@ -67,17 +68,23 @@ export function applyWaterRecess(grid, mask, { flatten, recessMm, layerMm, K, fo
   const sink = recessMm / K;
   let landBlue = 0, waterAsLand = 0, cells = 0;
   for (let i = 0; i < grid.length; i++) {
-    if (footprint && !footprint[i]) continue;
-    cells++;
+    const inPrint = !footprint || footprint[i] !== 0;
     if (mask[i]) {
+      // MOVE every masked cell, in the footprint or not — the footprint gates what is MEASURED
+      // (the loop above), not what is moved. A clipped rim vertex is a bilinear sample of this
+      // grid straddling the footprint edge (clip.clipElevs), so skipping the outside half leaves
+      // a cliff exactly where the rim interpolates and the rim climbs it, back toward raw water.
+      // Only crossings read these cells (clipRange and buildSolid take the inside mask plus
+      // crossings), so nothing else moves.
       // Compare the STORED sample, now that lineElev is itself float32: fround is monotonic and
       // recessMm clamps to [0,5], so fround(anchor − sink) ≤ fround(anchor) = lineElev holds
       // exactly and a flattened tile can't fire the warning against its own plane. (Comparing
       // the float64 value instead was the fix while the line was float64; with a snapped line it
       // is the bug, in mirror image — the raw anchor sits above a line the store rounded down.)
       grid[i] = (flatten ? anchor : grid[i]) - sink;
-      if (grid[i] > lineElev) waterAsLand++;
-    } else if (grid[i] <= lineElev) landBlue++; // export predicate: bandOf keeps the boundary blue
+      if (inPrint && grid[i] > lineElev) waterAsLand++;
+    } else if (inPrint && grid[i] <= lineElev) landBlue++; // export predicate: bandOf keeps the boundary blue
+    if (inPrint) cells++;
   }
   return {
     lineElev,
