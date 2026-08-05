@@ -27,7 +27,7 @@
 
     <aside id="panel">
       <section>
-        <div class="row"><strong>Region</strong></div>
+        <h2>Region</h2>
 
         <select id="preset" aria-label="Jump to a preset region">
           <option value="">— Custom —</option>
@@ -49,11 +49,14 @@
           <option value="circle">Circle</option>
         </select>
 
-        <label for="scale">Map scale</label>
+        <div class="labelrow">
+          <label for="scale">Map scale</label>
+          <button type="button" class="help" aria-label="About map scale"
+            data-help="How many print millimetres one kilometre of ground becomes. A bigger number gives a smaller area at more detail — the readout above shows what it works out to.">?</button>
+        </div>
         <div class="row">
           <span><input id="scale" type="number" min="0.01" max="1000" step="any" value="4" class="num">&nbsp;mm&nbsp;=&nbsp;1&nbsp;km</span>
         </div>
-        <p class="hint">Bigger number = bigger print, finer detail.</p>
 
         <label for="exag">Vertical exaggeration: <span id="exagVal">1.0</span>&times;</label>
         <input id="exag" type="range" min="0.5" max="4" step="0.1" value="1">
@@ -61,23 +64,47 @@
         <label for="base">Base thickness: <span id="baseVal">6.0</span>&nbsp;mm</label>
         <input id="base" type="range" min="1" max="10" step="0.5" value="6">
 
-        <details>
-          <summary>Advanced</summary>
-          <label for="tileW">Tile width (mm)</label>
-          <input id="tileW" type="number" min="50" max="1000" step="5" value="200" class="num">
-          <p class="hint">Print size of the tile (largest dimension) — set it to
-            fit your printer's bed.</p>
-          <label for="recess">Water recess: <span id="recessVal">0</span>&nbsp;mm</label>
+        <!-- Water is a decision, not a detail: it changes what the tile looks like more than any
+             other control here, and its warning names the checkbox two lines below it. Advanced
+             keeps the settings a print needs once — bed size, layer height, slicer output. -->
+        <div class="group">
+          <h3>Water</h3>
+          <p id="waterWarn" hidden></p>
+
+          <!-- Help lives behind a ? rather than under every control: the section is two settings
+               and was four paragraphs. data-help carries the text; controls.wireHelp shows it in
+               one page-level popover. The row exists to sit the ? beside the label, nothing more. -->
+          <div class="labelrow">
+            <label for="recess">Recess depth: <span id="recessVal">0 mm</span></label>
+            <button type="button" class="help" aria-label="About recess depth"
+              data-help="Sinks every water body this far below the waterline, so the shore has a step you can see and feel. Print millimetres, independent of map scale.">?</button>
+          </div>
           <input id="recess" type="range" min="0" max="5" step="1" value="0">
-          <label class="check"><input id="flatten" type="checkbox"> Recess all water to lowest waterline</label>
-          <p class="hint">Unchecked, the terrain is untouched and water is coloured blue at sea
-            level only. Checked, all water drops to one waterline held below the land, so every
-            water body prints blue. The recess sinks water further for a visible groove.</p>
-          <p class="hint" id="waterWarn" style="color:#e0a800" hidden></p>
+
+          <div class="labelrow">
+            <label class="check"><input id="flatten" type="checkbox"> Flatten all water to one level</label>
+            <button type="button" class="help" aria-label="About flattening water"
+              data-help="Off, only terrain at or below sea level prints blue. On, every water body drops to a single plane held below all land, so all water prints blue and no land does — a lake far above sea level can drop a long way.">?</button>
+          </div>
+        </div>
+
+        <details class="group">
+          <summary>Advanced</summary>
+          <div class="labelrow">
+            <label for="tileW">Tile width (mm)</label>
+            <button type="button" class="help" aria-label="About tile width"
+              data-help="Print size of the tile across its largest dimension — set it to fit your printer's bed. A hexagon prints shorter than it is wide; the readout above gives both.">?</button>
+          </div>
+          <input id="tileW" type="number" min="50" max="1000" step="5" value="200" class="num">
+
           <label class="check"><input id="colorExport" type="checkbox"> Export color changes (PrusaSlicer only)</label>
-          <label for="layerMm">Layer height (mm)</label>
+
+          <div class="labelrow">
+            <label for="layerMm">Layer height (mm)</label>
+            <button type="button" class="help" aria-label="About layer height"
+              data-help="Match your slicer. Colour changes clear the surface below them by one layer, so this sets how precisely a band boundary lands in the print.">?</button>
+          </div>
           <input id="layerMm" type="number" min="0.05" max="0.6" step="0.05" value="0.15" class="num">
-          <p class="hint">Match your slicer — colour changes clear surfaces by one layer.</p>
           <p class="hint" id="bandHint">Embed filament change pauses at the following Z-heights:</p>
           <div id="bandLegend" class="hint"></div>
         </details>

@@ -35,6 +35,12 @@ export function initMap({ start, onPlace, onMove }) {
 
   map.on("click", (e) => onPlace([e.latlng.lat, e.latlng.lng]));
 
+  // Leaflet's own trackResize listens to the WINDOW, which never fires for the case that moves
+  // this container: the panel's scrollbar appearing when the settings section unhides takes ~15px
+  // off the column, and a square map turns that into a height change too. Without this the map
+  // keeps its stale size and paints grey bands where it thinks it has no tiles.
+  new ResizeObserver(() => map.invalidateSize({ animate: false })).observe(map.getContainer());
+
   // Fly the view to frame a tile's footprint (initial paint + every preset
   // select). Builds bounds straight from the cell ring, so it never depends on
   // setLayout having drawn the polygon yet.

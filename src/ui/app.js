@@ -5,7 +5,7 @@
 import { createStore } from "./store.js";
 import { initMap } from "./map.js";
 import { initPreview } from "./preview.js";
-import { wireControls, syncControls } from "./controls.js";
+import { wireControls, syncControls, wireHelp } from "./controls.js";
 import { defaultTileName, planTile } from "../core/pipeline.js";
 import { encodeState, decodeState } from "../core/urlstate.js";
 import { PRESETS, DEFAULT_PRESET } from "./presets.js";
@@ -132,6 +132,7 @@ function detailSummary(settings) {
 // near-0 bathymetry fragmenting a bay). Says "show", not "print": the exported M600 pause sits a
 // layer above the line, so water within one layer of it still prints blue — tens of metres of
 // elevation at map scale. Percentages are differently based on purpose — see WATER_AS_LAND_WARN_PCT.
+// The quoted label must match index.html: the sentence is only actionable if it names the control.
 /** @param {{ landBluePct: number, waterAsLandPct: number }} data */
 function updateWaterWarning(data) {
   const clauses = [];
@@ -141,7 +142,7 @@ function updateWaterWarning(data) {
   const warn = $("waterWarn");
   warn.hidden = clauses.length === 0;
   if (clauses.length) {
-    warn.textContent = `${clauses.join(" and ")} — enable "Recess all water to lowest waterline" to separate land from water.`;
+    warn.textContent = `${clauses.join(" and ")} — tick "Flatten all water to one level" to separate land from water.`;
   }
 }
 
@@ -274,6 +275,7 @@ syncScaleInput(store.get().scale);
 syncControls(store.get()); // unconditional: app.js owns the defaults, index.html only seeds them
 
 wireControls(store);
+wireHelp();
 
 // Pasting a link into this tab's address bar changes only the fragment — no reload, no module
 // re-run — so without this the app would ignore it and then overwrite it on the next debounce,
