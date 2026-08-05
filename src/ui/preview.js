@@ -8,6 +8,13 @@ import { MAX_CHANGES } from "../core/colors.js";
 /** @typedef {import("../core/types.js").Solid} Solid */
 /** @typedef {import("../core/colors.js").ColorChange} ColorChange */
 /**
+ * @typedef {{ emin: number, base: number, mmPerM: number, exag: number,
+ *   orig: Float32Array, mask: Uint8Array, detail: Float32Array, gw: number, gh: number,
+ *   dx: number, dy: number, recessed: boolean }} ProbeFrame
+ *   the bake's own inputs, shipped alongside the mesh: the hover probe reads elevations and the
+ *   mask, the view overlays read all three grids.
+ */
+/**
  * @typedef {{ changes: ColorChange[], baseColor: [number,number,number], baseHex: string, baseName: string }} Bands
  *   worker payload for the mesh path; applyBands reads changes+baseColor, the app legend reads baseHex+baseName.
  */
@@ -31,27 +38,46 @@ function makeBandMaterial() {
     uChangeColor: { value: Array.from({ length: MAX_CHANGES }, () => new THREE.Color()) },
     uChangeCount: { value: 0 },
     uBaseColor: { value: new THREE.Color() },
+    // View mode 0 = printed color bands; > 0 samples an overlay texture built on the CPU,
+    // so every ramp lives in JS, not GLSL.
+    uMode: { value: 0 },
+    uOverlay: { value: /** @type {THREE.Texture | null} */ (null) },
+    uSpan: { value: new THREE.Vector2(1, 1) }, // tile extent in print mm, for the UV mapping
   };
   mat.userData.uniforms = uniforms;
   mat.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
     shader.vertexShader = shader.vertexShader
-      .replace("#include <common>", "#include <common>\nvarying float vLocalZ;")
-      .replace("#include <begin_vertex>", "#include <begin_vertex>\nvLocalZ = position.z;");
+      .replace("#include <common>", "#include <common>\nvarying float vLocalZ;\nvarying vec2 vLocalXY;")
+      .replace("#include <begin_vertex>", "#include <begin_vertex>\nvLocalZ = position.z;\nvLocalXY = position.xy;");
     shader.fragmentShader = shader.fragmentShader
       .replace("#include <common>",
         `#include <common>
 varying float vLocalZ;
+varying vec2 vLocalXY;
 uniform float uChangeZ[${MAX_CHANGES}];
 uniform vec3 uChangeColor[${MAX_CHANGES}];
 uniform int uChangeCount;
-uniform vec3 uBaseColor;`)
+uniform vec3 uBaseColor;
+uniform int uMode;
+uniform vec2 uSpan;
+uniform sampler2D uOverlay;`)
       .replace("#include <color_fragment>",
         `#include <color_fragment>
 vec3 bandCol = uBaseColor;
-for (int i = 0; i < ${MAX_CHANGES}; i++) {
-  if (i >= uChangeCount) break;
-  if (vLocalZ > uChangeZ[i]) bandCol = uChangeColor[i]; // strict: the boundary stays in the lower band, matching colors.bandOf
+if (uMode == 0) {
+  for (int i = 0; i < ${MAX_CHANGES}; i++) {
+    if (i >= uChangeCount) break;
+    if (vLocalZ > uChangeZ[i]) bandCol = uChangeColor[i]; // strict: the boundary stays in the lower band, matching colors.bandOf
+  }
+} else {
+  // Grid coords from the vertex's own XY — the same inverse mapping the hover probe uses.
+  // A texture rather than a per-vertex attribute is what makes hex and circle work: a clipped
+  // rim vertex falls between grid points and interpolates cleanly.
+  // Vertex c maps to c/(gw-1), not the texel center (c+0.5)/gw: up to half a texel of skew at
+  // the rim, none mid-tile. Nearest still resolves texel c exactly, so the mask stays one bit.
+  vec2 uv = vec2(vLocalXY.x / uSpan.x, 1.0 - vLocalXY.y / uSpan.y);
+  bandCol = texture2D(uOverlay, clamp(uv, 0.0, 1.0)).rgb;
 }
 diffuseColor.rgb = bandCol;`);
   };
@@ -73,6 +99,75 @@ function applyBands(mat, bands) {
   u.uBaseColor.value.setRGB(br, bg, bb);
 }
 
+/** Overlay view modes. 0 is the printed color bands; the rest are diagnostics reading the
+ * bake's own inputs. Preview only — none of this reaches the export. */
+export const VIEW_MODES = /** @type {const} */ (["bands", "water", "height", "detail"]);
+
+/** Robust range: ignore the tails so one spike can't flatten the whole ramp. Samples rather
+ * than sorting ~700k values on every mode switch.
+ * @param {Float32Array} v @param {number} lo @param {number} hi @returns {[number, number]} */
+function percentiles(v, lo = 0.02, hi = 0.98) {
+  const step = Math.max(1, Math.floor(v.length / 20000));
+  const s = [];
+  for (let i = 0; i < v.length; i += step) if (Number.isFinite(v[i])) s.push(v[i]);
+  if (!s.length) return [0, 1];
+  s.sort((a, b) => a - b);
+  const a = s[Math.floor(lo * (s.length - 1))], b = s[Math.floor(hi * (s.length - 1))];
+  return [a, b > a ? b : a + 1e-6];
+}
+
+// Viridis-like: dark blue → teal → green → yellow. Perceptually ordered and readable with the
+// common color-vision deficiencies, unlike the usual blue→red.
+const RAMP = [[68, 1, 84], [59, 82, 139], [33, 145, 140], [94, 201, 98], [253, 231, 37]];
+/** @param {number} t 0..1 @returns {[number, number, number]} */
+function ramp(t) {
+  const x = Math.max(0, Math.min(1, t)) * (RAMP.length - 1);
+  const i = Math.min(RAMP.length - 2, Math.floor(x)), f = x - i;
+  const a = RAMP[i], b = RAMP[i + 1];
+  return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
+}
+
+/**
+ * Build the RGBA texture the shader samples for a diagnostic mode. Row 0 is the grid's north
+ * row and `flipY` stays false, matching the UV the shader computes.
+ * @param {ProbeFrame} f
+ * @param {number} mode index into VIEW_MODES
+ * @returns {THREE.DataTexture}
+ */
+function overlayTexture(f, mode) {
+  const n = f.gw * f.gh;
+  const px = new Uint8Array(n * 4);
+  const name = VIEW_MODES[mode];
+  let lo = 0, hi = 1;
+  // The field the ramp reads. Detail spans orders of magnitude, so stretch it in log space —
+  // linear crams everything into the bottom of the ramp and the boundary of interest disappears.
+  let scalar = f.orig;
+  if (name === "detail") {
+    scalar = new Float32Array(n);
+    for (let i = 0; i < n; i++) scalar[i] = Math.log10(f.detail[i] + 1e-3);
+  }
+  if (name !== "water") [lo, hi] = percentiles(scalar);
+  for (let i = 0; i < n; i++) {
+    let r, g, b;
+    if (name === "water") {
+      // Flat colors, no ramp: the mask is one bit and a gradient would imply it isn't.
+      [r, g, b] = f.mask[i] ? [56, 108, 176] : [222, 219, 210];
+    } else if (name === "height") {
+      const v = 255 * Math.max(0, Math.min(1, (scalar[i] - lo) / (hi - lo)));
+      [r, g, b] = [v, v, v];
+    } else {
+      [r, g, b] = ramp((scalar[i] - lo) / (hi - lo));
+    }
+    px[i * 4] = r; px[i * 4 + 1] = g; px[i * 4 + 2] = b; px[i * 4 + 3] = 255;
+  }
+  const tex = new THREE.DataTexture(px, f.gw, f.gh);
+  // Nearest keeps the one-bit mask boundary a boundary; linear elsewhere.
+  tex.magFilter = tex.minFilter = name === "water" ? THREE.NearestFilter : THREE.LinearFilter;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.needsUpdate = true;
+  return tex;
+}
+
 /**
  * @param {HTMLElement} container
  */
@@ -92,13 +187,11 @@ export function initPreview(container) {
   container.appendChild(probe);
   const raycaster = new THREE.Raycaster();
   const pointer = new THREE.Vector2();
-  /**
-   * @typedef {{ emin: number, base: number, mmPerM: number, exag: number,
-   *   orig: Float32Array, mask: Uint8Array, gw: number, gh: number, dx: number, dy: number,
-   *   recessed: boolean }} ProbeFrame
-   */
   /** @type {ProbeFrame | null} */
   let frame = null;
+  let viewMode = 0;                                   // index into VIEW_MODES; session state, not in the URL
+  /** @type {THREE.DataTexture | null} */
+  let overlay = null;
   let probeDirty = false; // set on pointer move; one raycast per frame, then cleared
   renderer.domElement.addEventListener("pointermove", (e) => {
     const r = renderer.domElement.getBoundingClientRect();
@@ -177,6 +270,26 @@ export function initPreview(container) {
   };
   loop();
 
+  // The overlay is one texture shared by every mesh in the group, rebuilt only when the mode
+  // or the bake changes — not per frame.
+  function applyView() {
+    if (overlay) { overlay.dispose(); overlay = null; }
+    if (viewMode > 0 && frame) overlay = overlayTexture(frame, viewMode);
+    for (const c of group.children) {
+      const u = /** @type {THREE.MeshStandardMaterial} */ (/** @type {THREE.Mesh} */ (c).material).userData.uniforms;
+      if (!u) continue;
+      u.uMode.value = overlay ? viewMode : 0;         // no frame yet ⇒ fall back to bands
+      u.uOverlay.value = overlay;
+      if (frame) u.uSpan.value.set((frame.gw - 1) * frame.dx, (frame.gh - 1) * frame.dy);
+    }
+  }
+
+  /** @param {number} mode index into VIEW_MODES */
+  function setViewMode(mode) {
+    viewMode = Math.max(0, Math.min(VIEW_MODES.length - 1, mode));
+    applyView();
+  }
+
   /**
    * @param {{ positions: Float32Array, indices: Uint32Array, normals: Float32Array, bands: Bands }[]} solids
    * @param {ProbeFrame | null} [probeFrame]
@@ -203,6 +316,7 @@ export function initPreview(container) {
       applyBands(mat, s.bands);
       group.add(new THREE.Mesh(g, mat));
     }
+    applyView(); // the new bake carries new grids, so the overlay is rebuilt against them
     if (box.isEmpty()) return;
 
     // centre the assembly at the origin and frame it from a 3/4 southern view
@@ -218,5 +332,5 @@ export function initPreview(container) {
     controls.update();
   }
 
-  return { setTiles, resize, dispose: () => cancelAnimationFrame(raf) };
+  return { setTiles, setViewMode, resize, dispose: () => cancelAnimationFrame(raf) };
 }

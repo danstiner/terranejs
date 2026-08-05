@@ -103,6 +103,20 @@ label.check input { margin: 0; }
   color: #6b4e00; background: #fff8e1; border-left: 3px solid #e0a800; border-radius: 3px;
 }
 
+/* Floats over the canvas rather than taking layout space — the preview pane is the one part of
+   the page that should stay as large as it can. `position` is set on #preview by preview.js. */
+#viewmodes {
+  position: absolute; top: 8px; left: 8px; z-index: 2;
+  display: flex; gap: 1px; border-radius: 5px; overflow: hidden;
+  background: rgba(0, 0, 0, 0.55); font-size: 12px;
+}
+#viewmodes button {
+  margin: 0; padding: 4px 9px; border: 0; border-radius: 0;
+  background: transparent; color: #d8d8d8; cursor: pointer; white-space: nowrap;
+}
+#viewmodes button:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
+#viewmodes button.on { background: #2d6cdf; color: #fff; font-weight: 600; }
+
 /* Only wraps the scale input now; the margin replaces the hint paragraph that used to sit
    under it and carry the gap to the next control. */
 .row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
