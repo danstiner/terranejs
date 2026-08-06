@@ -298,6 +298,19 @@ keeps three states distinct — a source, `no source data` (no coverage polygon
 there), `source unavailable` (the fetch failed) — because a silent unknown
 would read exactly like ground no source covers.
 
+A GPX trail can be imported — picked or dropped onto the map — to frame the tile
+around it. The trail draws in red, and the tile is centered on its bounds and
+scaled until the footprint contains it with a margin; print width is held fixed,
+because it is a printer-bed constraint, so the map scale is what moves. The fit
+is shape-aware: a hex encloses about 65% of its bounding square and a circle
+about 79%, so a hex or circle always needs a wider ground extent than a square for
+the same trail — how much wider follows the trail's own proportions, not that area
+figure, and shrinks toward none for an elongated trail. A shared link carries the
+fitted framing but not the trail — the link
+is a URL fragment and cannot hold the file — and a framing that leaves part of
+the trail outside the footprint is warned about, since the tile prints only what
+its rim encloses.
+
 The pipeline itself is headless — it lives in `src/core/`, has no DOM
 dependency, and is testable outside a browser. The browser-facing pieces
 (map, preview, settings controls, the page itself) live in `src/ui/` and

@@ -50,6 +50,20 @@ section { margin-bottom: 20px; }
 label { display: block; font-weight: 600; margin-bottom: 4px; }
 select { width: 100%; padding: 6px; }
 #preset { margin-bottom: 10px; } /* separate the region picker from the map; native select is styled by `select` + `color-scheme` above */
+
+/* The loaded trail's filename and its two buttons. The filename can be arbitrarily
+   long, so it takes the slack and ellipsizes; the buttons never shrink.
+   The [hidden] rule is mandatory, not belt-and-braces: an author `display` beats the
+   UA's `[hidden] { display: none }`, so setting `display: flex` here silently defeats
+   the attribute this row's whole visibility depends on — it stayed on screen with no
+   trail loaded, showing "Fit to trail" for a trail that did not exist. #waterWarn
+   dodges this by declaring no `display` at all; a flex row cannot, so it re-states the
+   UA rule at author level instead. */
+#trailRow { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 12px; }
+#trailRow[hidden] { display: none; }
+#trailName { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#trailRow button { flex: none; }
+
 .hint { margin: 4px 0 12px; font-size: 12px; color: #888; }
 
 input[type="range"] { width: 100%; }
@@ -98,7 +112,7 @@ label.check input { margin: 0; }
 
 /* Amber banner, not a `.hint`: hints are grey chrome the eye skips, and this one has to be
    noticed from across the panel. No `display` here — that would defeat the `hidden` attribute. */
-#waterWarn {
+#waterWarn, #trailWarn {
   margin: 10px 0; padding: 8px 10px; font-size: 12px; line-height: 1.45;
   color: #6b4e00; background: #fff8e1; border-left: 3px solid #e0a800; border-radius: 3px;
 }
@@ -150,7 +164,7 @@ button.primary:disabled { background: #9bb4de; border-color: #9bb4de; cursor: de
   .help { border-color: #555; color: #9a9a9a; }
   .group { border-top-color: #333; }
   .group > h3, .group > summary { color: #9a9a9a; }
-  #waterWarn { color: #f0d68a; background: #2a2418; }
+  #waterWarn, #trailWarn { color: #f0d68a; background: #2a2418; }
   #credits a, #credits a:visited { color: #7fb0ff; } /* UA default blue is ~1.8:1 on the dark footer — fails WCAG */
   #resultbar #ghlink { color: #999; }
   #resultbar #ghlink:hover { color: #e8e8e8; }

@@ -81,13 +81,14 @@ export function segmentsFromDocument(doc) {
 }
 
 /**
- * GPX text → segments, via the browser's XML parser. Browser-only — Node has no
- * DOMParser, which is the whole reason the walk above is a separate function.
+ * A parsed document → at least one segment, or throws saying why not.
  *
- * Throws with a message naming what is actually wrong. Without this every failure
- * collapses into "no track points": a truncated download, a KML file renamed to .gpx,
- * and a genuine GPX carrying only a planned route are three different problems, and
- * telling them apart is most of what parsing properly buys.
+ * Never returns empty: every unusable document leaves by the same door, so callers get
+ * one failure path instead of a thrown error and a falsy return meaning the same thing.
+ *
+ * Each message completes the caller's "Could not import <file>: " and takes the FILE as
+ * its subject, so the subject stays constant across them. Without that, failures arrive
+ * as two different kinds of sentence and only one of them names the file.
  *
  * The Document is not retained — only plain arrays escape. A DOM materializes every
  * node, so letting it die with this call bounds that cost to the import rather than to
@@ -102,7 +103,7 @@ export function parseGpxText(text) {
   // rather than by throwing, and does NOT use the Mozilla parsererror namespace — a
   // namespaced lookup finds nothing there. querySelector is the check that works, and it
   // is confined to this browser-only function because the test DOM does not implement it.
-  if (doc.querySelector("parsererror")) throw new Error("not valid XML");
+  if (doc.querySelector("parsererror")) throw new Error("it is not valid XML");
 
   const segments = segmentsFromDocument(doc);
   if (segments.length) return segments;
@@ -111,11 +112,11 @@ export function parseGpxText(text) {
   // deliberately is not, since matching on it would reject GPX 1.0 and namespace-less
   // files outright — it tells us what a file is, never whether to accept it.
   const root = doc.documentElement.localName;
-  if (root && root !== "gpx") throw new Error(`this looks like a <${root}> document, not GPX`);
+  if (root && root !== "gpx") throw new Error(`it looks like a <${root}> document, not GPX`);
   // A route is valid GPX we do not read: <rtept>s are planned turn points, often
   // kilometers apart, and the geometry downstream measures a trail by its vertices.
-  // Named rather than supported — "no track points" would send someone hunting a
-  // corrupt file they do not have.
-  if (tags(doc, "rte").length) throw new Error("this file holds a route, not a recorded track");
-  return [];
+  // Named rather than lumped in below, which would send someone hunting a corrupt file
+  // they do not have.
+  if (tags(doc, "rte").length) throw new Error("it holds a route, not a recorded track");
+  throw new Error("it has no track points");
 }

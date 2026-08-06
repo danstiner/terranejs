@@ -88,6 +88,22 @@
           </div>
         </div>
 
+        <!-- Trail sits with the other decisions rather than by the map: importing one REFRAMES
+             the tile — it writes center and scale — so it belongs beside the settings it
+             overwrites, not beside the picker it silently overrides. -->
+        <div class="group">
+          <h3>Trail</h3>
+          <p id="trailWarn" hidden></p>
+
+          <input id="gpxFile" type="file" accept=".gpx,application/gpx+xml" hidden>
+          <button id="gpxImport" type="button">Import GPX trail…</button>
+          <div id="trailRow" hidden>
+            <span id="trailName"></span>
+            <button id="trailFit" type="button">Fit to trail</button>
+            <button id="trailClear" type="button" aria-label="Remove the trail" title="Remove the trail">&#10005;</button>
+          </div>
+        </div>
+
         <details class="group">
           <summary>Advanced</summary>
           <div class="labelrow">

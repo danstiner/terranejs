@@ -1,6 +1,7 @@
 // Wire the settings-panel inputs to the store. DOM ids come from index.html.
 // The scale input reads as "mm per km"; the store holds 1:N (N = 1e6 / mmPerKm).
 /** @typedef {import("./app.js").AppState} AppState */
+/** @typedef {import("../core/urlstate.js").ShareableState} ShareableState */
 
 /** @param {string} id @returns {HTMLElement} */
 const el = (id) => {
@@ -12,8 +13,9 @@ const el = (id) => {
 /**
  * Push state INTO the inputs — the reverse of wireControls, for state the user didn't type:
  * a shared link's restored settings. index.html's markup carries the defaults, so this only
- * runs when something else (the URL hash) supplies them.
- * @param {AppState} s
+ * runs when something else (the URL hash) supplies them. Typed as ShareableState, not AppState:
+ * a hash never carries a trail, so a decoded link has no `trail` field to give it.
+ * @param {ShareableState} s
  */
 export function syncControls(s) {
   /** @param {string} id @param {string|number} v */
