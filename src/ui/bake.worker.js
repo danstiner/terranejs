@@ -33,8 +33,8 @@ const post = /** @type {(msg: unknown, transfer?: Transferable[]) => void} */ (
 let catalogPromise = null;
 const catalogOnce = () => (catalogPromise ??= fetchCatalog().catch(() => null));
 
-/** @param {{ gen: number, settings: TileSettings, maxTiles: number, format: "mesh" | "3mf", name?: string, color?: boolean, coverage?: boolean }} data */
-async function handle({ gen, settings, maxTiles, format, name, color, coverage }) {
+/** @param {{ gen: number, settings: TileSettings, maxTiles: number, format: "mesh" | "3mf", name?: string, color?: boolean, coverage?: boolean, trail?: {segments: import("../core/types.js").LatLon[][], widthMm: number, heightMm: number} | null }} data */
+async function handle({ gen, settings, maxTiles, format, name, color, coverage, trail }) {
   try {
     const plan = planTile(settings, { maxTiles });
     // Started with the raster fans but never awaited in this path: it rides its own message
@@ -64,7 +64,8 @@ async function handle({ gen, settings, maxTiles, format, name, color, coverage }
     for (let i = 0; i < wmGrid.length; i++) waterMask[i] = wmGrid[i] > 0.5 ? 1 : 0;
 
     post({ gen, baking: true }); // all tiles in hand → meshing + validation (synchronous, blocks the worker)
-    const { solid, emin, emax, lineElev, landBluePct, waterAsLandPct } = bakeTileSolid(mosaic, plan, settings, waterMask);
+    const { solid, ribbon, emin, emax, lineElev, landBluePct, waterAsLandPct } =
+      bakeTileSolid(mosaic, plan, settings, waterMask, trail ?? undefined);
     // Latitude-adjusted color changes for THIS bake's frame. Shared by the preview
     // (returned as `bands`) and, later, the export embed. K>0 since exag ∈ [0.5,4].
     const K = plan.mmPerM * settings.exag;
@@ -85,7 +86,7 @@ async function handle({ gen, settings, maxTiles, format, name, color, coverage }
       const exportChanges = color
         ? colorChanges(thresholds, frame, { pauseLiftMm: settings.layerMm ?? 0.15 })
         : undefined;
-      const bytes = await tileTo3mf(name ?? "tile", solid, exportChanges);
+      const bytes = await tileTo3mf(name ?? "tile", solid, exportChanges, ribbon);
       post({ gen, bytes }, [bytes.buffer]);
     } else {
       // Normals for the lit preview, computed here so the main thread never meshes

@@ -5,8 +5,9 @@
 import { createStore } from "./store.js";
 import { initMap } from "./map.js";
 import { initPreview } from "./preview.js";
-import { wireControls, syncControls, wireHelp } from "./controls.js";
+import { wireControls, syncControls, wireHelp, cordHint } from "./controls.js";
 import { defaultTileName, planTile } from "../core/pipeline.js";
+import { MIN_CORD_CELLS } from "../core/corridor.js";
 import { encodeState, decodeState } from "../core/urlstate.js";
 import { PRESETS, DEFAULT_PRESET } from "./presets.js";
 import { BAND_NAMES } from "../core/colors.js";
@@ -17,11 +18,13 @@ import { parseGpxText } from "./gpxparse.js";
 
 /** @typedef {{ name: string, segments: import("../core/types.js").LatLon[][] }} Trail
  *   An imported GPX: the source filename, and one polyline per track segment. */
-// The app state is the shareable state PLUS the trail — one typedef, so a new field can't be
-// added here and silently dropped from every link. The trail is the deliberate exception: a
-// hash is a URL fragment and cannot carry GPX bytes, so it is session-only. encodeState
-// destructures named fields, so it cannot leak into a link by accident.
-/** @typedef {import("../core/urlstate.js").ShareableState & { trail: Trail | null }} AppState */
+/** @typedef {{ widthMm: number, heightMm: number }} Cord */
+// The app state is the shareable state PLUS the trail (and its cord) — one typedef, so a new
+// field can't be added here and silently dropped from every link. Both are the deliberate
+// exception: a hash is a URL fragment and cannot carry GPX bytes, so a trail — and the cord
+// dimensions that only mean something alongside one — are session-only. encodeState
+// destructures named fields, so neither can leak into a link by accident.
+/** @typedef {import("../core/urlstate.js").ShareableState & { trail: Trail | null, cord: Cord }} AppState */
 /** @typedef {import("../core/pipeline.js").TileSettings} TileSettings */
 
 // Max source-tile budget per bake, one per quality tier (passed as `maxTiles`). Preview
@@ -45,6 +48,7 @@ const store = createStore(/** @type {AppState} */ ({
     shape: "square",
   }),
   trail: null, // a restored link never carries one — see the AppState note above
+  cord: { widthMm: 1.6, heightMm: 0.6 }, // export-only: a hash carries no trail, so no cord either
 }));
 
 /** @param {string} id @returns {HTMLElement} */
@@ -114,6 +118,13 @@ function writeHash(s) {
 /** @type {Record<import("../core/types.js").Shape, number>} */
 const AREA_FRAC = { square: 1, hex: (3 * Math.sqrt(3)) / 8, circle: Math.PI / 4 };
 
+// The export tier's dx, cached from detailSummary's own EXPORT_MAX_TILES plan below — cordHint's
+// "too narrow for this tile" clause reuses it rather than planning a second time. Updated once
+// per crisp preview (not per store tick, unlike cordHint's own caller — see store.subscribe),
+// which is the same staleness detailSummary's own text already carries.
+/** @type {number | null} */
+let exportDx = null;
+
 // Resting status after the detailed preview lands: the resolution (real metres per
 // grid sample) and rough triangle count of what's on screen vs what Export will
 // bake at the full print budget — so the preview-vs-print gap is legible. Both are
@@ -127,12 +138,15 @@ function detailSummary(settings) {
     const spanPx = settings.tileWidthMm / dx;              // the tile's own width in cells
     const gsd = (dx * settings.scale) / 1000;              // real metres between mesh vertices
     const tris = (2 * frac * spanPx * spanPx) / 1e6;       // ≈ top-surface triangles, millions
-    return `${gsd >= 10 ? Math.round(gsd) : gsd.toFixed(1)} m/vertex, ~${tris.toFixed(1)}M triangles`;
+    return { dx, text: `${gsd >= 10 ? Math.round(gsd) : gsd.toFixed(1)} m/vertex, ~${tris.toFixed(1)}M triangles` };
   };
   try {
-    return `Preview: ${part(CRISP_MAX_TILES)}  ·  Export: ${part(EXPORT_MAX_TILES)}`;
+    const crisp = part(CRISP_MAX_TILES), exportPart = part(EXPORT_MAX_TILES);
+    exportDx = exportPart.dx;
+    return `Preview: ${crisp.text}  ·  Export: ${exportPart.text}`;
   } catch {
-    return ""; // e.g. a tile past the Mercator limit — leave the line blank
+    exportDx = null; // e.g. a tile past the Mercator limit — no plan, so no minimum either
+    return ""; // leave the line blank
   }
 }
 
@@ -198,7 +212,20 @@ worker.onmessage = ({ data }) => {
     const btn = /** @type {HTMLButtonElement} */ ($("export"));
     if (data.progress) { setProgress(`Export — fetching terrain ${data.progress.done}/${data.progress.total}`); return; }
     if (data.baking) { setProgress("Export — baking…"); return; }
-    if (data.error) { setProgress(`Export failed: ${data.error}`); btn.disabled = false; exportGen = -1; resyncAfterExport(); return; }
+    if (data.error) {
+      // A cord the grid can't carry is a trail fact, not a bake fact — the DETAIL belongs on the
+      // banner PR1 built for trail messages, not the status line a pending preview overwrites
+      // within 500 ms. But the status line still has to leave "Export — baking…", or the UI
+      // reads as still running while the banner says it failed — so it gets a short pointer
+      // instead of the raw pipeline error, which would only duplicate the banner's sentence.
+      if (/trail cord width/.test(data.error)) {
+        warnTrail(`Could not export the trail: ${data.error.replace(/^pipeline: /, "")}`);
+        setProgress("Export failed — see the trail warning above.");
+      } else {
+        setProgress(`Export failed: ${data.error}`);
+      }
+      btn.disabled = false; exportGen = -1; resyncAfterExport(); return;
+    }
     download(new Blob([/** @type {BlobPart} */ (data.bytes)], { type: "model/3mf" }), `${exportName}.3mf`);
     setProgress(`Exported ${exportName}.3mf`);
     btn.disabled = false;
@@ -266,12 +293,31 @@ function loadPreview() {
 /** @type {Trail | null} */
 let shownTrail = null;
 
+// Snapshot of the last state a bake was scheduled for, so an edit touching ONLY `cord` can skip
+// scheduling one. `cord` cannot change what bakeTile bakes — the worker's preview job never
+// reads it — so rescheduling for it costs a debounced fetch + decode + mesh at two tiers and a
+// "Quick preview…" flash for a spinner click that changes nothing on screen (PR2b's ribbon
+// sweep is what would consume it, and isn't wired up yet). A denylist, not an allowlist: any
+// OTHER field added to AppState later defaults to bake-relevant, which is the safe direction to
+// be wrong in.
+/** @type {AppState | null} */
+let lastBakeState = null;
+/** @param {AppState} s @returns {boolean} */
+function bakeInputsChanged(s) {
+  if (!lastBakeState) return true;
+  for (const k of /** @type {(keyof AppState)[]} */ (Object.keys(s))) {
+    if (k !== "cord" && s[k] !== lastBakeState[k]) return true;
+  }
+  return false;
+}
+
 store.subscribe((s) => {
   map.setLayout(s);
   if (s.trail !== shownTrail) {
     shownTrail = s.trail;
     map.setTrail(s.trail ? s.trail.segments : []);
     $("trailRow").hidden = !s.trail;
+    $("trailCord").hidden = !s.trail;
     $("trailName").textContent = s.trail ? s.trail.name : "";
   }
   // Outside the guard above: this depends on center, scale, shape and width too, all
@@ -279,6 +325,12 @@ store.subscribe((s) => {
   // set, so the budget is a frame, not the bake debounce: 0.8 ms for the largest real
   // trail measured (15.7k points), 4.4 ms at 100k.
   updateTrailWarning(s);
+  // Unconditional, unlike the guard above: height, width and layerMm all change without the
+  // trail changing. minWidthMm comes from exportDx, cached by detailSummary's own EXPORT_MAX_TILES
+  // plan (below) rather than planning again here — this runs on every store change, including a
+  // 30-60/s slider drag, and planTile is not free.
+  $("cordHint").textContent = cordHint(s.cord.heightMm, s.layerMm, s.cord.widthMm,
+    exportDx !== null ? MIN_CORD_CELLS * exportDx : undefined);
   const km = (s.tileWidthMm * s.scale) / 1e6; // print mm × 1:N scale → real km the tile spans
   // tileWidthMm is the bounding-square side, so only the hex prints shorter than it is wide.
   const tile = s.shape === "hex"
@@ -290,8 +342,13 @@ store.subscribe((s) => {
     ? `1 ${tile} : ~${km >= 10 ? Math.round(km) : km.toFixed(1)} km`
     : "No tile placed.";
   $("settings").hidden = !s.center;
-  window.clearTimeout(timer);
-  timer = window.setTimeout(() => { writeHash(s); loadPreview(); }, 500); // same settling point
+  // A cord-only edit leaves any already-pending bake's timer running untouched, rather than
+  // pushing it back — see bakeInputsChanged above.
+  if (bakeInputsChanged(s)) {
+    lastBakeState = s;
+    window.clearTimeout(timer);
+    timer = window.setTimeout(() => { writeHash(s); loadPreview(); }, 500); // same settling point
+  }
 });
 
 // Populate the region picker from PRESETS (grouped), keeping the static Custom
@@ -324,6 +381,10 @@ presetSelect.addEventListener("change", () => {
 presetSelect.value = restored ? "" : DEFAULT_PRESET.name;
 syncScaleInput(store.get().scale);
 syncControls(store.get()); // unconditional: app.js owns the defaults, index.html only seeds them
+// cord isn't ShareableState (see the AppState note above), so syncControls can't carry it — same
+// reconciliation as every other control, just done here instead of there.
+/** @type {HTMLInputElement} */ ($("cordW")).value = String(store.get().cord.widthMm);
+/** @type {HTMLInputElement} */ ($("cordH")).value = String(store.get().cord.heightMm);
 
 wireControls(store);
 wireHelp();
@@ -438,13 +499,16 @@ $("export").addEventListener("click", () => {
   writeHash(s);
   window.clearTimeout(timer); // cancel a queued preview…
   previewGen = 0;             // …and void any in-flight one, so its trailing reply can't clobber the export status
-  const settings = { ...s, center: s.center };
+  // `trail` rides its own field below (the worker reads only that one), so it's destructured
+  // out here rather than posted twice inside `settings` too.
+  const { trail, ...settings } = { ...s, center: s.center };
   exportGen = ++gen;
   exportName = defaultTileName(settings); // lat/lng/width/scale → describes the tile
   setProgress("Export…");
   worker.postMessage({
     gen: exportGen, settings, maxTiles: EXPORT_MAX_TILES, format: "3mf", name: exportName,
     color: /** @type {HTMLInputElement} */ ($("colorExport")).checked,
+    trail: trail ? { segments: trail.segments, ...s.cord } : null,
   });
 });
 

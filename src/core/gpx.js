@@ -9,6 +9,7 @@
 import { lonToGlobalX, latToGlobalY, globalXToLon, globalYToLat, groundResolution,
   MAX_MERCATOR_LAT } from "./tilemath.js";
 import { tileSpanPx } from "./layout.js";
+import { MM_PER_KM_MIN, MM_PER_KM_MAX } from "./urlstate.js";
 
 /** @typedef {import("./types.js").Shape} Shape */
 
@@ -91,18 +92,24 @@ function boundsPx(segments) {
 }
 
 /**
- * Floor to 2 significant figures. Flooring in the mm-per-km domain is the SAFE
- * direction: fewer mm per km means one printed millimeter covers more ground, so
- * the tile can only grow and the trail can only gain clearance — never lose it
+ * Floor to 2 significant figures, within the range the scale input accepts. Flooring in the
+ * mm-per-km domain is the SAFE direction: fewer mm per km means one printed millimeter covers
+ * more ground, so the tile can only grow and the trail can only gain clearance — never lose it
  * to a rounding step.
+ *
+ * Clamping to MM_PER_KM_MAX is safe the same way — it can only widen the tile, so a trail that
+ * fit before still fits. MM_PER_KM_MIN is the one bound that can clip, since it caps how much
+ * ground a tile may cover, but it bottoms out around 20000 km of ground: a trail that hits it
+ * has left the printable domain, and the clip warning is then the honest answer.
  * @param {number} mm @returns {number}
  */
 function floorMmPerKm(mm) {
-  if (!Number.isFinite(mm) || mm <= 0) return 0.01; // the smallest the UI accepts
+  if (!Number.isFinite(mm) || mm <= 0) return MM_PER_KM_MIN;
+  if (mm > MM_PER_KM_MAX) return MM_PER_KM_MAX;
   const mag = 10 ** (Math.floor(Math.log10(mm)) - 1);
   // The epsilon rescues a value that is already on a step and lands a few ulp below it
   // (…2.9999999999996), which would otherwise floor a whole step down.
-  return Number((Math.floor(mm / mag + 1e-9) * mag).toPrecision(2));
+  return Math.max(MM_PER_KM_MIN, Number((Math.floor(mm / mag + 1e-9) * mag).toPrecision(2)));
 }
 
 /**

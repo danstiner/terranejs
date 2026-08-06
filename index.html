@@ -90,7 +90,9 @@
 
         <!-- Trail sits with the other decisions rather than by the map: importing one REFRAMES
              the tile — it writes center and scale — so it belongs beside the settings it
-             overwrites, not beside the picker it silently overrides. -->
+             overwrites, not beside the picker it silently overrides. Deliberately not a
+             <details>: #trailWarn has to be readable the moment it is set, and a collapsible
+             section that force-opens itself on every warning tick can never be closed again. -->
         <div class="group">
           <h3>Trail</h3>
           <p id="trailWarn" hidden></p>
@@ -101,6 +103,23 @@
             <span id="trailName"></span>
             <button id="trailFit" type="button">Fit to trail</button>
             <button id="trailClear" type="button" aria-label="Remove the trail" title="Remove the trail">&#10005;</button>
+          </div>
+
+          <div id="trailCord" hidden>
+            <div class="labelrow">
+              <label for="cordW">Trail cord width</label>
+              <button type="button" class="help" aria-label="About cord width"
+                data-help="Width of the printed cord. Round to a multiple of your nozzle width for clean perimeters — 1.6 mm is four passes of a 0.4 mm nozzle.">?</button>
+            </div>
+            <input id="cordW" type="number" min="0.4" max="6" step="0.1" value="1.6" class="num">
+
+            <div class="labelrow">
+              <label for="cordH">Trail cord height</label>
+              <button type="button" class="help" aria-label="About cord height"
+                data-help="How far the cord stands proud of the terrain. The slicer rounds this down to a whole number of layers.">?</button>
+            </div>
+            <input id="cordH" type="number" min="0.15" max="3" step="0.05" value="0.6" class="num">
+            <p class="hint" id="cordHint"></p>
           </div>
         </div>
 
