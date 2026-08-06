@@ -460,7 +460,10 @@ async function importTrail(file) {
   $("trailWarn").hidden = true; // clear a stale error before a new attempt can raise its own
   try {
     const segments = parseGpxText(await file.text());
-    const { center, scale } = fitToTrail(segments);
+    // #autoFit is a quick DOM-only preference, not AppState/ShareableState — it never reaches
+    // the hash, so a shared link can't carry "don't fit" and surprise whoever opens it.
+    const autoFit = /** @type {HTMLInputElement} */ ($("autoFit")).checked;
+    const { center, scale } = autoFit ? fitToTrail(segments) : store.get();
     store.set({ trail: { name: file.name, segments }, center, scale });
   } catch (err) {
     const why = err instanceof Error ? err.message : String(err);
