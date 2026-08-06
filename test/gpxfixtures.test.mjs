@@ -13,6 +13,11 @@ import fs from "node:fs";
 import { DOMParser } from "@xmldom/xmldom";
 import { segmentsFromDocument, segmentsOrExplain } from "../src/ui/gpxparse.js";
 import { fitTile, clippedFraction } from "../src/core/gpx.js";
+import { MM_PER_KM_MAX } from "../src/core/urlstate.js";
+import { planTile } from "../src/core/pipeline.js";
+import { trailToPrintMm, resample, corridorMask, halfWFor, DS_FACTOR } from "../src/core/corridor.js";
+import { buildRibbon } from "../src/core/mesh.js";
+import { checkWatertight, signedVolume } from "../src/core/validate.js";
 
 const parser = new DOMParser({ onError: () => {} });
 /** @param {string} name @returns {string} */
@@ -76,12 +81,18 @@ test("golden: Strava export", () => {
 
 // Coordinates above are exact — Number() on a decimal string is deterministic. The framing
 // is not asserted bit-for-bit: it runs through log/tan/atan, whose last ulp is not pinned by
-// the spec. mm-per-km IS pinned exactly, because flooring to 2 significant figures is the
-// step that makes the printed scale a clean number, and that is worth regressing on.
+// the spec. mm-per-km IS pinned exactly, because the step that produces it is worth
+// regressing on.
+//
+// All three land on MM_PER_KM_MAX, and that is the fixtures' doing, not the fitter's: each is
+// trimmed to 8 track points, spanning tens of meters rather than the kilometers the real
+// export covered, so every one of them asks for a scale past the input's ceiling and gets
+// clamped. Their unclamped asks were 1900, 5800 and 31000 mm/km. The 2-significant-figure
+// flooring underneath is covered by gpx.test.mjs, whose trail fits well inside the range.
 const FRAMINGS = [
-  { file: "alltrails.gpx", center: [48.95168500189638, -121.63543], mmPerKm: 1900 },
-  { file: "garmin-connect.gpx", center: [48.71770698597514, -121.14509384147823], mmPerKm: 5800 },
-  { file: "strava.gpx", center: [37.257922500002536, -122.1209845], mmPerKm: 31000 },
+  { file: "alltrails.gpx", center: [48.95168500189638, -121.63543], mmPerKm: MM_PER_KM_MAX },
+  { file: "garmin-connect.gpx", center: [48.71770698597514, -121.14509384147823], mmPerKm: MM_PER_KM_MAX },
+  { file: "strava.gpx", center: [37.257922500002536, -122.1209845], mmPerKm: MM_PER_KM_MAX },
 ];
 
 for (const { file, center, mmPerKm } of FRAMINGS) {
@@ -130,4 +141,34 @@ test("golden: every refused fixture is refused for its own reason", () => {
   // regression this whole group exists to catch.
   const messages = REFUSED.map((r) => r.message);
   assert.equal(new Set(messages).size, messages.length);
+});
+
+// --- the ribbon a real export bakes ---
+
+test("strava.gpx stamps a corridor and bakes a watertight cord", () => {
+  const segs = segmentsFromDocument(doc("strava.gpx"));
+  // Explicit 1:25000 framing on the trail's first point, not fitTile: the fixture is trimmed
+  // to 8 points, so a fitted tile spans under 2px at z15 and planTile rejects it before a plan
+  // ever exists. 1:25000 also lands the stamp at dx = 0.152 mm, a representative export pitch —
+  // the regime worth regressing on, rather than the sub-2px one fitTile can't even produce.
+  const plan = planTile({ center: segs[0][0], scale: 25000, tileWidthMm: 200, base: 3, exag: 1 },
+    { maxTiles: 300 });
+  // Synthetic relief: this pins trail geometry, not terrain, and a real DEM needs the network.
+  const grid = new Float32Array(plan.gw * plan.gh);
+  for (let r = 0; r < plan.gh; r++)
+    for (let c = 0; c < plan.gw; c++) grid[r * plan.gw + c] = 200 + 30 * Math.sin(c / 11) + 20 * Math.cos(r / 9);
+
+  const halfW = halfWFor(1.6, plan.dx);
+  const stations = trailToPrintMm(segs, plan).map((p) => resample(p, halfW * DS_FACTOR));
+  const { cells, count } = corridorMask(stations, plan, halfW, undefined);
+  // Pinned exact rather than `> 0`: stable across runs (grid, trail and pitch are all fixed),
+  // and it moves if the stamping ever changes — verified by widening the requested cord from
+  // 1.6 to 2.0 mm, which shifts this count from 87 to 137.
+  assert.equal(count, 87);
+
+  const rib = buildRibbon(grid, plan.gw, plan.gh, plan.span, cells,
+    { dx: plan.dx, dy: plan.dy, mmPerM: plan.mmPerM, emin: 150, exag: 1 }, 0.6);
+  assert.ok(rib);
+  assert.ok(checkWatertight(rib).closed);
+  assert.ok(signedVolume(rib) > 0);
 });

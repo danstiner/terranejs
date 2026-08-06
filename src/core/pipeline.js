@@ -5,7 +5,8 @@
 import { cellsBbox, cellWindows, footprintPx } from "./layout.js";
 import { sourceZoom, MAX_MERCATOR_LAT, globalXToLon, globalYToLat } from "./tilemath.js";
 import { cropGrid, gridRange } from "./resample.js";
-import { buildSolid } from "./mesh.js";
+import { buildSolid, buildRibbon } from "./mesh.js";
+import { trailToPrintMm, resample, corridorMask, halfWFor, DS_FACTOR, MIN_CORD_CELLS } from "./corridor.js";
 import { clipPolygon, clipElevs, clipRange } from "./clip.js";
 import { applyWaterRecess } from "./water.js";
 import { checkWatertight, signedVolume } from "./validate.js";
@@ -41,6 +42,9 @@ import { fetchMosaic } from "./terrain.js";
 
 /** @type {Cell[]} */
 const ORIGIN = [[0, 0]]; // single-tile layout: one cell at the origin
+
+/** Clearance between the tile and the cord on the plate. */
+const RIBBON_GAP_MM = 10;
 
 // Pure: settings (+ optional explicit zoom) → source zoom, fetch bbox, exact
 // pixel window, and print geom. Omit `z` to auto-pick the deepest useful zoom.
@@ -123,9 +127,10 @@ export function planTile(settings, { z, maxTiles = 300 } = {}) {
  * @param {TilePlan} plan
  * @param {{ base: number, exag: number, flatten?: boolean, recessMm?: number, layerMm?: number }} settings
  * @param {Uint8Array} [waterMask]
- * @returns {{ solid: Solid, emin: number, emax: number, lineElev: number, landBluePct: number, waterAsLandPct: number }}
+ * @param {{ segments: LatLon[][], widthMm: number, heightMm: number }} [trail]
+ * @returns {{ solid: Solid, ribbon: Solid | null, emin: number, emax: number, lineElev: number, landBluePct: number, waterAsLandPct: number }}
  */
-export function bakeTileSolid(mosaic, plan, { base, exag, flatten = false, recessMm = 0, layerMm = 0.15 }, waterMask) {
+export function bakeTileSolid(mosaic, plan, { base, exag, flatten = false, recessMm = 0, layerMm = 0.15 }, waterMask, trail) {
   const { window, span, gw, gh, dx, dy, mmPerM, ring } = plan;
   const grid = cropGrid(mosaic, window);
   // Clip geometry first — applyWaterRecess mutates the grid, so crossing ELEVATIONS have
@@ -145,20 +150,58 @@ export function bakeTileSolid(mosaic, plan, { base, exag, flatten = false, reces
   const wt = checkWatertight(solid);
   if (!wt.closed) throw new Error(`pipeline: non-watertight solid (${wt.unmatched} unmatched edges)`);
   if (signedVolume(solid) <= 0) throw new Error("pipeline: non-positive-volume (inside-out) solid");
-  return { solid, emin, emax, lineElev, landBluePct, waterAsLandPct };
+
+  // AFTER applyWaterRecess and with the tile's own emin: the cord mates with the surface that
+  // prints, not with the raw DEM, so a trail over recessed water follows the recess.
+  let ribbon = null;
+  if (trail && trail.segments.length) {
+    if (!(trail.widthMm >= MIN_CORD_CELLS * dx)) {
+      throw new Error(`pipeline: trail cord width ${trail.widthMm} mm is below the ` +
+        `${(MIN_CORD_CELLS * dx).toFixed(2)} mm this tile's ${dx.toFixed(3)} mm grid can carry`);
+    }
+    const halfW = halfWFor(trail.widthMm, dx);
+    const stations = trailToPrintMm(trail.segments, plan).map((p) => resample(p, halfW * DS_FACTOR));
+    const { cells, count } = corridorMask(stations, plan, halfW, footprint);
+    if (count) {
+      ribbon = buildRibbon(grid, gw, gh, span, cells, { dx, dy, mmPerM, emin, exag }, trail.heightMm);
+      const rwt = checkWatertight(/** @type {Solid} */ (ribbon));
+      if (!rwt.closed) throw new Error(`pipeline: non-watertight ribbon (${rwt.unmatched} unmatched edges)`);
+      // checkWatertight is topology-only (see validate.js) and cannot see a zero or negative
+      // heightMm — the mirrored solid still closes. Mirrors the tile's own check above.
+      if (signedVolume(/** @type {Solid} */ (ribbon)) <= 0) {
+        throw new Error("pipeline: non-positive-volume (inside-out) ribbon");
+      }
+    }
+  }
+
+  return { solid, ribbon, emin, emax, lineElev, landBluePct, waterAsLandPct };
 }
 
-// One solid → a single-object .3mf blob (tile placed at the plate origin).
+// One or two solids → a .3mf blob. The tile sits at the plate origin; the cord, when present,
+// is placed clear of it in +Y.
+//
+// Both share one plate, and color changes are written per print Z for the WHOLE plate
+// (Metadata/Prusa_Slicer_custom_gcode_per_print_z.xml) — 3MF has no per-object gcode. So a cord
+// exported alongside altitude bands inherits their pauses. Documented at the export control
+// rather than worked around; the fix is a second bed, which needs a reference file first.
 /**
  * @param {string} name
  * @param {Solid} solid
  * @param {import("./colors.js").ColorChange[]} [colorChanges]
+ * @param {Solid | null} [ribbon]
  * @returns {Promise<Uint8Array>}
  */
-export async function tileTo3mf(name, solid, colorChanges) {
+export async function tileTo3mf(name, solid, colorChanges, ribbon) {
   const writer = new ThreeMFWriter();
   if (colorChanges && colorChanges.length) writer.setColorChanges(colorChanges);
   await writer.addObject(name, solid, 0, 0);
+  if (ribbon) {
+    // Derived from the tile's own bounds rather than from tileWidthMm, so it stays clear for
+    // every shape without the writer having to know which shape it was handed.
+    let maxY = -Infinity;
+    for (let i = 1; i < solid.positions.length; i += 3) maxY = Math.max(maxY, solid.positions[i]);
+    await writer.addObject(`${name}_trail`, ribbon, 0, maxY + RIBBON_GAP_MM);
+  }
   return writer.finish();
 }
 

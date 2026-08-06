@@ -510,3 +510,50 @@ export function buildSolid(grid, gw, gh, span, mask, geom, clip) {
     (id) => base + ((id < gv ? grid[id] : cl.elev[id - gv]) - emin) * mmPerM * exag,
     () => 0, "flat");
 }
+
+// Constant-thickness cord that conforms to the terrain: underside = relief, top = relief +
+// thickness, closed by a skirt. Self-registers on the printed tile by its molded underside.
+//
+// The underside is the terrain's OWN triangulation on the SAME vertex ids from the SAME relief
+// expression, so the mate is congruent by construction rather than by tolerance — which is the
+// whole reason the corridor is stamped into cells instead of swept along the trail.
+//
+// `base` is deliberately absent: the base plate belongs to the terrain object, and subtracting
+// the corridor's own minimum relief lands the cord's lowest point on z = 0 by construction
+// rather than relying on a slicer's ensure-on-bed. It prints on supports; generating those is
+// the slicer's job.
+/**
+ * @param {Float32Array} grid
+ * @param {number} gw
+ * @param {number} gh
+ * @param {Span} span
+ * @param {Uint8Array} mask corridor cell mask
+ * @param {{ dx: number, dy: number, mmPerM: number, emin: number, exag: number }} geom
+ * @param {number} thicknessMm
+ * @returns {Solid | null} null when the corridor covers no cell
+ */
+export function buildRibbon(grid, gw, gh, span, mask, geom, thicknessMm) {
+  const { dx, dy, mmPerM, emin, exag } = geom;
+  const { r1, c0 } = span;
+  const topTris = gridTopTris(gw, span, mask);
+  if (topTris.length === 0) return null;
+  const k = mmPerM * exag;
+  // `emin` cancels exactly below (`relief(id) - minRelief` subtracts the same `emin*k` from
+  // both terms), so its VALUE never reaches an output vertex — kept only so `geom` has the same
+  // shape as buildSolid's. What IS load-bearing is `grid` itself: it must be the tile's own,
+  // already water-recessed array (bakeTileSolid's ordering), not a pre-recess snapshot. Don't
+  // "fix" the cancellation by dropping emin; there is nothing here for it to fix.
+  /** @param {number} id */
+  const relief = (id) => (grid[id] - emin) * k;
+  // Minimum over the cord's OWN vertices, not the tile's emin: a trail that never crosses the
+  // tile's lowest point would otherwise export floating above the plate by the difference.
+  let minRelief = Infinity;
+  for (let i = 0; i < topTris.length; i++) {
+    const z = relief(topTris[i]);
+    if (z < minRelief) minRelief = z;
+  }
+  return assembleSolid(topTris, gw * gh,
+    (id) => [((id % gw) - c0) * dx, (r1 - ((id / gw) | 0)) * dy],
+    (id) => relief(id) - minRelief + thicknessMm,
+    (id) => relief(id) - minRelief, "mirror");
+}

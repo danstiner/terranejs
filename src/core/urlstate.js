@@ -15,6 +15,20 @@ import { MAX_MERCATOR_LAT } from "./tilemath.js";
 /** Payload version. Bump only for a breaking key/meaning change; old links then decode to null. */
 export const STATE_VERSION = 1;
 
+/**
+ * Legal range for the scale input, read as "mm of print per km of ground". Every writer of
+ * `scale` clamps to this, not just the input's own handler: fitTile writes it too, and a
+ * framing outside the range leaves the manual control showing a number it will not accept
+ * back.
+ *
+ * These are usability limits, chosen well inside what the hash can carry — 1000 mm/km is
+ * already a 1:1000 tile. The encoder's own failures are far outside them: `Math.round`
+ * collapses scale to 0 only above ~2.1e6 mm/km, and the exponent form whose "+" decodes as
+ * a space appears only below ~1e-16.
+ */
+export const MM_PER_KM_MIN = 0.01;
+export const MM_PER_KM_MAX = 1000;
+
 // Absent means a link that predates shapes, when square was the only tile — so the default
 // is exact rather than a guess, and STATE_VERSION stays 1. Present-but-unrecognised still
 // rejects, matching the strict flatten T/F handling.

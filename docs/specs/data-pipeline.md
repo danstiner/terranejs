@@ -257,6 +257,26 @@ printer instructions. Export is monochrome by default: one uncolored
 solid per tile — with an option to embed altitude color-change
 instructions (Color bands, below) for a color-banded print.
 
+### Trail ribbon
+
+An imported trail also exports as a second object in the same 3MF: a
+constant-thickness cord, 1.6 mm × 0.6 mm by default, placed clear of the
+tile in +Y and dropped so its lowest point sits on the plate. Print it
+separately, in a contrasting filament, and set it on the finished tile —
+it self-registers, because its underside is the terrain's own
+triangulation on the same vertex ids, not an approximation of it.
+
+The corridor is stamped into grid cells rather than swept along the
+trail, which is what makes an out-and-back trail produce one cord
+instead of two interpenetrating ones. Its edge therefore follows cell
+boundaries — and the width guard refuses a cord narrower than two
+grid cells, so the stair-step is at most half the cord's own width,
+by construction at any pitch.
+
+Color changes are written per print Z for the whole plate, so a cord
+exported alongside altitude bands inherits their pauses. Print the two
+as separate jobs, or turn bands off.
+
 # Appendix
 
 ## Color bands (altitude)

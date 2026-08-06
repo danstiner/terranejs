@@ -2,6 +2,7 @@
 // The scale input reads as "mm per km"; the store holds 1:N (N = 1e6 / mmPerKm).
 /** @typedef {import("./app.js").AppState} AppState */
 /** @typedef {import("../core/urlstate.js").ShareableState} ShareableState */
+import { MM_PER_KM_MIN, MM_PER_KM_MAX } from "../core/urlstate.js";
 
 /** @param {string} id @returns {HTMLElement} */
 const el = (id) => {
@@ -39,13 +40,17 @@ export function wireControls(store) {
   /** @param {Event} e @returns {number} */
   const num = (e) => Number(/** @type {HTMLInputElement} */ (e.target).value);
 
-  // Guards match the inputs' declared min/max, not just "finite": the store must never hold a
-  // value the URL-hash decoder would clamp or reject, or a link wouldn't round-trip its own tile.
-  el("scale").addEventListener("input", (e) => {
+  // The constants, not the markup, are authoritative for the scale bounds — index.html's
+  // attributes only have to be right before this runs. Every writer of `scale` shares them,
+  // fitTile included, so an auto-fit can never leave a value the manual input rejects.
+  const scaleEl = /** @type {HTMLInputElement} */ (el("scale"));
+  scaleEl.min = String(MM_PER_KM_MIN);
+  scaleEl.max = String(MM_PER_KM_MAX);
+  scaleEl.addEventListener("input", (e) => {
     const mmPerKm = num(e);
-    // Bounded both ways: below 0.01 the scale grows past 1e21 and stringifies in exponent form
-    // (whose "+" a hash decodes as a space); above 1000 it rounds to 0 and the link is rejected.
-    if (Number.isFinite(mmPerKm) && mmPerKm >= 0.01 && mmPerKm <= 1000) store.set({ scale: 1e6 / mmPerKm });
+    if (Number.isFinite(mmPerKm) && mmPerKm >= MM_PER_KM_MIN && mmPerKm <= MM_PER_KM_MAX) {
+      store.set({ scale: 1e6 / mmPerKm });
+    }
   });
   el("exag").addEventListener("input", (e) => {
     const v = num(e);
@@ -78,6 +83,41 @@ export function wireControls(store) {
     const v = num(e);
     if (Number.isFinite(v) && v >= 0.05 && v <= 0.6) store.set({ layerMm: v });
   });
+
+  // Same guard shape as tileW/layerMm: a cleared number input reads "" -> Number("") -> 0, and
+  // an unguarded 0 or negative height reaches buildRibbon as a degenerate or inside-out solid
+  // (pipeline.js's watertight check is topology-only and cannot see it — see bakeTileSolid).
+  /** @param {"widthMm"|"heightMm"} k @param {number} min @param {number} max */
+  const cord = (k, min, max) => (/** @type {Event} */ e) => {
+    const v = num(e);
+    if (Number.isFinite(v) && v >= min && v <= max) store.set({ cord: { ...store.get().cord, [k]: v } });
+  };
+  el("cordW").addEventListener("input", cord("widthMm", 0.4, 6));   // matches index.html's min/max
+  el("cordH").addEventListener("input", cord("heightMm", 0.15, 3));
+}
+
+/**
+ * What the cord will actually print. The slicer truncates to whole layers, so the number typed
+ * is not always the number produced — the same reason #bandLegend names the Z-heights the
+ * pauses really land on.
+ *
+ * `widthMm`/`minWidthMm` are optional so every existing height-only call site (and test) keeps
+ * working unchanged; pass both to also name the tile's minimum when the current width would be
+ * refused. Pure and DOM-free by design — the caller (app.js) looks up the DOM, this only formats.
+ * @param {number} heightMm @param {number} layerMm @param {number} [widthMm] @param {number} [minWidthMm]
+ * @returns {string}
+ */
+export function cordHint(heightMm, layerMm, widthMm, minWidthMm) {
+  const layers = Math.max(1, Math.floor(heightMm / layerMm + 1e-9));
+  const printed = layers * layerMm;
+  const tail = Math.abs(printed - heightMm) > 1e-9 ? ` (${printed.toFixed(2)} mm printed)` : "";
+  const height = `${heightMm.toFixed(2)} mm — ${layers} layer${layers === 1 ? "" : "s"} at ${layerMm} mm${tail}`;
+  // Named here rather than left to the export's refusal alone: the product decision is to warn
+  // before the click, not just after it (pipeline.js throws on this same `< minWidthMm` fact).
+  if (widthMm !== undefined && minWidthMm !== undefined && widthMm < minWidthMm) {
+    return `${height} · width ${widthMm.toFixed(2)} mm is below this tile's ${minWidthMm.toFixed(2)} mm minimum`;
+  }
+  return height;
 }
 
 /**

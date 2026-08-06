@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { insideFootprint, fitTile, FIT_PAD, clippedFraction, TRAIL_CLIP_WARN } from "../src/core/gpx.js";
+import { MM_PER_KM_MIN, MM_PER_KM_MAX } from "../src/core/urlstate.js";
 import { tileSpanPx } from "../src/core/layout.js";
 import { lonToGlobalX, latToGlobalY } from "../src/core/tilemath.js";
 
@@ -82,6 +83,34 @@ test("fitTile: the scale rounds to 2 significant figures of mm-per-km", () => {
   const { scale } = fitTile(TRAIL, { tileWidthMm: 200, shape: "square" });
   const mmPerKm = 1e6 / scale;
   assert.equal(Number(mmPerKm.toPrecision(2)), Number(mmPerKm.toPrecision(12)));
+});
+
+// The manual scale input rejects anything outside [MM_PER_KM_MIN, MM_PER_KM_MAX], so a fit
+// landing outside it leaves the control displaying a number it will not take back.
+test("fitTile: a tiny trail clamps to the scale input's maximum, and still contains the trail", () => {
+  // ~6 m across — the fit wants ~31000 mm/km, 31x over the bound.
+  const tiny = [[[37.2579, -122.1210], [37.2579, -122.1209]]];
+  const tile = /** @type {const} */ ({ tileWidthMm: 200, shape: "square" });
+  const fit = fitTile(/** @type {any} */ (tiny), tile);
+  const mmPerKm = 1e6 / fit.scale;
+  assert.ok(mmPerKm <= MM_PER_KM_MAX, `${mmPerKm} mm/km exceeds the input's max`);
+  assert.equal(mmPerKm, MM_PER_KM_MAX, "clamped, not merely rounded");
+  // Clamping widens the tile, so containment is preserved — the direction that cannot clip.
+  const pts = pointsPx(/** @type {any} */ (tiny), { ...fit, ...tile });
+  assert.ok(pts.every(([S, x, y]) => insideFootprint("square", S, x, y)));
+});
+
+// Both extremes, not just the one a real trail hits: a near-degenerate trail drives the fit
+// past the maximum, and the widest trail boundsPx accepts (just under 180° of longitude,
+// its antimeridian guard) drives it toward the minimum.
+test("fitTile: every framing it produces is one the manual scale input would accept", () => {
+  for (const shape of /** @type {const} */ (["square", "hex", "circle"])) {
+    for (const trail of [TRAIL, [[[0, 0], [0.00001, 0.00001]]], [[[-60, -89], [60, 89]]]]) {
+      const mmPerKm = 1e6 / fitTile(/** @type {any} */ (trail), { tileWidthMm: 200, shape }).scale;
+      assert.ok(mmPerKm >= MM_PER_KM_MIN && mmPerKm <= MM_PER_KM_MAX,
+        `${shape}: ${mmPerKm} mm/km is outside [${MM_PER_KM_MIN}, ${MM_PER_KM_MAX}]`);
+    }
+  }
 });
 
 test("fitTile: a zero pad puts the extreme point on the rim, never outside", () => {
