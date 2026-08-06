@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx creator="Garmin Connect" version="1.1"
+  xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/11.xsd"
+  xmlns:ns3="http://www.garmin.com/xmlschemas/TrackPointExtension/v1"
+  xmlns="http://www.topografix.com/GPX/1/1"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:ns2="http://www.garmin.com/xmlschemas/GpxExtensions/v3">
+  <metadata>
+    <link href="connect.garmin.com">
+      <text>Garmin Connect</text>
+    </link>
+    <time>2020-01-01T00:00:00.000Z</time>
+  </metadata>
+  <trk>
+    <name>Whatcom County Hiking</name>
+    <type>hiking</type>
+    <trkseg>
+      <trkpt lat="48.71756390668451786041259765625" lon="-121.14521093666553497314453125">
+        <ele>271.20001220703125</ele>
+        <time>2020-01-01T00:00:00.000Z</time>
+        <extensions>
+          <ns3:TrackPointExtension>
+            <ns3:hr>89</ns3:hr>
+            <ns3:cad>0</ns3:cad>
+          </ns3:TrackPointExtension>
+        </extensions>
+      </trkpt>
+      <trkpt lat="48.71761051006615161895751953125" lon="-121.14523708820343017578125">
+        <ele>270.79998779296875</ele>
+        <time>2020-01-01T00:00:05.000Z</time>
+        <extensions>
+          <ns3:TrackPointExtension>
+            <ns3:hr>92</ns3:hr>
+            <ns3:cad>48</ns3:cad>
+          </ns3:TrackPointExtension>
+        </extensions>
+      </trkpt>
+      <trkpt lat="48.7176555208861827850341796875" lon="-121.14525309763848781585693359375">
+        <ele>271.20001220703125</ele>
+        <time>2020-01-01T00:00:10.000Z</time>
+        <extensions>
+          <ns3:TrackPointExtension>
+            <ns3:hr>89</ns3:hr>
+            <ns3:cad>0</ns3:cad>
+          </ns3:TrackPointExtension>
+        </extensions>
+      </trkpt>
+      <trkpt lat="48.71775350533425807952880859375" lon="-121.1452245153486728668212890625">
+        <ele>271.20001220703125</ele>
+        <time>2020-01-01T00:00:19.000Z</time>
+        <extensions>
+          <ns3:TrackPointExtension>
+            <ns3:hr>88</ns3:hr>
+            <ns3:cad>0</ns3:cad>
+          </ns3:TrackPointExtension>
+        </extensions>
+      </trkpt>
+      <trkpt lat="48.717799521982669830322265625" lon="-121.14508998580276966094970703125">
+        <ele>271.20001220703125</ele>
+        <time>2020-01-01T00:00:27.000Z</time>
+        <extensions>
+          <ns3:TrackPointExtension>
+            <ns3:hr>88</ns3:hr>
+            <ns3:cad>55</ns3:cad>
+          </ns3:TrackPointExtension>
+        </extensions>
+      </trkpt>
+      <trkpt lat="48.71782089583575725555419921875" lon="-121.14501111209392547607421875">
+        <ele>271.20001220703125</ele>
+        <time>2020-01-01T00:00:30.000Z</time>
+        <extensions>
+          <ns3:TrackPointExtension>
+            <ns3:hr>84</ns3:hr>
+            <ns3:cad>56</ns3:cad>
+          </ns3:TrackPointExtension>
+        </extensions>
+      </trkpt>
+      <trkpt lat="48.7178255058825016021728515625" lon="-121.14499476738274097442626953125">
+        <ele>271.399993896484375</ele>
+        <time>2020-01-01T00:00:31.000Z</time>
+        <extensions>
+          <ns3:TrackPointExtension>
+            <ns3:hr>81</ns3:hr>
+            <ns3:cad>56</ns3:cad>
+          </ns3:TrackPointExtension>
+        </extensions>
+      </trkpt>
+      <trkpt lat="48.71785006485879421234130859375" lon="-121.14493458531796932220458984375">
+        <ele>271.20001220703125</ele>
+        <time>2020-01-01T00:00:36.000Z</time>
+        <extensions>
+          <ns3:TrackPointExtension>
+            <ns3:hr>78</ns3:hr>
+            <ns3:cad>0</ns3:cad>
+          </ns3:TrackPointExtension>
+        </extensions>
+      </trkpt>
+    </trkseg>
+  </trk>
+</gpx>

@@ -20,6 +20,7 @@
  *
  * @typedef {{ getAttribute(name: string): string | null } & XmlScope} XmlElement
  * @typedef {{ getElementsByTagNameNS(ns: string, local: string): ArrayLike<XmlElement> }} XmlScope
+ * @typedef {XmlScope & { documentElement: { localName: string } }} XmlDocument
  */
 
 /**
@@ -87,8 +88,33 @@ export function segmentsFromDocument(doc) {
  * one failure path instead of a thrown error and a falsy return meaning the same thing.
  *
  * Each message completes the caller's "Could not import <file>: " and takes the FILE as
- * its subject, so the subject stays constant across them. Without that, failures arrive
- * as two different kinds of sentence and only one of them names the file.
+ * its subject, so the subject stays constant across them. Split from parseGpxText below
+ * so the wording is pinned by tests — it is what the user actually reads, and the
+ * browser-only half cannot be unit-tested at all.
+ *
+ * @param {XmlDocument} doc
+ * @returns {LatLon[][]}
+ */
+export function segmentsOrExplain(doc) {
+  const segments = segmentsFromDocument(doc);
+  if (segments.length) return segments;
+
+  // Nothing found, so say why. The root element is the evidence; the namespace
+  // deliberately is not, since matching on it would reject GPX 1.0 and namespace-less
+  // files outright — it tells us what a file is, never whether to accept it.
+  const root = doc.documentElement.localName;
+  if (root && root !== "gpx") throw new Error(`it looks like a <${root}> document, not GPX`);
+  // A route is valid GPX we do not read: <rtept>s are planned turn points, often
+  // kilometers apart, and the geometry downstream measures a trail by its vertices.
+  // Named rather than lumped in below, which would send someone hunting a corrupt file
+  // they do not have.
+  if (tags(doc, "rte").length) throw new Error("it holds a route, not a recorded track");
+  throw new Error("it has no track points");
+}
+
+/**
+ * GPX text → at least one segment, or throws saying why not. Browser-only — Node has no
+ * DOMParser, which is the whole reason the walk above is a separate function.
  *
  * The Document is not retained — only plain arrays escape. A DOM materializes every
  * node, so letting it die with this call bounds that cost to the import rather than to
@@ -104,19 +130,5 @@ export function parseGpxText(text) {
   // namespaced lookup finds nothing there. querySelector is the check that works, and it
   // is confined to this browser-only function because the test DOM does not implement it.
   if (doc.querySelector("parsererror")) throw new Error("it is not valid XML");
-
-  const segments = segmentsFromDocument(doc);
-  if (segments.length) return segments;
-
-  // Nothing found, so say why. The root element is the evidence; the namespace
-  // deliberately is not, since matching on it would reject GPX 1.0 and namespace-less
-  // files outright — it tells us what a file is, never whether to accept it.
-  const root = doc.documentElement.localName;
-  if (root && root !== "gpx") throw new Error(`it looks like a <${root}> document, not GPX`);
-  // A route is valid GPX we do not read: <rtept>s are planned turn points, often
-  // kilometers apart, and the geometry downstream measures a trail by its vertices.
-  // Named rather than lumped in below, which would send someone hunting a corrupt file
-  // they do not have.
-  if (tags(doc, "rte").length) throw new Error("it holds a route, not a recorded track");
-  throw new Error("it has no track points");
+  return segmentsOrExplain(doc);
 }
