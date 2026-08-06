@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>Winchester Mountain Trail</name>
+    <Placemark>
+      <name>Winchester Mountain Trail</name>
+      <LineString>
+        <coordinates>
+          -121.6353,48.95125,1589.5 -121.63533,48.95157,1587.04 -121.63538,48.95183,1582.68
+        </coordinates>
+      </LineString>
+    </Placemark>
+  </Document>
+</kml>

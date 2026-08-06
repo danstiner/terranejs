@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx creator="StravaGPX" version="1.1" xmlns="http://www.topografix.com/GPX/1/1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd">
+ <trk>
+  <name>Skyline to the Sea</name>
+  <type>running</type>
+  <trkseg>
+   <trkpt lat="37.2579420" lon="-122.1210180">
+    <ele>804.8</ele>
+   </trkpt>
+   <trkpt lat="37.2579400" lon="-122.1210070">
+    <ele>804.8</ele>
+   </trkpt>
+   <trkpt lat="37.2579380" lon="-122.1210000">
+    <ele>804.8</ele>
+   </trkpt>
+   <trkpt lat="37.2579330" lon="-122.1209910">
+    <ele>804.8</ele>
+   </trkpt>
+   <trkpt lat="37.2579250" lon="-122.1209820">
+    <ele>804.8</ele>
+   </trkpt>
+   <trkpt lat="37.2579170" lon="-122.1209710">
+    <ele>804.8</ele>
+   </trkpt>
+   <trkpt lat="37.2579120" lon="-122.1209620">
+    <ele>804.8</ele>
+   </trkpt>
+   <trkpt lat="37.2579030" lon="-122.1209510">
+    <ele>805.0</ele>
+   </trkpt>
+  </trkseg>
+ </trk>
+</gpx>

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="RideWithGPS" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata>
+    <name>Planned loop</name>
+  </metadata>
+  <rte>
+    <name>Planned loop</name>
+    <rtept lat="47.6062" lon="-122.3321"><name>Start</name></rtept>
+    <rtept lat="47.6205" lon="-122.3493"><name>Turn north</name></rtept>
+    <rtept lat="47.6350" lon="-122.3600"><name>Finish</name></rtept>
+  </rte>
+</gpx>

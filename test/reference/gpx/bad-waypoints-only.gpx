@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="Gaia GPS" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata>
+    <name>Winchester pins</name>
+  </metadata>
+  <wpt lat="48.95125" lon="-121.6353">
+    <ele>1589.5</ele>
+    <name>Trailhead</name>
+  </wpt>
+  <wpt lat="48.95674" lon="-121.64498">
+    <ele>1892.0</ele>
+    <name>Lookout</name>
+  </wpt>
+</gpx>
