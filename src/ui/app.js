@@ -12,10 +12,16 @@ import { PRESETS, DEFAULT_PRESET } from "./presets.js";
 import { BAND_NAMES } from "../core/colors.js";
 import { LAND_BLUE_WARN_PCT, WATER_AS_LAND_WARN_PCT } from "../core/water.js";
 import { HEX_H } from "../core/layout.js";
+import { fitTile, clippedFraction, TRAIL_CLIP_WARN } from "../core/gpx.js";
+import { parseGpxText } from "./gpxparse.js";
 
-// The app state IS the shareable state — one typedef, so a new field can't be added here and
-// silently dropped from every link.
-/** @typedef {import("../core/urlstate.js").ShareableState} AppState */
+/** @typedef {{ name: string, segments: import("../core/types.js").LatLon[][] }} Trail
+ *   An imported GPX: the source filename, and one polyline per track segment. */
+// The app state is the shareable state PLUS the trail — one typedef, so a new field can't be
+// added here and silently dropped from every link. The trail is the deliberate exception: a
+// hash is a URL fragment and cannot carry GPX bytes, so it is session-only. encodeState
+// destructures named fields, so it cannot leak into a link by accident.
+/** @typedef {import("../core/urlstate.js").ShareableState & { trail: Trail | null }} AppState */
 /** @typedef {import("../core/pipeline.js").TileSettings} TileSettings */
 
 // Max source-tile budget per bake, one per quality tier (passed as `maxTiles`). Preview
@@ -32,10 +38,13 @@ const EXPORT_MAX_TILES = 300;  // full print resolution (core's default tile bud
 // scale nudge), and a name would silently repoint every old link at the new framing. An
 // unreadable hash decodes to null, so a mangled link opens the default region instead of failing.
 const restored = decodeState(location.hash);
-const store = createStore(restored ?? /** @type {AppState} */ ({
-  center: DEFAULT_PRESET.center, scale: DEFAULT_PRESET.scale, tileWidthMm: 200, base: 6, exag: 1,
-  flatten: false, recessMm: 0, layerMm: 0.15, // sea-level tint by default; checkbox flattens
-  shape: "square",
+const store = createStore(/** @type {AppState} */ ({
+  ...(restored ?? {
+    center: DEFAULT_PRESET.center, scale: DEFAULT_PRESET.scale, tileWidthMm: 200, base: 6, exag: 1,
+    flatten: false, recessMm: 0, layerMm: 0.15, // sea-level tint by default; checkbox flattens
+    shape: "square",
+  }),
+  trail: null, // a restored link never carries one — see the AppState note above
 }));
 
 /** @param {string} id @returns {HTMLElement} */
@@ -64,6 +73,7 @@ const map = initMap({
   },
   onPlace: (c) => { presetSelect.value = ""; store.set({ center: c }); },
   onMove: (c) => { presetSelect.value = ""; store.set({ center: c }); },
+  onFile: (f) => importTrail(f),
 });
 const preview = initPreview($("preview"));
 const workerUrl = new URL("./bake.worker.js", import.meta.url);
@@ -143,6 +153,26 @@ function updateWaterWarning(data) {
   warn.hidden = clauses.length === 0;
   if (clauses.length) {
     warn.textContent = `${clauses.join(" and ")} — tick "Flatten all water to one level" to separate land from water.`;
+  }
+}
+
+// The tile only prints what its footprint encloses, so a trail running past the
+// rim is silently cut. Follows the water banner's pattern: say what happens to
+// the print, as a percentage, and NAME the control that fixes it. The quoted
+// label must match index.html — the sentence is only actionable if it names the
+// button. Reports "<1%" rather than rounding to "0%": a warning quoting zero
+// reads as a bug.
+/** @param {AppState} s */
+function updateTrailWarning(s) {
+  const warn = $("trailWarn");
+  if (!s.trail || !s.center) { warn.hidden = true; return; }
+  const f = clippedFraction(s.trail.segments,
+    { center: s.center, scale: s.scale, tileWidthMm: s.tileWidthMm, shape: s.shape });
+  warn.hidden = f <= TRAIL_CLIP_WARN;
+  if (!warn.hidden) {
+    warn.textContent =
+      `${f < 0.01 ? "<1%" : `${Math.round(f * 100)}%`} of the trail falls outside ` +
+      `the tile — press "Fit to trail" to frame it.`;
   }
 }
 
@@ -229,8 +259,26 @@ function loadPreview() {
   worker.postMessage({ gen: previewGen, settings: previewSettings, maxTiles: FAST_MAX_TILES, format: "mesh" });
 }
 
+// Last trail rendered on the map. `trail` only ever changes reference on import or
+// clear (store.set spreads state), so diffing by reference — not by content — skips
+// the Leaflet teardown/rebuild on every other store change, including the 30-60/s
+// stream an `input` slider drag fires.
+/** @type {Trail | null} */
+let shownTrail = null;
+
 store.subscribe((s) => {
   map.setLayout(s);
+  if (s.trail !== shownTrail) {
+    shownTrail = s.trail;
+    map.setTrail(s.trail ? s.trail.segments : []);
+    $("trailRow").hidden = !s.trail;
+    $("trailName").textContent = s.trail ? s.trail.name : "";
+  }
+  // Outside the guard above: this depends on center, scale, shape and width too, all
+  // of which change without the trail changing. subscribe runs synchronously on every
+  // set, so the budget is a frame, not the bake debounce: 0.8 ms for the largest real
+  // trail measured (15.7k points), 4.4 ms at 100k.
+  updateTrailWarning(s);
   const km = (s.tileWidthMm * s.scale) / 1e6; // print mm × 1:N scale → real km the tile spans
   // tileWidthMm is the bounding-square side, so only the hex prints shorter than it is wide.
   const tile = s.shape === "hex"
@@ -293,7 +341,10 @@ window.addEventListener("hashchange", () => {
   presetSelect.value = "";
   syncControls(s);
   syncScaleInput(s.scale);
-  store.set(s);
+  // The hash can't carry a trail, so a pasted link describes a framing that any trail
+  // already loaded has no relationship to — drop it rather than leave it draped over
+  // whatever region the link just opened.
+  store.set({ ...s, trail: null });
   if (s.center) map.focus({ center: s.center, scale: s.scale, tileWidthMm: s.tileWidthMm, shape: s.shape });
 });
 
@@ -306,6 +357,76 @@ for (const b of $("viewmodes").querySelectorAll("button")) {
     preview.setViewMode(Number(b.dataset.mode));
   });
 }
+
+// --- GPX trail ---------------------------------------------------------------
+
+// Frame the tile on a trail and reflect it everywhere the user can see the scale.
+// Shared by import and the Fit button so the two can't drift.
+/** @param {import("../core/types.js").LatLon[][]} segments */
+function fitToTrail(segments) {
+  const s = store.get();
+  const { center, scale } = fitTile(segments, { tileWidthMm: s.tileWidthMm, shape: s.shape });
+  presetSelect.value = ""; // a fitted framing is nobody's preset
+  syncScaleInput(scale);
+  map.focus({ center, scale, tileWidthMm: s.tileWidthMm, shape: s.shape });
+  return { center, scale };
+}
+
+// Import errors go to #trailWarn, not the status line: a pending bake debounce or an
+// in-flight preview overwrites setProgress within 500 ms, so it cannot hold a message
+// the user has to read.
+//
+// Two writers share this banner — updateTrailWarning asserts the standing "N% clipped"
+// fact off the store. Precedence is by recency: the catch below does not re-run
+// updateTrailWarning, so a failed import holds the banner until the next store change
+// restores whichever fact is then true. Losing a clip warning for one interaction beats
+// losing the reason an import just failed.
+/** @param {string} msg */
+const warnTrail = (msg) => {
+  const w = $("trailWarn");
+  w.textContent = msg;
+  w.hidden = false;
+};
+
+// Parse and fit BEFORE touching the store: a rejected import must leave the app
+// exactly as it was, and fitTile is where most rejections come from.
+//
+// One catch, because parseGpxText and fitTile both reject by throwing and both phrase
+// the message to complete the prefix below. A second shape — an empty return meaning
+// "no track points" — used to bypass it and print a differently-worded sentence.
+/** @param {File} file */
+async function importTrail(file) {
+  $("trailWarn").hidden = true; // clear a stale error before a new attempt can raise its own
+  try {
+    const segments = parseGpxText(await file.text());
+    const { center, scale } = fitToTrail(segments);
+    store.set({ trail: { name: file.name, segments }, center, scale });
+  } catch (err) {
+    const why = err instanceof Error ? err.message : String(err);
+    warnTrail(`Could not import ${file.name}: ${why}`);
+  }
+}
+
+const gpxFile = /** @type {HTMLInputElement} */ ($("gpxFile"));
+$("gpxImport").addEventListener("click", () => gpxFile.click());
+gpxFile.addEventListener("change", () => {
+  const file = gpxFile.files?.[0];
+  gpxFile.value = ""; // else re-picking the same filename fires no change event at all
+  if (file) importTrail(file);
+});
+
+// Fit runs automatically on import only. Changing shape or width afterwards does NOT
+// silently re-fit — that would fight framing the user set by hand — so this button is
+// the way back. Unguarded: fitTile rejects on the trail's coordinates alone, and those
+// already passed at import; shape and width cannot make it throw.
+$("trailFit").addEventListener("click", () => {
+  const { trail } = store.get();
+  if (trail) store.set(fitToTrail(trail.segments));
+});
+
+// Clearing leaves center and scale alone: the framing is the user's tile now, and
+// resetting it would discard work the trail merely seeded.
+$("trailClear").addEventListener("click", () => store.set({ trail: null }));
 
 $("export").addEventListener("click", () => {
   const s = store.get();

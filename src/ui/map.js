@@ -13,11 +13,13 @@ import { MAX_MERCATOR_LAT } from "../core/tilemath.js";
 const ORIGIN = [0, 0];
 
 /**
- * @param {{ start: { center: LatLon, scale: number, tileWidthMm: number, shape?: Shape }, onPlace: (c: LatLon) => void, onMove: (c: LatLon) => void }} opts
+ * @param {{ start: { center: LatLon, scale: number, tileWidthMm: number, shape?: Shape },
+ *   onPlace: (c: LatLon) => void, onMove: (c: LatLon) => void, onFile: (f: File) => void }} opts
  *   `start` frames the initial view — the map is created without one, so
- *   focus(start) below sets it before any layer draws.
+ *   focus(start) below sets it before any layer draws. `onFile` receives a GPX
+ *   dropped onto the map.
  */
-export function initMap({ start, onPlace, onMove }) {
+export function initMap({ start, onPlace, onMove, onFile }) {
   // Keep the picker inside the Web Mercator coverage band (±85.05°) — a tile
   // can't be placed where there's no elevation data.
   const map = L.map("map", {
@@ -32,8 +34,20 @@ export function initMap({ start, onPlace, onMove }) {
   let tileLayer = null;
   /** @type {L.Marker | null} */
   let marker = null;
+  /** @type {L.Polyline[]} */
+  let trailLayers = [];
 
   map.on("click", (e) => onPlace([e.latlng.lat, e.latlng.lng]));
+
+  // Drop a .gpx onto the map. dragover MUST preventDefault or the browser treats
+  // the drop as a navigation and replaces the whole page with the file's text.
+  const container = map.getContainer();
+  container.addEventListener("dragover", (e) => e.preventDefault());
+  container.addEventListener("drop", (e) => {
+    e.preventDefault();
+    const file = e.dataTransfer?.files?.[0]; // single-trail scope: first file wins
+    if (file) onFile(file);
+  });
 
   // Leaflet's own trackResize listens to the WINDOW, which never fires for the case that moves
   // this container: the panel's scrollbar appearing when the settings section unhides takes ~15px
@@ -64,6 +78,17 @@ export function initMap({ start, onPlace, onMove }) {
       const m = L.marker(s.center, { draggable: true }).addTo(map);
       m.on("dragend", () => { const ll = m.getLatLng(); onMove([ll.lat, ll.lng]); });
       marker = m;
+    },
+    // Red polylines, one per segment — segments are never joined, so a
+    // pause/resume gap in the track does not draw a leg that was never walked.
+    // `interactive: false` is load-bearing, not polish: a hit-testable polyline
+    // swallows the map click that places the tile, so clicking ON the trail —
+    // the one spot you most want — would stop working.
+    /** @param {LatLon[][]} segments */
+    setTrail(segments) {
+      for (const l of trailLayers) map.removeLayer(l);
+      trailLayers = segments.map((seg) =>
+        L.polyline(seg, { color: "#d92b2b", weight: 3, interactive: false }).addTo(map));
     },
   };
 }
