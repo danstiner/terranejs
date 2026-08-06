@@ -1,0 +1,41 @@
+<?xml version="1.0"?>
+<gpx xmlns="http://www.topografix.com/GPX/1/1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" version="1.1" creator="AllTrails.com" xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd">
+  <metadata>
+    <name><![CDATA[Winchester Mountain Trail]]></name>
+    <desc><![CDATA[]]></desc>
+    <link href="http://www.alltrails.com">
+      <text>AllTrails, LLC</text>
+    </link>
+    <bounds minlat="48.95125" minlon="-121.64498" maxlat="48.95674" maxlon="-121.63454"/>
+  </metadata>
+  <trk>
+    <name><![CDATA[Winchester Mountain Trail]]></name>
+    <src>AllTrails</src>
+    <trkseg>
+      <trkpt lat="48.95125" lon="-121.6353">
+        <ele>1589.5</ele>
+      </trkpt>
+      <trkpt lat="48.95157" lon="-121.63533">
+        <ele>1587.04</ele>
+      </trkpt>
+      <trkpt lat="48.95183" lon="-121.63538">
+        <ele>1582.68</ele>
+      </trkpt>
+      <trkpt lat="48.95199" lon="-121.63547">
+        <ele>1579.47</ele>
+      </trkpt>
+      <trkpt lat="48.95207" lon="-121.63552">
+        <ele>1579.0</ele>
+      </trkpt>
+      <trkpt lat="48.9521" lon="-121.63554">
+        <ele>1579.0</ele>
+      </trkpt>
+      <trkpt lat="48.95212" lon="-121.63556">
+        <ele>1578.95</ele>
+      </trkpt>
+      <trkpt lat="48.95212" lon="-121.63556">
+        <ele>1578.95</ele>
+      </trkpt>
+    </trkseg>
+  </trk>
+</gpx>
