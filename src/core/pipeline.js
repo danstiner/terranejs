@@ -6,7 +6,7 @@ import { cellsBbox, cellWindows, footprintPx } from "./layout.js";
 import { sourceZoom, MAX_MERCATOR_LAT, globalXToLon, globalYToLat } from "./tilemath.js";
 import { cropGrid, gridRange } from "./resample.js";
 import { buildSolid, buildDrape, cellsFromVertexMask } from "./mesh.js";
-import { trailToPrintMm, resample, corridorMask, halfWFor, DS_FACTOR, MIN_CORD_CELLS } from "./corridor.js";
+import { trailToPrintMm, cordSolid, admissibleCells } from "./corridor.js";
 import { clipPolygon, clipElevs, clipRange } from "./clip.js";
 import { applyWaterRecess } from "./water.js";
 import { checkWatertight, signedVolume } from "./validate.js";
@@ -163,20 +163,16 @@ export function bakeTileSolid(mosaic, plan,
   // prints, not with the raw DEM, so a trail over recessed water follows the recess.
   let ribbon = null;
   if (trail && trail.segments.length) {
-    if (!(trail.widthMm >= MIN_CORD_CELLS * dx)) {
-      throw new Error(`pipeline: trail cord width ${trail.widthMm} mm is below the ` +
-        `${(MIN_CORD_CELLS * dx).toFixed(2)} mm this tile's ${dx.toFixed(3)} mm grid can carry`);
-    }
-    const halfW = halfWFor(trail.widthMm, dx);
-    const stations = trailToPrintMm(trail.segments, plan).map((p) => resample(p, halfW * DS_FACTOR));
-    const { cells, count } = corridorMask(stations, plan, halfW, footprint);
-    if (count) {
-      ribbon = buildDrape(grid, gw, gh, span, cells, { dx, dy, mmPerM, emin, exag }, trail.heightMm);
-      const rwt = checkWatertight(/** @type {Solid} */ (ribbon));
+    // The cord's width is independent of the grid: its footprint is a distance field clipped
+    // against the terrain's own triangles on a sub-lattice, not a union of whole cells.
+    ribbon = cordSolid(grid, plan, trailToPrintMm(trail.segments, plan), trail.widthMm,
+      trail.heightMm, { mmPerM, emin, exag }, admissibleCells(gw, gh, clip));
+    if (ribbon) {
+      const rwt = checkWatertight(ribbon);
       if (!rwt.closed) throw new Error(`pipeline: non-watertight ribbon (${rwt.unmatched} unmatched edges)`);
       // checkWatertight is topology-only (see validate.js) and cannot see a zero or negative
       // heightMm — the mirrored solid still closes. Mirrors the tile's own check above.
-      if (signedVolume(/** @type {Solid} */ (ribbon)) <= 0) {
+      if (signedVolume(ribbon) <= 0) {
         throw new Error("pipeline: non-positive-volume (inside-out) ribbon");
       }
     }

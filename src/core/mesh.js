@@ -211,7 +211,7 @@ function baseTriangles(loop, xy) {
  * @param {"flat" | "mirror"} bottomMode
  * @returns {Solid}
  */
-function assembleSolid(topTris, N, xy, zTop, zBot, bottomMode) {
+export function assembleSolid(topTris, N, xy, zTop, zBot, bottomMode) {
   const boundary = boundaryEdges(topTris, N);
 
   // decide the bottom before allocating so buffer sizes are exact
@@ -315,10 +315,12 @@ function assembleSolid(topTris, N, xy, zTop, zBot, bottomMode) {
  * its corners are in. That rule is gridTopTris' own — a cell is one quad of the surface, and a
  * quad with a corner outside would drag that corner's height into the part.
  *
- * The result is therefore an EROSION of `vert` by up to a half-diagonal, which each caller
- * answers differently: the trail corridor compensates by widening its stamp (corridor.halfWFor),
- * while the water inlay wants the erosion — it is what gives the part a printable vertical wall
- * and the clearance to seat, instead of a shoreline tapering to a knife edge (see pipeline.js).
+ * The result is therefore an EROSION of `vert` by up to a half-diagonal. The water inlay — the
+ * only caller that meshes with it — wants exactly that: it is what gives the part a printable
+ * vertical wall and the clearance to seat, instead of a shoreline tapering to a knife edge (see
+ * pipeline.js). The trail cord wanted the opposite and used to widen its stamp to cancel the
+ * erosion out; it now clips a distance field against a sub-lattice instead (corridor.js), which
+ * is why nothing here compensates for anything any more.
  *
  * `also` is a second vertex mask ANDed per corner (the footprint, for a clipped shape), applied
  * here rather than by mutating the caller's array.
@@ -595,23 +597,20 @@ function labelPieces(gw, gh, span, mask) {
   return { vertexLabel, count };
 }
 
-// A part molded to the printed surface: underside = the printed relief, top = `top`, closed by a
-// skirt. Self-registers on the printed tile by its molded underside. Two callers, one shape —
-// the trail cord over a corridor mask, and the water inlays over the mask of displaced water
-// (pipeline.js).
+// The water inlays: a part molded to the printed surface, underside = the printed relief, top =
+// `top`, closed by a skirt. Self-registers on the printed tile by its molded underside.
 //
 // The underside is the terrain's OWN triangulation on the SAME vertex ids from the SAME relief
 // expression, so the mate is congruent by construction rather than by tolerance — which is the
-// whole reason both masks are stamped into cells rather than derived some other way.
+// whole reason the mask is stamped into cells rather than derived some other way. (The cord
+// wants the same congruence but not the same cell quantization, so it meshes its own sub-lattice
+// in corridor.js instead of coming through here.)
 //
-// `top` is the one thing that differs between the two callers:
-//   number       — a constant print-mm thickness above the underside (the cord).
-//   Float32Array — a second elevation grid, in `grid`'s own units, giving the upper surface
-//                  directly (the inlay's ORIGINAL water elevations, before flatten and recess
-//                  moved them). Thickness then varies per vertex, and is exactly the
-//                  displacement applyWaterRecess applied. It is never negative: flatten's plane
-//                  is `min(lowest water, …)` and the recess only sinks further, so a water
-//                  vertex's stored height is always ≤ its original.
+// `top` is a second elevation grid, in `grid`'s own units, giving the upper surface directly:
+// the inlay's ORIGINAL water elevations, before flatten and recess moved them. Thickness is
+// therefore per-vertex, and is exactly the displacement applyWaterRecess applied. It is never
+// negative: flatten's plane is `min(lowest water, …)` and the recess only sinks further, so a
+// water vertex's stored height is always ≤ its original.
 //
 // `base` is deliberately absent: the base plate belongs to the terrain object, and subtracting
 // each piece's own minimum relief lands its lowest point on z = 0 by construction rather than
@@ -619,9 +618,9 @@ function labelPieces(gw, gh, span, mask) {
 // job.
 //
 // PER PIECE, not per part: one mask can cover disconnected regions at different heights (two
-// lakes 1500 m apart in elevation; a trail split into two by the tile's own footprint). A single
-// shared floor would rest the lowest piece on the plate and leave every other one hanging in
-// mid-air — a shell that is still closed and positive-volume, so nothing downstream would object.
+// lakes 1500 m apart in elevation). A single shared floor would rest the lowest piece on the
+// plate and leave every other one hanging in mid-air — a shell that is still closed and
+// positive-volume, so nothing downstream would object.
 /**
  * @param {Float32Array} grid
  * @param {number} gw
@@ -629,7 +628,7 @@ function labelPieces(gw, gh, span, mask) {
  * @param {Span} span
  * @param {Uint8Array} mask cell mask, from cellsFromVertexMask
  * @param {{ dx: number, dy: number, mmPerM: number, emin: number, exag: number }} geom
- * @param {number | Float32Array} top print-mm thickness, or an upper-surface elevation grid
+ * @param {Float32Array} top upper-surface elevation grid, in `grid`'s units
  * @returns {Solid | null} null when the mask covers no cell
  */
 export function buildDrape(grid, gw, gh, span, mask, geom, top) {
@@ -652,12 +651,8 @@ export function buildDrape(grid, gw, gh, span, mask, geom, top) {
     const id = topTris[i], z = rel(grid[id]);
     if (z < floor[vertexLabel[id]]) floor[vertexLabel[id]] = z;
   }
-  /** @type {(id: number) => number} */
-  const zTop = typeof top === "number"
-    ? (id) => rel(grid[id]) - floor[vertexLabel[id]] + top
-    : (id) => rel(top[id]) - floor[vertexLabel[id]];
   return assembleSolid(topTris, gw * gh,
     (id) => [((id % gw) - c0) * dx, (r1 - ((id / gw) | 0)) * dy],
-    zTop,
+    (id) => rel(top[id]) - floor[vertexLabel[id]],
     (id) => rel(grid[id]) - floor[vertexLabel[id]], "mirror");
 }

@@ -266,15 +266,45 @@ An imported trail also exports as a second object in the same 3MF: a
 constant-thickness cord, 1.6 mm × 0.6 mm by default, placed clear of the
 tile in +Y and dropped so its lowest point sits on the plate. Print it
 separately, in a contrasting filament, and set it on the finished tile —
-it self-registers, because its underside is the terrain's own
-triangulation on the same vertex ids, not an approximation of it.
+it self-registers, because its underside is the terrain's own surface,
+not an approximation of it.
 
-The corridor is stamped into grid cells rather than swept along the
-trail, which is what makes an out-and-back trail produce one cord
-instead of two interpenetrating ones. Its edge therefore follows cell
-boundaries — and the width guard refuses a cord narrower than two
-grid cells, so the stair-step is at most half the cord's own width,
-by construction at any pitch.
+The cord's width is **independent of the grid**: 0.4 mm prints as
+0.4 mm on a tile whose mesh vertices are 3 mm apart. The corridor is the
+set of points within half a width of the trail — the sublevel set of a
+distance field, not a union of grid cells. Two consequences fall out of
+that definition. Because a distance field is single-valued however many
+times a path retraces itself, an out-and-back trail yields one cord
+rather than two interpenetrating ones. And because the boundary is
+placed by interpolation rather than by rounding to a cell, a straight
+run comes out at exactly the requested width; only curvature (the end
+caps, sharp turns) costs anything, and it is bounded well under a
+printed layer.
+
+Congruence is kept by subdividing each terrain cell rather than by
+sampling it. Both of a cell's triangles are halves of a square split on
+one diagonal, so a uniform k×k refinement lands on a plain lattice and
+every sub-triangle nests exactly inside one parent — which means every
+cord vertex sits on a parent triangle's own plane. Sampling the cell
+bilinearly instead would be a different surface (a saddle, not two
+planes) and the cord would float or dig in by up to a quarter of the
+cell's twist.
+
+k is chosen from the cord, not the tile: four sub-cells across the
+requested width, so a cord already wider than that costs nothing extra,
+and the fine lattice is only ever materialized in a band along the
+trail. A pathologically long thin trail is capped by a triangle budget
+— spent only on the part of the trail that falls on the tile, since
+framing a tile around one stretch of a long import is ordinary and the
+rest is never printed. If that cap would leave the lattice too coarse to
+carry the width, the export refuses rather than print a corridor beaded
+into islands, each island being a closed manifold on its own and so
+invisible to every check downstream.
+
+The cord stops at the last fully interior cell of a hex or circle tile.
+Over a rim cell the printed top is the clipped polygon rather than two
+plain triangles, so a cord there would mate with a surface that is not
+what prints.
 
 ### Water inlays
 
@@ -287,8 +317,11 @@ feed it: flatten's drop counts as much as the recess. With neither on,
 nothing was displaced and nothing is exported. Print them in blue, drop
 them into the hollows, and the terrain is whole again.
 
-Undersides mate by the same construction as the cord: the same vertex
-ids, the same relief expression, the tile's own already-displaced grid.
+Undersides mate for the same reason the cord's does, by a simpler route:
+water bodies are wide, so an inlay keeps whole cells and reuses the
+terrain's own triangulation on the same vertex ids, with the same relief
+expression over the tile's own already-displaced grid. It needs no
+sub-lattice — a lake is never a fraction of a cell across.
 The top comes from a snapshot of the grid taken *before* the water moves
 — flatten overwrites elevations in place, so a flattened vertex keeps no
 record of where it started.

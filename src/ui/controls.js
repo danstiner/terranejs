@@ -105,23 +105,17 @@ export function wireControls(store) {
  * is not always the number produced — the same reason #bandLegend names the Z-heights the
  * pauses really land on.
  *
- * `widthMm`/`minWidthMm` are optional so every existing height-only call site (and test) keeps
- * working unchanged; pass both to also name the tile's minimum when the current width would be
- * refused. Pure and DOM-free by design — the caller (app.js) looks up the DOM, this only formats.
- * @param {number} heightMm @param {number} layerMm @param {number} [widthMm] @param {number} [minWidthMm]
+ * Height only: the cord's width is meshed independently of the tile's grid, so unlike the height
+ * it survives the export exactly as typed and has nothing to reconcile. Pure and DOM-free by
+ * design — the caller (app.js) looks up the DOM, this only formats.
+ * @param {number} heightMm @param {number} layerMm
  * @returns {string}
  */
-export function cordHint(heightMm, layerMm, widthMm, minWidthMm) {
+export function cordHint(heightMm, layerMm) {
   const layers = Math.max(1, Math.floor(heightMm / layerMm + 1e-9));
   const printed = layers * layerMm;
   const tail = Math.abs(printed - heightMm) > 1e-9 ? ` (${printed.toFixed(2)} mm printed)` : "";
-  const height = `${heightMm.toFixed(2)} mm — ${layers} layer${layers === 1 ? "" : "s"} at ${layerMm} mm${tail}`;
-  // Named here rather than left to the export's refusal alone: the product decision is to warn
-  // before the click, not just after it (pipeline.js throws on this same `< minWidthMm` fact).
-  if (widthMm !== undefined && minWidthMm !== undefined && widthMm < minWidthMm) {
-    return `${height} · width ${widthMm.toFixed(2)} mm is below this tile's ${minWidthMm.toFixed(2)} mm minimum`;
-  }
-  return height;
+  return `${heightMm.toFixed(2)} mm — ${layers} layer${layers === 1 ? "" : "s"} at ${layerMm} mm${tail}`;
 }
 
 /**
