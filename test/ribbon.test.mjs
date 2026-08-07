@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { inflateRawSync } from "node:zlib";
-import { buildSolid, buildRibbon } from "../src/core/mesh.js";
+import { buildSolid, buildDrape } from "../src/core/mesh.js";
 import { checkWatertight, signedVolume } from "../src/core/validate.js";
 import { planTile, bakeTileSolid, tileTo3mf } from "../src/core/pipeline.js";
 import { MIN_CORD_CELLS } from "../src/core/corridor.js";
@@ -34,7 +34,7 @@ test("ribbon is watertight and positive-volume for every trail shape", () => {
   /** @type {[string, Uint8Array][]} */
   const shapes = [["straight", BAND], ["curved", CURVED], ["self-crossing", CROSS], ["two segments", TWO]];
   for (const [name, m] of shapes) {
-    const rib = buildRibbon(grid, GW, GH, SPAN, m, GEOM, H);
+    const rib = buildDrape(grid, GW, GH, SPAN, m, GEOM, H);
     assert.ok(rib, `${name}: built`);
     const wt = checkWatertight(rib);
     assert.ok(wt.closed, `${name}: ${wt.unmatched} unmatched edges`);
@@ -57,15 +57,15 @@ function columns(P) {
 }
 
 test("the underside is the terrain surface, offset by one constant", () => {
-  const rib = buildRibbon(grid, GW, GH, SPAN, BAND, GEOM, H);
+  const rib = buildDrape(grid, GW, GH, SPAN, BAND, GEOM, H);
   assert.ok(rib);
   const tile = buildSolid(grid, GW, GH, SPAN, new Uint8Array((GW - 1) * (GH - 1)).fill(1), GEOM);
   const top = columns(tile.positions);   // tile: hi = terrain surface, lo = z-0 base plane
   const bot = columns(rib.positions);    // cord: lo = molded underside, hi = underside + H
 
-  // Ground truth for the offset, computed independently of buildRibbon: the corridor's own
+  // Ground truth for the offset, computed independently of buildDrape: the corridor's own
   // minimum relief over the vertex rows/cols BAND's cells touch (cell rows 28..31 span vertex
-  // rows 28..32; every column). A buildRibbon that subtracted the tile's emin (0 here) or
+  // rows 28..32; every column). A buildDrape that subtracted the tile's emin (0 here) or
   // nothing at all would STILL produce a column-constant offset — top.hi - rib.lo always
   // reduces to base + (whatever constant got subtracted), since relief(id) cancels regardless
   // of what that constant is. Checking only that the offset is constant across columns cannot
@@ -88,7 +88,7 @@ test("the underside is the terrain surface, offset by one constant", () => {
 });
 
 test("the cord sits on the plate and has uniform thickness", () => {
-  const rib = buildRibbon(grid, GW, GH, SPAN, BAND, GEOM, H);
+  const rib = buildDrape(grid, GW, GH, SPAN, BAND, GEOM, H);
   assert.ok(rib);
   const cols = columns(rib.positions);
   let lowest = Infinity;
@@ -100,7 +100,7 @@ test("the cord sits on the plate and has uniform thickness", () => {
 });
 
 test("an empty corridor yields no ribbon", () => {
-  assert.equal(buildRibbon(grid, GW, GH, SPAN, new Uint8Array((GW - 1) * (GH - 1)), GEOM, H), null);
+  assert.equal(buildDrape(grid, GW, GH, SPAN, new Uint8Array((GW - 1) * (GH - 1)), GEOM, H), null);
 });
 
 // --- pipeline wiring: bakeTileSolid / tileTo3mf --------------------------
@@ -232,7 +232,8 @@ function modelXml(bytes) {
 
 test("tileTo3mf writes the ribbon as a second object, clear of the tile", async () => {
   const tile = buildSolid(grid, GW, GH, SPAN, new Uint8Array((GW - 1) * (GH - 1)).fill(1), GEOM);
-  const rib = buildRibbon(grid, GW, GH, SPAN, BAND, GEOM, H);
+  const rib = buildDrape(grid, GW, GH, SPAN, BAND, GEOM, H);
+  assert.ok(rib);
   const xml = modelXml(await tileTo3mf("t", tile, undefined, rib));
   assert.equal((xml.match(/<object /g) ?? []).length, 2);
   const items = [...xml.matchAll(/<item objectid="(\d+)" transform="([^"]+)"/g)];
@@ -240,5 +241,11 @@ test("tileTo3mf writes the ribbon as a second object, clear of the tile", async 
   let maxY = -Infinity;
   for (let i = 1; i < tile.positions.length; i += 3) maxY = Math.max(maxY, tile.positions[i]);
   const ty = Number(items[1][2].trim().split(/\s+/)[10]);
-  assert.ok(ty > maxY, `ribbon at y=${ty} overlaps a tile reaching ${maxY}`);
+  // The PLACED bottom edge, not the translation. A part keeps the tile's own coordinates, so
+  // the cord already sits wherever its trail sits — here rows 28..32, ~28 mm up. Asserting the
+  // translation alone passed only while the writer translated by the tile's full height, and
+  // would keep passing for a part placed anywhere at all.
+  let ribLo = Infinity;
+  for (let i = 1; i < rib.positions.length; i += 3) ribLo = Math.min(ribLo, rib.positions[i]);
+  assert.ok(ribLo + ty > maxY, `ribbon placed at y=${ribLo + ty} overlaps a tile reaching ${maxY}`);
 });

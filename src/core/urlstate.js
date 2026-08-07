@@ -9,7 +9,8 @@ import { MAX_MERCATOR_LAT } from "./tilemath.js";
 /** @typedef {import("./types.js").Shape} Shape */
 /**
  * @typedef {{ center: LatLon | null, scale: number, tileWidthMm: number, base: number,
- *   exag: number, flatten: boolean, recessMm: number, layerMm: number, shape: Shape }} ShareableState
+ *   exag: number, flatten: boolean, recessMm: number, layerMm: number, shape: Shape,
+ *   waterInlay: boolean }} ShareableState
  */
 
 /** Payload version. Bump only for a breaking key/meaning change; old links then decode to null. */
@@ -61,7 +62,7 @@ const trim = (v, places) => String(Number(v.toFixed(places)));
  * @param {ShareableState} state
  * @returns {string}
  */
-export function encodeState({ center, scale, tileWidthMm, base, exag, flatten, recessMm, layerMm, shape }) {
+export function encodeState({ center, scale, tileWidthMm, base, exag, flatten, recessMm, layerMm, shape, waterInlay }) {
   if (!center) return "";
   return [
     `v=${STATE_VERSION}`,
@@ -75,6 +76,7 @@ export function encodeState({ center, scale, tileWidthMm, base, exag, flatten, r
     `recess=${trim(recessMm, 2)}`,
     `layer=${trim(layerMm, 3)}`,
     `shape=${shape}`,
+    `inlay=${waterInlay ? "T" : "F"}`,
   ].join("&");
 }
 
@@ -102,6 +104,11 @@ export function decodeState(hash) {
   const shapeRaw = p.get("shape");
   const shape = shapeRaw === null ? "square" : shapeRaw;
   if (!SHAPES.includes(/** @type {Shape} */ (shape))) return null;
+  // Absent means a link that predates water inlays, when the tile was the only object — so the
+  // default is exact rather than a guess, and STATE_VERSION stays 1 (the `shape` precedent
+  // above). Present-but-mangled still rejects, matching flatten: corruption is not "off".
+  const inlayRaw = p.get("inlay");
+  if (inlayRaw !== null && inlayRaw !== "T" && inlayRaw !== "F") return null;
   // Geography must be exact: past the Mercator band or the antimeridian there is no tile to
   // plan, and a non-positive scale divides by zero downstream.
   if (Math.abs(lat) > MAX_MERCATOR_LAT || Math.abs(lon) > 180 || !(scale > 0)) return null;
@@ -115,5 +122,6 @@ export function decodeState(hash) {
     recessMm: clamp(recessMm, LIMITS.recess),
     layerMm: clamp(layerMm, LIMITS.layer),
     shape: /** @type {Shape} */ (shape),
+    waterInlay: inlayRaw === "T",
   };
 }

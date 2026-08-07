@@ -191,6 +191,9 @@ two orthogonal controls decide where the water and that line sit:
    recess can sink even high water below the sea-level line — blue pits where lakes were;
    documented, not guarded.
 
+Both controls move geometry, and what they move can be exported back as separate drop-in parts —
+see "Water inlays" under Export.
+
 A tile with no masked water gets no water line at all: waterless below-sea-level land (Death
 Valley) prints as ordinary terrain.
 
@@ -273,9 +276,43 @@ boundaries — and the width guard refuses a cord narrower than two
 grid cells, so the stair-step is at most half the cord's own width,
 by construction at any pitch.
 
-Color changes are written per print Z for the whole plate, so a cord
-exported alongside altitude bands inherits their pauses. Print the two
-as separate jobs, or turn bands off.
+### Water inlays
+
+**Also export water inlays** (checkbox, default off) adds the water the
+tile displaced back as its own drop-in objects. Each one's underside is
+the printed water surface and its top is that water's **original**
+elevation — not the tile's waterline, which flatten invents — so an
+inlay is exactly the volume the two water controls removed, and both
+feed it: flatten's drop counts as much as the recess. With neither on,
+nothing was displaced and nothing is exported. Print them in blue, drop
+them into the hollows, and the terrain is whole again.
+
+Undersides mate by the same construction as the cord: the same vertex
+ids, the same relief expression, the tile's own already-displaced grid.
+The top comes from a snapshot of the grid taken *before* the water moves
+— flatten overwrites elevations in place, so a flattened vertex keeps no
+record of where it started.
+
+A cell is claimed only when all four of its corners are water. The tile
+crosses a shore over one cell, as a ramp from the land vertex down to
+the water vertex, and top and bottom meet at that unmoved land vertex —
+so an inlay covering the ramp would fill the hollow exactly but taper
+to zero thickness along its whole shoreline. Conceding those cells buys
+a vertical wall the slicer can print, and a groove at most one cell wide
+(0.1–0.6 mm at export pitch) to seat the part through.
+
+Water bodies on one tile can sit far apart in elevation, so each
+connected piece gets its own floor and rests on the plate independently.
+A single shared floor would leave every piece but the lowest hanging in
+mid-air — still closed, still positive-volume, so nothing downstream
+would object. Pieces are labelled 8-connected, which is what makes a
+per-vertex floor well defined: a vertex's four incident cells are all
+mutually 8-adjacent, so no vertex can be claimed by two pieces at
+different heights.
+
+Color changes are written per print Z for the whole plate, so a cord or
+an inlay exported alongside altitude bands inherits their pauses. Print
+them as separate jobs, or turn bands off.
 
 # Appendix
 

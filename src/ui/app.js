@@ -46,6 +46,7 @@ const store = createStore(/** @type {AppState} */ ({
     center: DEFAULT_PRESET.center, scale: DEFAULT_PRESET.scale, tileWidthMm: 200, base: 6, exag: 1,
     flatten: false, recessMm: 0, layerMm: 0.15, // sea-level tint by default; checkbox flattens
     shape: "square",
+    waterInlay: false,
   }),
   trail: null, // a restored link never carries one — see the AppState note above
   cord: { widthMm: 1.6, heightMm: 0.6 }, // export-only: a hash carries no trail, so no cord either
@@ -300,6 +301,12 @@ let shownTrail = null;
 // sweep is what would consume it, and isn't wired up yet). A denylist, not an allowlist: any
 // OTHER field added to AppState later defaults to bake-relevant, which is the safe direction to
 // be wrong in.
+//
+// `waterInlay` stays on that safe side deliberately, even though the preview ignores it too
+// (bake.worker.js forces it off for a mesh job). Unlike `cord` it IS shareable state, and the
+// hash write rides this same timer — exempting it would stop the address bar tracking the
+// checkbox. The cost is one preview rebake per toggle: a checkbox clicked once before an
+// export, not a slider dragged, and Export cancels a pending preview anyway.
 /** @type {AppState | null} */
 let lastBakeState = null;
 /** @param {AppState} s @returns {boolean} */
@@ -331,6 +338,16 @@ store.subscribe((s) => {
   // 30-60/s slider drag, and planTile is not free.
   $("cordHint").textContent = cordHint(s.cord.heightMm, s.layerMm, s.cord.widthMm,
     exportDx !== null ? MIN_CORD_CELLS * exportDx : undefined);
+  // The inlays are the volume the two water controls displaced, so with neither on there is no
+  // volume and the export silently gains nothing. Say so at the checkbox rather than let the
+  // user find a .3mf with one object in it.
+  //
+  // This covers the settings only. A tile with no water at all also exports nothing and says
+  // nothing here — whether the tile HAS water is a bake result, and the preview never bakes
+  // inlays. The recess slider visibly doing nothing is the feedback there.
+  const idle = s.waterInlay && !s.flatten && s.recessMm === 0;
+  $("inlayHint").hidden = !idle;
+  if (idle) $("inlayHint").textContent = "No water is displaced yet — set a recess depth or flatten, or the export adds nothing.";
   const km = (s.tileWidthMm * s.scale) / 1e6; // print mm × 1:N scale → real km the tile spans
   // tileWidthMm is the bounding-square side, so only the hex prints shorter than it is wide.
   const tile = s.shape === "hex"

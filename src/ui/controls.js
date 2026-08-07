@@ -28,6 +28,7 @@ export function syncControls(s) {
   set("layerMm", s.layerMm);
   /** @type {HTMLSelectElement} */ (el("shape")).value = s.shape;
   /** @type {HTMLInputElement} */ (el("flatten")).checked = s.flatten;
+  /** @type {HTMLInputElement} */ (el("waterInlay")).checked = s.waterInlay;
   el("exagVal").textContent = s.exag.toFixed(1);
   el("baseVal").textContent = s.base.toFixed(1);
   el("recessVal").textContent = `${s.recessMm} mm`;
@@ -74,6 +75,9 @@ export function wireControls(store) {
   el("flatten").addEventListener("change", (e) => {
     store.set({ flatten: /** @type {HTMLInputElement} */ (e.target).checked });
   });
+  el("waterInlay").addEventListener("change", (e) => {
+    store.set({ waterInlay: /** @type {HTMLInputElement} */ (e.target).checked });
+  });
   el("recess").addEventListener("input", (e) => {
     const v = num(e);
     store.set({ recessMm: v });
@@ -85,7 +89,7 @@ export function wireControls(store) {
   });
 
   // Same guard shape as tileW/layerMm: a cleared number input reads "" -> Number("") -> 0, and
-  // an unguarded 0 or negative height reaches buildRibbon as a degenerate or inside-out solid
+  // an unguarded 0 or negative height reaches buildDrape as a degenerate or inside-out solid
   // (pipeline.js's watertight check is topology-only and cannot see it — see bakeTileSolid).
   /** @param {"widthMm"|"heightMm"} k @param {number} min @param {number} max */
   const cord = (k, min, max) => (/** @type {Event} */ e) => {

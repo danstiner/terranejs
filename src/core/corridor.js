@@ -5,6 +5,7 @@
 // file is mostly one careful conversion and one rasterization.
 
 import { lonToGlobalX, latToGlobalY } from "./tilemath.js";
+import { cellsFromVertexMask } from "./mesh.js";
 
 /** @typedef {import("./types.js").LatLon} LatLon */
 /** @typedef {import("./pipeline.js").TilePlan} TilePlan */
@@ -146,16 +147,8 @@ export function corridorMask(stations, plan, halfW, footprint) {
       }
     }
   }
-  if (footprint) for (let i = 0; i < vert.length; i++) vert[i] &= footprint[i];
-
-  const cw = gw - 1, ch = gh - 1;
-  const cells = new Uint8Array(cw * ch);
-  let count = 0;
-  for (let r = 0; r < ch; r++) {
-    for (let c = 0; c < cw; c++) {
-      const A = r * gw + c;
-      if (vert[A] && vert[A + 1] && vert[A + gw] && vert[A + gw + 1]) { cells[r * cw + c] = 1; count++; }
-    }
-  }
-  return { cells, count };
+  // The all-four-corners rule, and the erosion it implies, live in mesh.js next to the
+  // gridTopTris rule they encode — halfWFor above is the compensation for exactly that erosion,
+  // so the two must not be able to drift apart.
+  return cellsFromVertexMask(vert, gw, gh, footprint);
 }
