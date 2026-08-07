@@ -5,7 +5,7 @@
 import { cellsBbox, cellWindows, footprintPx } from "./layout.js";
 import { sourceZoom, MAX_MERCATOR_LAT, globalXToLon, globalYToLat } from "./tilemath.js";
 import { cropGrid, gridRange } from "./resample.js";
-import { buildSolid, buildRibbon } from "./mesh.js";
+import { buildSolid, buildDrape, cellsFromVertexMask } from "./mesh.js";
 import { trailToPrintMm, resample, corridorMask, halfWFor, DS_FACTOR, MIN_CORD_CELLS } from "./corridor.js";
 import { clipPolygon, clipElevs, clipRange } from "./clip.js";
 import { applyWaterRecess } from "./water.js";
@@ -23,13 +23,15 @@ import { fetchMosaic } from "./terrain.js";
 /** @typedef {import("./types.js").Solid} Solid */
 /**
  * @typedef {{ center: LatLon, scale: number, tileWidthMm: number, base: number, exag: number,
- *   flatten?: boolean, recessMm?: number, layerMm?: number, shape?: Shape }} TileSettings
+ *   flatten?: boolean, recessMm?: number, layerMm?: number, shape?: Shape,
+ *   waterInlay?: boolean }} TileSettings
  *   center = [lat,lon] of the tile; scale = 1:N; tileWidthMm = print size of the tile
  *   edge; base = base-plate thickness (mm); exag = vertical exaggeration; flatten = pull
  *   all water to one waterline below the land (default false); recessMm = extra water
  *   sink in print mm (default 0); layerMm = slicer layer height (default 0.15);
  *   shape = tile footprint (default "square"); tileWidthMm is the bounding-square side
- *   in every shape.
+ *   in every shape; waterInlay = also export the displaced water as drop-in parts
+ *   (default false).
  */
 /**
  * @typedef {{ z: number, bbox: BBox, window: Window, span: Span, gw: number, gh: number, dx: number, dy: number, mmPerM: number, shape: Shape, ring: Array<[number,number]> | null }} TilePlan
@@ -43,8 +45,8 @@ import { fetchMosaic } from "./terrain.js";
 /** @type {Cell[]} */
 const ORIGIN = [[0, 0]]; // single-tile layout: one cell at the origin
 
-/** Clearance between the tile and the cord on the plate. */
-const RIBBON_GAP_MM = 10;
+/** Clearance between neighbouring objects on the plate. */
+const PLATE_GAP_MM = 10;
 
 // Pure: settings (+ optional explicit zoom) → source zoom, fetch bbox, exact
 // pixel window, and print geom. Omit `z` to auto-pick the deepest useful zoom.
@@ -125,14 +127,20 @@ export function planTile(settings, { z, maxTiles = 300 } = {}) {
  * headless bakeTile path).
  * @param {Mosaic} mosaic
  * @param {TilePlan} plan
- * @param {{ base: number, exag: number, flatten?: boolean, recessMm?: number, layerMm?: number }} settings
+ * @param {{ base: number, exag: number, flatten?: boolean, recessMm?: number, layerMm?: number,
+ *   waterInlay?: boolean }} settings
  * @param {Uint8Array} [waterMask]
  * @param {{ segments: LatLon[][], widthMm: number, heightMm: number }} [trail]
- * @returns {{ solid: Solid, ribbon: Solid | null, emin: number, emax: number, lineElev: number, landBluePct: number, waterAsLandPct: number }}
+ * @returns {{ solid: Solid, ribbon: Solid | null, inlays: Solid | null, emin: number, emax: number, lineElev: number, landBluePct: number, waterAsLandPct: number }}
  */
-export function bakeTileSolid(mosaic, plan, { base, exag, flatten = false, recessMm = 0, layerMm = 0.15 }, waterMask, trail) {
+export function bakeTileSolid(mosaic, plan,
+  { base, exag, flatten = false, recessMm = 0, layerMm = 0.15, waterInlay = false }, waterMask, trail) {
   const { window, span, gw, gh, dx, dy, mmPerM, ring } = plan;
   const grid = cropGrid(mosaic, window);
+  // The inlay's TOP is the original water surface, and flatten destroys it in place (a flattened
+  // vertex keeps no record of where it started), so the snapshot has to be taken here — before
+  // applyWaterRecess — or not at all. A second full grid, so it is taken only when asked for.
+  const preWater = waterInlay && waterMask ? grid.slice() : null;
   // Clip geometry first — applyWaterRecess mutates the grid, so crossing ELEVATIONS have
   // to wait for it, but the inside mask and crossing positions are pure geometry.
   const clip = ring ? clipPolygon(gw, gh, window.gx0, window.gy0, ring) : null;
@@ -163,7 +171,7 @@ export function bakeTileSolid(mosaic, plan, { base, exag, flatten = false, reces
     const stations = trailToPrintMm(trail.segments, plan).map((p) => resample(p, halfW * DS_FACTOR));
     const { cells, count } = corridorMask(stations, plan, halfW, footprint);
     if (count) {
-      ribbon = buildRibbon(grid, gw, gh, span, cells, { dx, dy, mmPerM, emin, exag }, trail.heightMm);
+      ribbon = buildDrape(grid, gw, gh, span, cells, { dx, dy, mmPerM, emin, exag }, trail.heightMm);
       const rwt = checkWatertight(/** @type {Solid} */ (ribbon));
       if (!rwt.closed) throw new Error(`pipeline: non-watertight ribbon (${rwt.unmatched} unmatched edges)`);
       // checkWatertight is topology-only (see validate.js) and cannot see a zero or negative
@@ -174,13 +182,39 @@ export function bakeTileSolid(mosaic, plan, { base, exag, flatten = false, reces
     }
   }
 
-  return { solid, ribbon, emin, emax, lineElev, landBluePct, waterAsLandPct };
+  // Drop-in parts filling the hollow the water controls left: underside on the printed water
+  // surface, top on the water's ORIGINAL elevation. Exactly the volume applyWaterRecess removed,
+  // which is why both controls feed it — flatten's drop counts as much as the recess, and with
+  // neither on nothing was displaced and there is nothing to fill.
+  let inlays = null;
+  if (preWater && (flatten || recessMm > 0)) {
+    // All four corners water AND inside the footprint. The erosion that rule implies is wanted
+    // here, unlike in the corridor, which compensates for it. The tile's surface crosses a shore
+    // over ONE cell, as a ramp from the land vertex down to the water vertex, and since the top
+    // and bottom surfaces MEET at an unmoved land vertex, a part covering that ramp would fill
+    // it exactly — but taper to zero thickness along its whole shoreline. That is a knife edge
+    // below any printable feature size, and it leaves zero clearance exactly where the part has
+    // to drop in. Conceding the ramp cells buys a vertical wall the slicer can print and a
+    // groove at most one cell wide (dx, 0.1–0.6 mm at export pitch) to seat the part through.
+    const { cells, count } = cellsFromVertexMask(/** @type {Uint8Array} */ (waterMask), gw, gh, footprint);
+    if (count) {
+      inlays = buildDrape(grid, gw, gh, span, cells, { dx, dy, mmPerM, emin, exag }, preWater);
+      const iwt = checkWatertight(/** @type {Solid} */ (inlays));
+      if (!iwt.closed) throw new Error(`pipeline: non-watertight water inlay (${iwt.unmatched} unmatched edges)`);
+      // Zero volume is reachable without being a bug: flatten with recessMm = 0 on a tile whose
+      // water is already the lowest thing in it moves nothing, so every vertex's top sits on its
+      // own underside. That is an empty part, not an inverted one — drop it rather than throw.
+      if (signedVolume(/** @type {Solid} */ (inlays)) <= 0) inlays = null;
+    }
+  }
+
+  return { solid, ribbon, inlays, emin, emax, lineElev, landBluePct, waterAsLandPct };
 }
 
-// One or two solids → a .3mf blob. The tile sits at the plate origin; the cord, when present,
-// is placed clear of it in +Y.
+// One to three solids → a .3mf blob. The tile sits at the plate origin; the cord and the water
+// inlays, when present, are stacked clear of it in +Y.
 //
-// Both share one plate, and color changes are written per print Z for the WHOLE plate
+// They share one plate, and color changes are written per print Z for the WHOLE plate
 // (Metadata/Prusa_Slicer_custom_gcode_per_print_z.xml) — 3MF has no per-object gcode. So a cord
 // exported alongside altitude bands inherits their pauses. Documented at the export control
 // rather than worked around; the fix is a second bed, which needs a reference file first.
@@ -189,18 +223,38 @@ export function bakeTileSolid(mosaic, plan, { base, exag, flatten = false, reces
  * @param {Solid} solid
  * @param {import("./colors.js").ColorChange[]} [colorChanges]
  * @param {Solid | null} [ribbon]
+ * @param {Solid | null} [inlays]
  * @returns {Promise<Uint8Array>}
  */
-export async function tileTo3mf(name, solid, colorChanges, ribbon) {
+export async function tileTo3mf(name, solid, colorChanges, ribbon, inlays) {
   const writer = new ThreeMFWriter();
   if (colorChanges && colorChanges.length) writer.setColorChanges(colorChanges);
   await writer.addObject(name, solid, 0, 0);
-  if (ribbon) {
-    // Derived from the tile's own bounds rather than from tileWidthMm, so it stays clear for
-    // every shape without the writer having to know which shape it was handed.
-    let maxY = -Infinity;
-    for (let i = 1; i < solid.positions.length; i += 3) maxY = Math.max(maxY, solid.positions[i]);
-    await writer.addObject(`${name}_trail`, ribbon, 0, maxY + RIBBON_GAP_MM);
+  // Each object's own bounds rather than tileWidthMm, so the stack stays clear for every shape
+  // without the writer having to know which shape it was handed — and so the inlays clear the
+  // CORD, whose extent no setting describes.
+  /** @param {Solid} s @returns {[number, number]} */
+  const yRange = (s) => {
+    let lo = Infinity, hi = -Infinity;
+    for (let i = 1; i < s.positions.length; i += 3) {
+      if (s.positions[i] < lo) lo = s.positions[i];
+      if (s.positions[i] > hi) hi = s.positions[i];
+    }
+    return [lo, hi];
+  };
+  let cursor = yRange(solid)[1]; // the top edge of what is already placed
+  for (const [suffix, part] of /** @type {[string, Solid | null | undefined][]} */ ([
+    ["trail", ribbon], ["water", inlays],
+  ])) {
+    if (!part) continue;
+    const [lo, hi] = yRange(part);
+    // Offset by −lo, so the part LANDS at `cursor + gap` whatever its own coordinates were: a
+    // part keeps the tile's frame, so it starts wherever its water or its trail sits. Without
+    // that term `cursor` still advances by the part's height while the part itself sits `lo`
+    // higher, and the two disagree by exactly `lo` — enough for the NEXT part to be placed
+    // inside this one whenever its own `lo` is the smaller of the two.
+    await writer.addObject(`${name}_${suffix}`, part, 0, cursor + PLATE_GAP_MM - lo);
+    cursor += PLATE_GAP_MM + (hi - lo);
   }
   return writer.finish();
 }

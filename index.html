@@ -86,6 +86,17 @@
             <button type="button" class="help" aria-label="About flattening water"
               data-help="Off, only terrain at or below sea level prints blue. On, every water body drops to a single plane held below all land, so all water prints blue and no land does — a lake far above sea level can drop a long way.">?</button>
           </div>
+
+          <!-- Last in the section because it is a consequence of the two controls above, not a
+               third peer: it exports the volume they displaced, so with both off it has nothing
+               to make. #inlayHint says so rather than the checkbox disabling itself — a disabled
+               box that is already checked reads as "off" while the state says on. -->
+          <div class="labelrow">
+            <label class="check"><input id="waterInlay" type="checkbox"> Also export water inlays</label>
+            <button type="button" class="help" aria-label="About water inlays"
+              data-help="Adds separate objects to the .3mf: the water this tile displaced, shaped to drop into the hollows it left. Their undersides are the printed water surface and their tops are the water's original elevation, so print them in blue, drop them in, and the terrain is whole again.">?</button>
+          </div>
+          <p id="inlayHint" class="hint" hidden></p>
         </div>
 
         <!-- Trail sits with the other decisions rather than by the map: importing one REFRAMES

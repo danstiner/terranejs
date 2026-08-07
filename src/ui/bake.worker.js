@@ -64,8 +64,12 @@ async function handle({ gen, settings, maxTiles, format, name, color, coverage, 
     for (let i = 0; i < wmGrid.length; i++) waterMask[i] = wmGrid[i] > 0.5 ? 1 : 0;
 
     post({ gen, baking: true }); // all tiles in hand → meshing + validation (synchronous, blocks the worker)
-    const { solid, ribbon, emin, emax, lineElev, landBluePct, waterAsLandPct } =
-      bakeTileSolid(mosaic, plan, settings, waterMask, trail ?? undefined);
+    // waterInlay off for a preview, the way `trail` is simply never posted on that path: the
+    // preview draws the tile alone, and the inlays cost a second full-grid snapshot plus their
+    // own mesh — on every keystroke of a slider drag, for something nothing displays.
+    const { solid, ribbon, inlays, emin, emax, lineElev, landBluePct, waterAsLandPct } =
+      bakeTileSolid(mosaic, plan, { ...settings, waterInlay: format === "3mf" && !!settings.waterInlay },
+        waterMask, trail ?? undefined);
     // Latitude-adjusted color changes for THIS bake's frame. Shared by the preview
     // (returned as `bands`) and, later, the export embed. K>0 since exag ∈ [0.5,4].
     const K = plan.mmPerM * settings.exag;
@@ -86,7 +90,7 @@ async function handle({ gen, settings, maxTiles, format, name, color, coverage, 
       const exportChanges = color
         ? colorChanges(thresholds, frame, { pauseLiftMm: settings.layerMm ?? 0.15 })
         : undefined;
-      const bytes = await tileTo3mf(name ?? "tile", solid, exportChanges, ribbon);
+      const bytes = await tileTo3mf(name ?? "tile", solid, exportChanges, ribbon, inlays);
       post({ gen, bytes }, [bytes.buffer]);
     } else {
       // Normals for the lit preview, computed here so the main thread never meshes

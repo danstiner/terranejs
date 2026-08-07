@@ -16,7 +16,7 @@ import { fitTile, clippedFraction } from "../src/core/gpx.js";
 import { MM_PER_KM_MAX } from "../src/core/urlstate.js";
 import { planTile } from "../src/core/pipeline.js";
 import { trailToPrintMm, resample, corridorMask, halfWFor, DS_FACTOR } from "../src/core/corridor.js";
-import { buildRibbon } from "../src/core/mesh.js";
+import { buildDrape } from "../src/core/mesh.js";
 import { checkWatertight, signedVolume } from "../src/core/validate.js";
 
 const parser = new DOMParser({ onError: () => {} });
@@ -166,7 +166,7 @@ test("strava.gpx stamps a corridor and bakes a watertight cord", () => {
   // 1.6 to 2.0 mm, which shifts this count from 87 to 137.
   assert.equal(count, 87);
 
-  const rib = buildRibbon(grid, plan.gw, plan.gh, plan.span, cells,
+  const rib = buildDrape(grid, plan.gw, plan.gh, plan.span, cells,
     { dx: plan.dx, dy: plan.dy, mmPerM: plan.mmPerM, emin: 150, exag: 1 }, 0.6);
   assert.ok(rib);
   assert.ok(checkWatertight(rib).closed);

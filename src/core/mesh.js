@@ -310,6 +310,39 @@ function assembleSolid(topTris, N, xy, zTop, zBot, bottomMode) {
   };
 }
 
+/**
+ * Vertex mask → the cell mask gridTopTris consumes: a cell is claimed only when all four of
+ * its corners are in. That rule is gridTopTris' own — a cell is one quad of the surface, and a
+ * quad with a corner outside would drag that corner's height into the part.
+ *
+ * The result is therefore an EROSION of `vert` by up to a half-diagonal, which each caller
+ * answers differently: the trail corridor compensates by widening its stamp (corridor.halfWFor),
+ * while the water inlay wants the erosion — it is what gives the part a printable vertical wall
+ * and the clearance to seat, instead of a shoreline tapering to a knife edge (see pipeline.js).
+ *
+ * `also` is a second vertex mask ANDed per corner (the footprint, for a clipped shape), applied
+ * here rather than by mutating the caller's array.
+ * @param {Uint8Array} vert
+ * @param {number} gw
+ * @param {number} gh
+ * @param {Uint8Array} [also]
+ * @returns {{ cells: Uint8Array, count: number }}
+ */
+export function cellsFromVertexMask(vert, gw, gh, also) {
+  const cw = gw - 1, ch = gh - 1;
+  const cells = new Uint8Array(cw * ch);
+  let count = 0;
+  for (let r = 0; r < ch; r++) {
+    for (let c = 0; c < cw; c++) {
+      const A = r * gw + c, B = A + 1, C = A + gw, D = C + 1;
+      if (!(vert[A] && vert[B] && vert[C] && vert[D])) continue;
+      if (also && !(also[A] && also[B] && also[C] && also[D])) continue;
+      cells[r * cw + c] = 1; count++;
+    }
+  }
+  return { cells, count };
+}
+
 // grid-cell top triangulation over a cell mask (+Z wound); counted first so the
 // id list is one exact typed array.
 /**
@@ -511,49 +544,120 @@ export function buildSolid(grid, gw, gh, span, mask, geom, clip) {
     () => 0, "flat");
 }
 
-// Constant-thickness cord that conforms to the terrain: underside = relief, top = relief +
-// thickness, closed by a skirt. Self-registers on the printed tile by its molded underside.
+/**
+ * Label a cell mask's connected pieces, returning the label of each VERTEX (−1 off-mask).
+ *
+ * 8-connected, and that is load-bearing rather than a preference: buildDrape gives every piece
+ * its own floor, so a vertex shared by two pieces would need two z values. A vertex has exactly
+ * four incident cells, and any two of them are within Chebyshev distance 1 — so under
+ * 8-connectivity every cell touching a vertex is in ONE piece and the conflict cannot arise.
+ * 4-connectivity would split a diagonal pinch and reintroduce it.
+ *
+ * Cells carry only a visited bit (labels live on vertices, which is what the caller indexes by),
+ * and the frontier is an explicit stack — a recursive fill would blow the JS stack on a
+ * grid-scale region long before it ran out of memory.
+ * @param {number} gw
+ * @param {number} gh
+ * @param {Span} span
+ * @param {Uint8Array} mask
+ * @returns {{ vertexLabel: Int32Array, count: number }}
+ */
+function labelPieces(gw, gh, span, mask) {
+  const { r0, r1, c0, c1 } = span;
+  const cw = gw - 1;
+  const seen = new Uint8Array(cw * (gh - 1));
+  const vertexLabel = new Int32Array(gw * gh).fill(-1);
+  /** @type {number[]} */
+  const stack = [];
+  let count = 0;
+  for (let sr = r0; sr < r1; sr++) {
+    for (let sc = c0; sc < c1; sc++) {
+      if (!mask[sr * cw + sc] || seen[sr * cw + sc]) continue;
+      const label = count++;
+      seen[sr * cw + sc] = 1;
+      stack.push(sr, sc);
+      while (stack.length) {
+        const c = /** @type {number} */ (stack.pop()), r = /** @type {number} */ (stack.pop());
+        const A = r * gw + c;
+        vertexLabel[A] = label; vertexLabel[A + 1] = label;
+        vertexLabel[A + gw] = label; vertexLabel[A + gw + 1] = label;
+        for (let nr = r - 1; nr <= r + 1; nr++) {
+          if (nr < r0 || nr >= r1) continue;
+          for (let nc = c - 1; nc <= c + 1; nc++) {
+            if (nc < c0 || nc >= c1) continue;
+            const i = nr * cw + nc;
+            if (mask[i] && !seen[i]) { seen[i] = 1; stack.push(nr, nc); }
+          }
+        }
+      }
+    }
+  }
+  return { vertexLabel, count };
+}
+
+// A part molded to the printed surface: underside = the printed relief, top = `top`, closed by a
+// skirt. Self-registers on the printed tile by its molded underside. Two callers, one shape —
+// the trail cord over a corridor mask, and the water inlays over the mask of displaced water
+// (pipeline.js).
 //
 // The underside is the terrain's OWN triangulation on the SAME vertex ids from the SAME relief
 // expression, so the mate is congruent by construction rather than by tolerance — which is the
-// whole reason the corridor is stamped into cells instead of swept along the trail.
+// whole reason both masks are stamped into cells rather than derived some other way.
+//
+// `top` is the one thing that differs between the two callers:
+//   number       — a constant print-mm thickness above the underside (the cord).
+//   Float32Array — a second elevation grid, in `grid`'s own units, giving the upper surface
+//                  directly (the inlay's ORIGINAL water elevations, before flatten and recess
+//                  moved them). Thickness then varies per vertex, and is exactly the
+//                  displacement applyWaterRecess applied. It is never negative: flatten's plane
+//                  is `min(lowest water, …)` and the recess only sinks further, so a water
+//                  vertex's stored height is always ≤ its original.
 //
 // `base` is deliberately absent: the base plate belongs to the terrain object, and subtracting
-// the corridor's own minimum relief lands the cord's lowest point on z = 0 by construction
-// rather than relying on a slicer's ensure-on-bed. It prints on supports; generating those is
-// the slicer's job.
+// each piece's own minimum relief lands its lowest point on z = 0 by construction rather than
+// relying on a slicer's ensure-on-bed. It prints on supports; generating those is the slicer's
+// job.
+//
+// PER PIECE, not per part: one mask can cover disconnected regions at different heights (two
+// lakes 1500 m apart in elevation; a trail split into two by the tile's own footprint). A single
+// shared floor would rest the lowest piece on the plate and leave every other one hanging in
+// mid-air — a shell that is still closed and positive-volume, so nothing downstream would object.
 /**
  * @param {Float32Array} grid
  * @param {number} gw
  * @param {number} gh
  * @param {Span} span
- * @param {Uint8Array} mask corridor cell mask
+ * @param {Uint8Array} mask cell mask, from cellsFromVertexMask
  * @param {{ dx: number, dy: number, mmPerM: number, emin: number, exag: number }} geom
- * @param {number} thicknessMm
- * @returns {Solid | null} null when the corridor covers no cell
+ * @param {number | Float32Array} top print-mm thickness, or an upper-surface elevation grid
+ * @returns {Solid | null} null when the mask covers no cell
  */
-export function buildRibbon(grid, gw, gh, span, mask, geom, thicknessMm) {
+export function buildDrape(grid, gw, gh, span, mask, geom, top) {
   const { dx, dy, mmPerM, emin, exag } = geom;
   const { r1, c0 } = span;
   const topTris = gridTopTris(gw, span, mask);
   if (topTris.length === 0) return null;
   const k = mmPerM * exag;
-  // `emin` cancels exactly below (`relief(id) - minRelief` subtracts the same `emin*k` from
-  // both terms), so its VALUE never reaches an output vertex — kept only so `geom` has the same
-  // shape as buildSolid's. What IS load-bearing is `grid` itself: it must be the tile's own,
-  // already water-recessed array (bakeTileSolid's ordering), not a pre-recess snapshot. Don't
-  // "fix" the cancellation by dropping emin; there is nothing here for it to fix.
-  /** @param {number} id */
-  const relief = (id) => (grid[id] - emin) * k;
-  // Minimum over the cord's OWN vertices, not the tile's emin: a trail that never crosses the
-  // tile's lowest point would otherwise export floating above the plate by the difference.
-  let minRelief = Infinity;
+  // `emin` cancels exactly below (`rel(...) - floor[...]` subtracts the same `emin*k` from both
+  // terms), so its VALUE never reaches an output vertex — kept only so `geom` has the same shape
+  // as buildSolid's. What IS load-bearing is `grid` itself: it must be the tile's own, already
+  // water-displaced array (bakeTileSolid's ordering), not a pre-recess snapshot — the underside
+  // has to mate with the surface that PRINTS. (The snapshot's place is `top`, above.) Don't "fix"
+  // the cancellation by dropping emin; there is nothing here for it to fix.
+  /** @param {number} e */
+  const rel = (e) => (e - emin) * k;
+  const { vertexLabel, count } = labelPieces(gw, gh, span, mask);
+  const floor = new Float64Array(count).fill(Infinity);
   for (let i = 0; i < topTris.length; i++) {
-    const z = relief(topTris[i]);
-    if (z < minRelief) minRelief = z;
+    const id = topTris[i], z = rel(grid[id]);
+    if (z < floor[vertexLabel[id]]) floor[vertexLabel[id]] = z;
   }
+  /** @type {(id: number) => number} */
+  const zTop = typeof top === "number"
+    ? (id) => rel(grid[id]) - floor[vertexLabel[id]] + top
+    : (id) => rel(top[id]) - floor[vertexLabel[id]];
   return assembleSolid(topTris, gw * gh,
     (id) => [((id % gw) - c0) * dx, (r1 - ((id / gw) | 0)) * dy],
-    (id) => relief(id) - minRelief + thicknessMm,
-    (id) => relief(id) - minRelief, "mirror");
+    zTop,
+    (id) => rel(grid[id]) - floor[vertexLabel[id]], "mirror");
 }

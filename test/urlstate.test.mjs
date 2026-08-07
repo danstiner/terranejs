@@ -6,6 +6,7 @@ const FULL = {
   center: /** @type {[number, number]} */ ([46.8523, -121.7603]),
   scale: 150000, tileWidthMm: 200, base: 6, exag: 1,
   flatten: false, recessMm: 0, layerMm: 0.15, shape: /** @type {const} */ ("square"),
+  waterInlay: false,
 };
 
 test("encodeState → decodeState round-trips every field", () => {
@@ -119,6 +120,30 @@ test("a pre-shape link still opens, as a square", () => {
   assert.ok(s, "legacy link is not rejected");
   assert.equal(s?.shape, "square");
   assert.equal(STATE_VERSION, 1, "adding a field must not bump the version");
+});
+
+test("the water-inlay flag round-trips", () => {
+  assert.deepEqual(decodeState(encodeState({ ...FULL, waterInlay: true })), { ...FULL, waterInlay: true });
+});
+
+// Same contract as `shape` above, for the same reason: every link shared before water inlays
+// existed carries no `inlay` key, and back then the tile was the only object in the .3mf — so
+// absent decodes as off exactly, and the version does not move.
+test("a pre-inlay link still opens, with inlays off", () => {
+  const legacy = "v=1&lat=46.8523&lon=-121.7603&scale=150000&width=200&base=6&exag=1" +
+    "&flatten=F&recess=0&layer=0.15&shape=hex";
+  const s = decodeState(legacy);
+  assert.ok(s, "legacy link is not rejected");
+  assert.equal(s?.waterInlay, false);
+  assert.equal(s?.shape, "hex", "the rest of the payload still decodes");
+  assert.equal(STATE_VERSION, 1, "adding a field must not bump the version");
+});
+
+// Absent is a legacy link; present-but-mangled is corruption, and corruption is not "off" —
+// the same strictness flatten's T/F gets, and the reason both are letters rather than 1/0.
+test("a mangled inlay flag is rejected, not read as off", () => {
+  const bend = (/** @type {string} */ v) => encodeState(FULL).replace(/inlay=[^&]*/, `inlay=${v}`);
+  for (const bad of ["1", "true", "", "t"]) assert.equal(decodeState(bend(bad)), null, `rejected: ${bad}`);
 });
 
 test("an unrecognised shape is rejected, not coerced", () => {
