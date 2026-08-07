@@ -43,6 +43,20 @@ body {
 #resultbar #ghlink { flex: 0 0 auto; display: inline-flex; align-items: center; color: #666; }
 #resultbar #ghlink:hover { color: #1a1a1a; }
 
+/* Below 700px there's no room for two 400px+ columns side by side — the fixed-width #left
+   used to just push #right off-screen instead of shrinking. Stack them: #left reverts to
+   normal document flow (its own overflow-y:auto only matters when a flex row gives it a
+   capped height), and #right gets an explicit height since #preview's flex:1 needs a
+   definite parent size to fill rather than collapsing to its content's zero height. */
+@media (max-width: 700px) {
+  body { flex-direction: column; }
+  #left {
+    flex: 0 0 auto; width: auto; overflow-y: visible;
+    border-right: none; border-bottom: 1px solid #ddd;
+  }
+  #right { flex: 0 0 60vh; height: 60vh; }
+}
+
 #panel h2 { margin: 0 0 10px; font-size: 15px; }
 .sub { margin: 4px 0 0; color: #666; }
 
@@ -155,6 +169,7 @@ button.primary:disabled { background: #9bb4de; border-color: #9bb4de; cursor: de
 @media (prefers-color-scheme: dark) {
   body { color: #e8e8e8; }
   #left { border-right-color: #333; background: #1c1c1e; }
+  @media (max-width: 700px) { #left { border-bottom-color: #333; } } /* stacked layout swaps the border edge */
   #brand { border-bottom-color: #333; }
   #results { background: #1c1c1e; border-top-color: #333; }
   .sub, .hint { color: #999; }
