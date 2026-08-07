@@ -26,19 +26,8 @@ test("cordHint: singular vs plural layer count", () => {
   assert.equal(cordHint(0.3, 0.15), "0.30 mm — 2 layers at 0.15 mm");
 });
 
-test("cordHint: names the tile minimum when the current width falls below it", () => {
-  assert.equal(cordHint(0.6, 0.15, 1.19, 3.58),
-    "0.60 mm — 4 layers at 0.15 mm · width 1.19 mm is below this tile's 3.58 mm minimum");
-});
-
-test("cordHint: says nothing extra once width clears the minimum", () => {
-  assert.equal(cordHint(0.6, 0.15, 2.0, 0.89), "0.60 mm — 4 layers at 0.15 mm");
-});
-
-test("cordHint: width exactly at the minimum is not flagged (the guard is >=)", () => {
-  assert.equal(cordHint(0.6, 0.15, 3.58, 3.58), "0.60 mm — 4 layers at 0.15 mm");
-});
-
-test("cordHint: omits the width clause when the minimum is unknown", () => {
-  assert.equal(cordHint(0.6, 0.15), "0.60 mm — 4 layers at 0.15 mm");
+// The hint speaks only about height. Width used to earn a "below this tile's minimum" clause,
+// which the sub-lattice cord removed along with the tile-derived minimum itself.
+test("cordHint: says nothing about width", () => {
+  assert.doesNotMatch(cordHint(0.6, 0.15), /width|minimum/);
 });

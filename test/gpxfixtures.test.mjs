@@ -15,8 +15,7 @@ import { segmentsFromDocument, segmentsOrExplain } from "../src/ui/gpxparse.js";
 import { fitTile, clippedFraction } from "../src/core/gpx.js";
 import { MM_PER_KM_MAX } from "../src/core/urlstate.js";
 import { planTile } from "../src/core/pipeline.js";
-import { trailToPrintMm, resample, corridorMask, halfWFor, DS_FACTOR } from "../src/core/corridor.js";
-import { buildDrape } from "../src/core/mesh.js";
+import { trailToPrintMm, cordSolid, cordTris, admissibleCells } from "../src/core/corridor.js";
 import { checkWatertight, signedVolume } from "../src/core/validate.js";
 
 const parser = new DOMParser({ onError: () => {} });
@@ -145,7 +144,7 @@ test("golden: every refused fixture is refused for its own reason", () => {
 
 // --- the ribbon a real export bakes ---
 
-test("strava.gpx stamps a corridor and bakes a watertight cord", () => {
+test("strava.gpx meshes a corridor and bakes a watertight cord", () => {
   const segs = segmentsFromDocument(doc("strava.gpx"));
   // Explicit 1:25000 framing on the trail's first point, not fitTile: the fixture is trimmed
   // to 8 points, so a fitted tile spans under 2px at z15 and planTile rejects it before a plan
@@ -158,16 +157,29 @@ test("strava.gpx stamps a corridor and bakes a watertight cord", () => {
   for (let r = 0; r < plan.gh; r++)
     for (let c = 0; c < plan.gw; c++) grid[r * plan.gw + c] = 200 + 30 * Math.sin(c / 11) + 20 * Math.cos(r / 9);
 
-  const halfW = halfWFor(1.6, plan.dx);
-  const stations = trailToPrintMm(segs, plan).map((p) => resample(p, halfW * DS_FACTOR));
-  const { cells, count } = corridorMask(stations, plan, halfW, undefined);
-  // Pinned exact rather than `> 0`: stable across runs (grid, trail and pitch are all fixed),
-  // and it moves if the stamping ever changes — verified by widening the requested cord from
-  // 1.6 to 2.0 mm, which shifts this count from 87 to 137.
-  assert.equal(count, 87);
+  const polys = trailToPrintMm(segs, plan);
+  const cellOk = admissibleCells(plan.gw, plan.gh, null);
+  const geom = { mmPerM: plan.mmPerM, emin: 150, exag: 1 };
 
-  const rib = buildDrape(grid, plan.gw, plan.gh, plan.span, cells,
-    { dx: plan.dx, dy: plan.dy, mmPerM: plan.mmPerM, emin: 150, exag: 1 }, 0.6);
+  // Covered area, in mm^2, is the physical quantity: a real trail's length times the requested
+  // width, plus the caps. Pinned against the trail's own measured length rather than a magic
+  // number, so it moves if either the width or the sweep ever drifts.
+  const soup = /** @type {NonNullable<ReturnType<typeof cordTris>>} */
+    (cordTris(grid, plan, polys, 1.6, geom, cellOk));
+  assert.ok(soup);
+  let area = 0, len = 0;
+  for (let i = 0; i < soup.tris.length; i += 3) {
+    const [p, q, r] = [soup.tris[i], soup.tris[i + 1], soup.tris[i + 2]];
+    area += Math.abs((soup.x[q] - soup.x[p]) * (soup.y[r] - soup.y[p])
+      - (soup.x[r] - soup.x[p]) * (soup.y[q] - soup.y[p])) / 2;
+  }
+  for (const p of polys) {
+    for (let i = 2; i < p.length; i += 2) len += Math.hypot(p[i] - p[i - 2], p[i + 1] - p[i - 1]);
+  }
+  const want = 1.6 * len + Math.PI * 0.8 * 0.8; // capsule: width x length, plus two half-caps
+  assert.ok(Math.abs(area - want) / want < 0.02, `${area.toFixed(3)} mm^2 vs ${want.toFixed(3)}`);
+
+  const rib = cordSolid(grid, plan, polys, 1.6, 0.6, geom, cellOk);
   assert.ok(rib);
   assert.ok(checkWatertight(rib).closed);
   assert.ok(signedVolume(rib) > 0);

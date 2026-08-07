@@ -1,13 +1,21 @@
-// GPX trail → the cell mask the ribbon solid is built over. Pure and headless: it takes a
-// TilePlan and plain arrays, and knows nothing about meshes or the DOM.
+// GPX trail → the printable cord solid. Pure and headless: it takes a TilePlan and plain
+// arrays, and knows nothing about the DOM.
 //
-// The trail is geometry in a different coordinate system from everything else here, so this
-// file is mostly one careful conversion and one rasterization.
+// The corridor is the region within halfW of the trail. It is NOT rasterized onto grid cells:
+// it is the sublevel set of a distance field, clipped against the terrain's own triangulation
+// on a refined sub-lattice. That is what lets a cord be thinner than a grid cell while its
+// underside stays congruent with the printed tile by construction rather than by tolerance.
+//
+// Distance-to-polyline also removes the reason the old cell version stamped discs instead of
+// sweeping: a sublevel set of a scalar field is one well-defined region however many times an
+// out-and-back trail retraces itself, so there is no self-intersection to union away.
 
 import { lonToGlobalX, latToGlobalY } from "./tilemath.js";
-import { cellsFromVertexMask } from "./mesh.js";
+import { cellsFromVertexMask, assembleSolid } from "./mesh.js";
 
 /** @typedef {import("./types.js").LatLon} LatLon */
+/** @typedef {import("./types.js").Clip} Clip */
+/** @typedef {import("./types.js").Solid} Solid */
 /** @typedef {import("./pipeline.js").TilePlan} TilePlan */
 
 /**
@@ -41,114 +49,350 @@ export function trailToPrintMm(segments, plan) {
 }
 
 /**
- * Uniform arc-length stations along one polyline.
+ * Split every segment of a polyline to at most `maxLen`, keeping all original vertices.
  *
- * `carry` is what makes spacing uniform along the TRAIL rather than restarting at every
- * recorded point: GPS samples are meters apart and stations are tenths of a millimeter, so
- * without it every vertex would seed a fresh run and the stamp would clump.
+ * Purely to bound the work of band-stamping: a diagonal segment of length L has a bounding box
+ * L/(2·width) times the area of the capsule inside it, so long segments would sweep the box for
+ * vertices that are nowhere near the trail. Real GPX points land far closer than maxLen at print
+ * scale, so this is usually inert — it exists so the bound holds for a decimated track.
+ *
+ * Unlike arc-length resampling, the last point is always emitted: stations at multiples of ds
+ * drop the tail, which would end the cord up to one spacing short of the trail.
  *
  * @param {Float64Array} poly x,y interleaved
- * @param {number} ds spacing in print mm
+ * @param {number} maxLen print mm
  * @returns {Float64Array}
  */
-export function resample(poly, ds) {
+export function chop(poly, maxLen) {
   /** @type {number[]} */
   const out = [poly[0], poly[1]];
-  let carry = 0;
   for (let i = 2; i < poly.length; i += 2) {
     const x0 = poly[i - 2], y0 = poly[i - 1], x1 = poly[i], y1 = poly[i + 1];
     const len = Math.hypot(x1 - x0, y1 - y0);
-    if (!(len > 0)) continue; // duplicate point: no direction to advance along
-    let t = ds - carry;
-    while (t <= len) {
-      out.push(x0 + ((x1 - x0) * t) / len, y0 + ((y1 - y0) * t) / len);
-      t += ds;
-    }
-    carry = len - (t - ds);
+    if (!(len > 0)) continue; // duplicate point: adds no capsule, and would divide by zero below
+    const n = Math.ceil(len / maxLen);
+    for (let j = 1; j < n; j++) out.push(x0 + ((x1 - x0) * j) / n, y0 + ((y1 - y0) * j) / n);
+    out.push(x1, y1); // exactly, not x0 + (x1-x0)*n/n
   }
   return Float64Array.from(out);
 }
 
 /**
- * Station spacing as a fraction of halfW.
+ * Sub-cells across the cord's width.
  *
- * Consecutive disc stamps meet at a waist of sqrt(halfW² − (ds/2)²), so spacing IS a width
- * error: measured across 12 trail orientations, ds = halfW costs 4.4% of nominal width and
- * ds = halfW/2 costs 1.3%. Halving again buys 0.6% and is not worth the stations.
+ * Not a precision knob. Distance to a line is affine, so linear interpolation along a sub-edge
+ * puts a crossing on the exact isoline and a straight cord comes out exactly the requested width
+ * at any k. This is about REPRESENTABILITY: the region has to contain interior lattice vertices,
+ * or a sub-triangle could span the whole cord with all three corners outside and emit nothing.
  */
-export const DS_FACTOR = 0.5;
+export const SUB_ACROSS = 4;
+
+/** Top-triangle ceiling for the cord. A backstop against a pathologically long thin trail, not
+ * a working constraint: at 0.4 mm it first bites past ~3 m of printed trail. */
+const TRI_BUDGET = 400_000;
+
+/** How close along a sub-edge a crossing has to be before it counts as landing ON the endpoint.
+ * A fraction of one sub-cell, so it moves a boundary by ~1e-10 mm — twelve orders below a
+ * nozzle, and far below the float noise it exists to absorb. */
+const T_EPS = 1e-9;
 
 /**
- * Stamp radius for a requested cord width.
+ * Sub-lattice refinement for a requested cord width.
  *
- * The +pitch/√2 is not a fudge. A cell joins the mask only when all four of its corners are
- * inside, so the cell mask is an EROSION of the vertex mask by up to a cell half-diagonal —
- * uncompensated, a 1.6 mm cord measures 1.36–1.44 mm. Adding the half-diagonal back centers
- * the printed width on the requested one.
+ * Cost scales with the CORD, not the tile — a cord already wider than SUB_ACROSS cells gets
+ * k = 1 and costs what the cell-snapped version did.
  *
- * @param {number} widthMm @param {number} pitchMm @returns {number}
+ * @param {number} widthMm @param {number} dx @param {number} dy @param {number} trailLenMm
+ * @returns {{ k: number, hx: number, hy: number }}
  */
-export const halfWFor = (widthMm, pitchMm) => widthMm / 2 + pitchMm / Math.SQRT2;
+export function subK(widthMm, dx, dy, trailLenMm) {
+  const pitch = Math.max(dx, dy);
+  // ~2 triangles per sub-cell over a band of trailLen × width; a k-refined cell holds k² of them.
+  const area = Math.max(trailLenMm * widthMm, dx * dy);
+  const kMax = Math.max(1, Math.floor(Math.sqrt((TRI_BUDGET * dx * dy) / (2 * area))));
+  const k = Math.min(Math.max(1, Math.ceil((SUB_ACROSS * pitch) / widthMm)), kMax);
+  // Under half the width the region can slip between lattice rows and bead into islands — each
+  // a closed manifold on its own, so checkWatertight cannot see the gap and the export would
+  // silently print a dotted line. Refuse instead, as the cell version's own width guard did.
+  if (pitch / k > widthMm / 2) {
+    // Reads as a sentence in the UI's trail banner (app.js), so it names the remedy rather than
+    // the mechanism — nobody can act on "sub-lattice".
+    throw new Error(`corridor: this trail is too long to carry a ${widthMm} mm cord — ` +
+      `widen it to at least ${(2 * pitch / kMax).toFixed(2)} mm, or import a shorter trail`);
+  }
+  return { k, hx: dx / k, hy: dy / k };
+}
 
 /**
- * Minimum cord width, in grid cells, pipeline.js refuses below. Below ~1.5 cells the corridor
- * beads into disconnected islands — each still a valid closed manifold on its own
- * (checkWatertight can't see the gap between them), so an unguarded export would silently print
- * a dotted line. Measured over 24 trail angles x 6 sub-cell offsets with halfWFor's own erosion
- * compensation in place: continuous at 1.5 cells (halfW 1.457), beaded at 1.0 (halfW 1.207). 2
- * keeps a margin over that threshold — this used to be 3, set before the compensation existed.
+ * Elevation at fractional grid coordinates, on the terrain's OWN triangulation.
  *
- * The single source of the "how wide is wide enough" fact: pipeline.js's throw and the UI's
- * pre-click warning (controls.cordHint, fed by app.js) both trace back to this constant so they
- * cannot drift apart.
+ * gridTopTris splits each cell across the B–C anti-diagonal, so the printed surface is
+ * piecewise-planar over those two triangles. Bilinear sampling is a different surface — a
+ * saddle — and differs by (zB + zC − zA − zD)/4 at the cell centre, which is exactly the gap
+ * that would make the cord float or dig in.
+ *
+ * @param {Float32Array} grid @param {number} gw @param {number} gh
+ * @param {number} col @param {number} row
+ * @returns {number}
  */
-export const MIN_CORD_CELLS = 2;
+export function subElev(grid, gw, gh, col, row) {
+  const c = Math.min(Math.max(Math.floor(col), 0), gw - 2);
+  const r = Math.min(Math.max(Math.floor(row), 0), gh - 2);
+  const u = col - c, v = row - r;
+  const A = r * gw + c, B = A + 1, C = A + gw, D = C + 1;
+  // The two branches agree on u+v = 1, so which side a diagonal point takes does not matter.
+  return u + v <= 1
+    ? grid[A] + u * (grid[B] - grid[A]) + v * (grid[C] - grid[A])
+    : grid[D] + (1 - u) * (grid[C] - grid[D]) + (1 - v) * (grid[B] - grid[D]);
+}
 
 /**
- * Resampled stations → the cell mask gridTopTris consumes.
+ * Cells the cord may occupy: the ones whose printed top really is two plain triangles.
  *
- * Disc-stamped rather than swept. A stamp is idempotent, so an out-and-back trail — which
- * retraces its own path exactly, and is the commonest shape a hiker exports — yields one cord
- * instead of two interpenetrating ones. A swept solid would be non-manifold there and rejected
- * downstream, and unioning it needs a mesh boolean this repo does not have.
+ * Rim cells are excluded even when all four corners read inside. Over one the tile's top is
+ * clip.js's clipped polygon, so a cord there would mate with a surface that is not what prints —
+ * and a ring can cut a corner-free sliver off a cell whose four corners are all inside, which
+ * the all-four-corners test alone does not catch.
  *
- * `footprint` is clip.inside, a VERTEX mask, and the stamp produces one too, so they AND
- * before the cell reduction and a hex or circle rim trims the cord for free.
- *
- * @param {Float64Array[]} stations one resampled polyline per segment, print mm
- * @param {TilePlan} plan
- * @param {number} halfW
- * @param {Uint8Array} [footprint] gw×gh vertex mask; omit for square, which has none
- * @returns {{ cells: Uint8Array, count: number }}
+ * @param {number} gw @param {number} gh @param {Clip | null} [clip]
+ * @returns {Uint8Array}
  */
-export function corridorMask(stations, plan, halfW, footprint) {
+export function admissibleCells(gw, gh, clip) {
+  if (!clip) return new Uint8Array((gw - 1) * (gh - 1)).fill(1);
+  const { cells } = cellsFromVertexMask(clip.inside, gw, gh);
+  for (const key of clip.bcells) cells[key] = 0;
+  return cells;
+}
+
+/** @param {number} px @param {number} py
+ *  @param {number} x0 @param {number} y0 @param {number} x1 @param {number} y1 */
+function distToSeg(px, py, x0, y0, x1, y1) {
+  const ax = x1 - x0, ay = y1 - y0, wx = px - x0, wy = py - y0;
+  const L2 = ax * ax + ay * ay;
+  let t = L2 > 0 ? (wx * ax + wy * ay) / L2 : 0;
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  return Math.hypot(wx - t * ax, wy - t * ay);
+}
+
+/**
+ * The cord's top surface as a triangle soup over its own vertex list.
+ *
+ * Vertices carry relief millimetres (`(e − emin)·mmPerM·exag`) rather than metres, so the caller
+ * only has to subtract each piece's floor. `emin` cancels there, exactly as in buildDrape; it is
+ * taken so `geom` has one shape across the builders.
+ *
+ * @param {Float32Array} grid @param {TilePlan} plan
+ * @param {Float64Array[]} polys trail in print mm, one per segment
+ * @param {number} widthMm
+ * @param {{ mmPerM: number, emin: number, exag: number }} geom
+ * @param {Uint8Array} cellOk admissible parent cells, (gw-1)×(gh-1)
+ * @returns {{ tris: Uint32Array, x: Float64Array, y: Float64Array, z: Float64Array } | null}
+ */
+export function cordTris(grid, plan, polys, widthMm, geom, cellOk) {
   const { gw, gh, dx, dy, span } = plan;
-  // The inverse of trailToPrintMm's/buildSolid's forward map (x=(col-c0)*dx, y=(r1-row)*dy).
-  // planTile always hands both this and trailToPrintMm the same full-coverage span (c0=0,
-  // r1=gh-1), so hardcoding those constants here happened to agree — until a caller passes a
-  // real sub-window span, which would then silently shift the corridor. Named sc0/sr1 so they
-  // don't collide with the c0/r1 loop bounds below.
-  const { c0: sc0, r1: sr1 } = span;
-  const vert = new Uint8Array(gw * gh);
-  const r2 = halfW * halfW;
-  const radC = Math.ceil(halfW / dx), radR = Math.ceil(halfW / dy);
-  for (const st of stations) {
-    for (let j = 0; j < st.length; j += 2) {
-      const px = st[j], py = st[j + 1];
-      // print mm → grid indices; y is flipped, matching buildSolid's xy()
-      const cc = px / dx + sc0, rr = sr1 - py / dy;
-      const c0 = Math.max(0, Math.ceil(cc - radC)), c1 = Math.min(gw - 1, Math.floor(cc + radC));
-      const r0 = Math.max(0, Math.ceil(rr - radR)), r1 = Math.min(gh - 1, Math.floor(rr + radR));
-      for (let r = r0; r <= r1; r++) {
-        const ddy = ((sr1 - r) * dy - py) ** 2;
-        for (let c = c0; c <= c1; c++) {
-          if (((c - sc0) * dx - px) ** 2 + ddy <= r2) vert[r * gw + c] = 1;
+  const { c0, r1 } = span;
+  const { mmPerM, emin, exag } = geom;
+  const halfW = widthMm / 2;
+
+  // Chopped first, because the budget below measures only the part of the trail that can land
+  // ON the tile. Framing a tile around one stretch of a long import is normal — gpx.js warns
+  // about the clipped remainder rather than refusing it — and counting kilometres that are never
+  // printed would coarsen the lattice, or refuse a width, over geometry the tile never carries.
+  const maxLen = 4 * widthMm;
+  const chopped = polys.map((p) => chop(p, maxLen));
+  const xLo = -c0 * dx - halfW, xHi = (gw - 1 - c0) * dx + halfW;
+  const yLo = (r1 - (gh - 1)) * dy - halfW, yHi = r1 * dy + halfW;
+  let trailLen = 0;
+  for (const st of chopped) {
+    for (let i = 2; i < st.length; i += 2) {
+      // Midpoint test: a chopped piece is at most 4 widths long, so the error at each tile
+      // crossing is far under what a triangle budget cares about.
+      const mx = (st[i] + st[i - 2]) / 2, my = (st[i + 1] + st[i - 1]) / 2;
+      if (mx < xLo || mx > xHi || my < yLo || my > yHi) continue;
+      trailLen += Math.hypot(st[i] - st[i - 2], st[i + 1] - st[i - 1]);
+    }
+  }
+  const { k, hx, hy } = subK(widthMm, dx, dy, trailLen);
+
+  // Sub-lattice indices: C along +x, R along +row (so −y, matching buildSolid's flip).
+  const maxC = (gw - 1) * k, maxR = (gh - 1) * k, strideC = maxC + 1;
+  const xOf = (/** @type {number} */ C) => (C / k - c0) * dx;
+  const yOf = (/** @type {number} */ R) => (r1 - R / k) * dy;
+
+  // Distance to the trail at every lattice vertex within the band. Dilating by 2·h past halfW is
+  // what makes interpolation safe: a vertex inside the region is within √2·h of every corner of
+  // every sub-cell touching it, so those corners all carry a true distance, never a sentinel.
+  /** @type {Map<number, number>} */
+  const dist = new Map();
+  const band = halfW + 2 * Math.max(hx, hy);
+  for (const st of chopped) {
+    // A one-point trail is a disc, not nothing, so it still gets one (degenerate) segment —
+    // distToSeg falls back to point distance when the segment has no length.
+    const nSeg = Math.max(1, st.length / 2 - 1);
+    for (let s = 0; s < nSeg; s++) {
+      const i = 2 * s;
+      const x0 = st[i], y0 = st[i + 1];
+      const x1 = st.length > 2 ? st[i + 2] : x0, y1 = st.length > 2 ? st[i + 3] : y0;
+      const cLo = Math.max(0, Math.ceil((Math.min(x0, x1) - band) / dx * k + c0 * k));
+      const cHi = Math.min(maxC, Math.floor((Math.max(x0, x1) + band) / dx * k + c0 * k));
+      const rLo = Math.max(0, Math.ceil((r1 - (Math.max(y0, y1) + band) / dy) * k));
+      const rHi = Math.min(maxR, Math.floor((r1 - (Math.min(y0, y1) - band) / dy) * k));
+      for (let R = rLo; R <= rHi; R++) {
+        const py = yOf(R), base = R * strideC;
+        for (let C = cLo; C <= cHi; C++) {
+          const d = distToSeg(xOf(C), py, x0, y0, x1, y1);
+          const key = base + C;
+          const prev = dist.get(key);
+          if (prev === undefined || d < prev) dist.set(key, d);
         }
       }
     }
   }
-  // The all-four-corners rule, and the erosion it implies, live in mesh.js next to the
-  // gridTopTris rule they encode — halfWFor above is the compensation for exactly that erosion,
-  // so the two must not be able to drift apart.
-  return cellsFromVertexMask(vert, gw, gh, footprint);
+  if (dist.size === 0) return null;
+
+  /** @type {number[]} */ const X = [];
+  /** @type {number[]} */ const Y = [];
+  /** @type {number[]} */ const Z = [];
+  /** @type {Map<number, number>} */ const latId = new Map();
+  /** @type {Map<number, number>} */ const cutId = new Map();
+  const relK = mmPerM * exag;
+  /** Local vertex at fractional grid coords. */
+  const push = (/** @type {number} */ col, /** @type {number} */ row) => {
+    X.push((col - c0) * dx);
+    Y.push((r1 - row) * dy);
+    Z.push((subElev(grid, gw, gh, col, row) - emin) * relK);
+    return X.length - 1;
+  };
+  const lattice = (/** @type {number} */ key) => {
+    let id = latId.get(key);
+    if (id === undefined) {
+      const R = (key / strideC) | 0;
+      id = push((key - R * strideC) / k, R / k);
+      latId.set(key, id);
+    }
+    return id;
+  };
+  /** Crossing on the edge between two lattice vertices of opposite insideness. Keys are ordered
+   *  so both incident triangles compute a bit-identical t and land on the same shared vertex.
+   *
+   *  The cache key is (lower vertex, direction), not (lower, upper): a sub-cell's edges only ever
+   *  run right, down, or along the anti-diagonal, so three directions name every edge, and the
+   *  three possible partners of one vertex always differ. Packing both endpoints instead would
+   *  need `lo * totalVertices + hi`, which passes 2^53 — and starts silently aliasing distinct
+   *  edges onto one vertex — on a 1000 mm tile carrying a 0.4 mm cord. */
+  const crossing = (/** @type {number} */ ka, /** @type {number} */ kb) => {
+    const lo = ka < kb ? ka : kb, hi = ka < kb ? kb : ka;
+    const d = hi - lo;
+    const pair = lo * 3 + (d === strideC ? 1 : d === 1 ? 0 : 2);
+    let id = cutId.get(pair);
+    if (id !== undefined) return id;
+    const fa = /** @type {number} */ (dist.get(lo)) - halfW;
+    const fb = /** @type {number} */ (dist.get(hi)) - halfW;
+    const t = fa / (fa - fb);
+    // A crossing landing on a lattice vertex IS that vertex; welding it there is what keeps the
+    // clip degrading to the correct closure instead of leaving a sliver between two coincident
+    // points. NEAR it counts as on it: the isoline runs exactly through lattice vertices whenever
+    // the trail is axis-aligned and the half-width is a whole number of sub-cells, and rounding
+    // then puts t at 4e-14 rather than 0 — a sliver of ~1e-28 mm², which is worse than the
+    // 1e-10 mm the snap moves the boundary by.
+    if (!(t > T_EPS)) return lattice(lo);
+    if (!(t < 1 - T_EPS)) return lattice(hi);
+    const Ra = (lo / strideC) | 0, Ca = lo - Ra * strideC;
+    const Rb = (hi / strideC) | 0, Cb = hi - Rb * strideC;
+    id = push((Ca + (Cb - Ca) * t) / k, (Ra + (Rb - Ra) * t) / k);
+    cutId.set(pair, id);
+    return id;
+  };
+
+  /** @type {number[]} */ const tris = [];
+  /** @type {number[]} */ const poly = [];
+  // Sutherland–Hodgman against f < 0, one path for every case. Triangles have no ambiguous
+  // saddle, so this needs no disambiguation — which marching squares would.
+  const key = [0, 0, 0], ins = [false, false, false];
+  const clipTri = (/** @type {number} */ k0, /** @type {number} */ k1, /** @type {number} */ k2,
+    /** @type {boolean} */ i0, /** @type {boolean} */ i1, /** @type {boolean} */ i2) => {
+    poly.length = 0;
+    key[0] = k0; key[1] = k1; key[2] = k2;
+    ins[0] = i0; ins[1] = i1; ins[2] = i2;
+    for (let i = 0; i < 3; i++) {
+      const j = i === 2 ? 0 : i + 1;
+      if (ins[i]) poly.push(lattice(key[i]));
+      if (ins[i] !== ins[j]) poly.push(crossing(key[i], key[j]));
+    }
+    let n = 0;
+    for (let i = 0; i < poly.length; i++) {
+      const v = poly[i];
+      if (n > 0 && poly[n - 1] === v) continue; // welded crossing, already emitted
+      poly[n++] = v;
+    }
+    if (n > 1 && poly[0] === poly[n - 1]) n--;
+    for (let i = 1; i + 1 < n; i++) tris.push(poly[0], poly[i], poly[i + 1]);
+  };
+
+  // Every stamped vertex names the ONE sub-cell it is the north-west corner of, so each cell is
+  // reached exactly once with no dedupe pass. A cell with any interior corner is always reached:
+  // that corner's own cell is stamped, and so are all four of its corners (the band argument
+  // above), which is also why a missing neighbour here can only mean "outside".
+  const cw = gw - 1;
+  for (const [A, dA] of dist) {
+    const R = (A / strideC) | 0, C = A - R * strideC;
+    if (R >= maxR || C >= maxC) continue; // last row/column bound no cell
+    const B = A + 1, Cc = A + strideC, D = Cc + 1;
+    const iA = dA < halfW, iB = (dist.get(B) ?? Infinity) < halfW;
+    const iC = (dist.get(Cc) ?? Infinity) < halfW, iD = (dist.get(D) ?? Infinity) < halfW;
+    if (!(iA || iB || iC || iD)) continue;
+    if (!cellOk[((R / k) | 0) * cw + ((C / k) | 0)]) continue;
+    clipTri(A, Cc, B, iA, iC, iB); // same winding and the same anti-diagonal as gridTopTris, so
+    clipTri(B, Cc, D, iB, iC, iD); // the sub-triangles nest exactly inside the parent's two
+  }
+  if (tris.length === 0) return null;
+  return {
+    tris: Uint32Array.from(tris), x: Float64Array.from(X),
+    y: Float64Array.from(Y), z: Float64Array.from(Z),
+  };
+}
+
+/**
+ * The printable cord: underside molded to the printed relief, top a constant `heightMm` above it.
+ *
+ * Floors are PER CONNECTED PIECE, not per part: a trail split by the tile's footprint or by
+ * multiple <trkseg>s can sit at very different elevations, and one shared floor would rest the
+ * lowest piece on the plate and leave the rest hanging — still closed and positive-volume, so
+ * nothing downstream would object. Pieces meeting at a single vertex merge, which is required
+ * rather than incidental: one vertex cannot carry two z values.
+ *
+ * @param {Float32Array} grid @param {TilePlan} plan
+ * @param {Float64Array[]} polys @param {number} widthMm @param {number} heightMm
+ * @param {{ mmPerM: number, emin: number, exag: number }} geom
+ * @param {Uint8Array} cellOk
+ * @returns {Solid | null}
+ */
+export function cordSolid(grid, plan, polys, widthMm, heightMm, geom, cellOk) {
+  const soup = cordTris(grid, plan, polys, widthMm, geom, cellOk);
+  if (!soup) return null;
+  const { tris, x, y, z } = soup;
+  const n = x.length;
+
+  const parent = new Int32Array(n);
+  for (let i = 0; i < n; i++) parent[i] = i;
+  /** @type {(i: number) => number} */
+  const find = (i) => {
+    let r = i;
+    while (parent[r] !== r) r = parent[r];
+    while (parent[i] !== r) { const up = parent[i]; parent[i] = r; i = up; }
+    return r;
+  };
+  for (let i = 0; i < tris.length; i += 3) {
+    const a = find(tris[i]), b = find(tris[i + 1]), c = find(tris[i + 2]);
+    if (a !== b) parent[b] = a;
+    if (a !== c) parent[c] = a;
+  }
+  const floor = new Float64Array(n).fill(Infinity);
+  for (let i = 0; i < tris.length; i++) {
+    const v = tris[i], r = find(v);
+    if (z[v] < floor[r]) floor[r] = z[v];
+  }
+  /** @type {(i: number) => number} */
+  const rest = (i) => z[i] - floor[find(i)];
+  return assembleSolid(tris, n, (i) => [x[i], y[i]], (i) => rest(i) + heightMm, rest, "mirror");
 }

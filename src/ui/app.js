@@ -7,7 +7,6 @@ import { initMap } from "./map.js";
 import { initPreview } from "./preview.js";
 import { wireControls, syncControls, wireHelp, cordHint } from "./controls.js";
 import { defaultTileName, planTile } from "../core/pipeline.js";
-import { MIN_CORD_CELLS } from "../core/corridor.js";
 import { encodeState, decodeState } from "../core/urlstate.js";
 import { PRESETS, DEFAULT_PRESET } from "./presets.js";
 import { BAND_NAMES } from "../core/colors.js";
@@ -119,13 +118,6 @@ function writeHash(s) {
 /** @type {Record<import("../core/types.js").Shape, number>} */
 const AREA_FRAC = { square: 1, hex: (3 * Math.sqrt(3)) / 8, circle: Math.PI / 4 };
 
-// The export tier's dx, cached from detailSummary's own EXPORT_MAX_TILES plan below — cordHint's
-// "too narrow for this tile" clause reuses it rather than planning a second time. Updated once
-// per crisp preview (not per store tick, unlike cordHint's own caller — see store.subscribe),
-// which is the same staleness detailSummary's own text already carries.
-/** @type {number | null} */
-let exportDx = null;
-
 // Resting status after the detailed preview lands: the resolution (real metres per
 // grid sample) and rough triangle count of what's on screen vs what Export will
 // bake at the full print budget — so the preview-vs-print gap is legible. Both are
@@ -143,11 +135,9 @@ function detailSummary(settings) {
   };
   try {
     const crisp = part(CRISP_MAX_TILES), exportPart = part(EXPORT_MAX_TILES);
-    exportDx = exportPart.dx;
     return `Preview: ${crisp.text}  ·  Export: ${exportPart.text}`;
   } catch {
-    exportDx = null; // e.g. a tile past the Mercator limit — no plan, so no minimum either
-    return ""; // leave the line blank
+    return ""; // e.g. a tile past the Mercator limit — no plan, so leave the line blank
   }
 }
 
@@ -219,8 +209,8 @@ worker.onmessage = ({ data }) => {
       // within 500 ms. But the status line still has to leave "Export — baking…", or the UI
       // reads as still running while the banner says it failed — so it gets a short pointer
       // instead of the raw pipeline error, which would only duplicate the banner's sentence.
-      if (/trail cord width/.test(data.error)) {
-        warnTrail(`Could not export the trail: ${data.error.replace(/^pipeline: /, "")}`);
+      if (/^corridor:/.test(data.error)) {
+        warnTrail(`Could not export the trail: ${data.error.replace(/^corridor: /, "")}`);
         setProgress("Export failed — see the trail warning above.");
       } else {
         setProgress(`Export failed: ${data.error}`);
@@ -332,12 +322,10 @@ store.subscribe((s) => {
   // set, so the budget is a frame, not the bake debounce: 0.8 ms for the largest real
   // trail measured (15.7k points), 4.4 ms at 100k.
   updateTrailWarning(s);
-  // Unconditional, unlike the guard above: height, width and layerMm all change without the
-  // trail changing. minWidthMm comes from exportDx, cached by detailSummary's own EXPORT_MAX_TILES
-  // plan (below) rather than planning again here — this runs on every store change, including a
-  // 30-60/s slider drag, and planTile is not free.
-  $("cordHint").textContent = cordHint(s.cord.heightMm, s.layerMm, s.cord.widthMm,
-    exportDx !== null ? MIN_CORD_CELLS * exportDx : undefined);
+  // Unconditional, unlike the guard above: both height and layerMm change without the trail
+  // changing. No width clause any more — the cord's width no longer depends on the tile's grid,
+  // so there is no tile-derived minimum to warn about before the click.
+  $("cordHint").textContent = cordHint(s.cord.heightMm, s.layerMm);
   // The inlays are the volume the two water controls displaced, so with neither on there is no
   // volume and the export silently gains nothing. Say so at the checkbox rather than let the
   // user find a .3mf with one object in it.

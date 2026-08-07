@@ -6,6 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { inflateRawSync } from "node:zlib";
 import { buildSolid, buildDrape, cellsFromVertexMask } from "../src/core/mesh.js";
+import { cordSolid, admissibleCells } from "../src/core/corridor.js";
 import { checkWatertight, signedVolume } from "../src/core/validate.js";
 import { planTile, bakeTileSolid, tileTo3mf } from "../src/core/pipeline.js";
 
@@ -296,15 +297,15 @@ test("tileTo3mf stacks tile, cord and inlays without overlap", async () => {
   // then has a high own-y and the pond a low one, which is the ordering that makes a missing
   // −lo correction land the pond inside the cord rather than merely wasting plate. With the two
   // swapped, the 10 mm gap absorbs the error and the placement bug is invisible.
-  const band = new Uint8Array(cw * (GH - 1));
-  for (let r = 1; r <= 4; r++) for (let c = 0; c < cw; c++) band[r * cw + c] = 1;
   const pond = new Uint8Array(cw * (GH - 1));
   for (let r = 32; r <= 36; r++) for (let c = 2; c <= 8; c++) pond[r * cw + c] = 1;
   const top = new Float32Array(GW * GH);
   for (let i = 0; i < grid.length; i++) top[i] = grid[i] + 40;
+  const plan = /** @type {any} */ ({ gw: GW, gh: GH, dx: GEOM.dx, dy: GEOM.dy, span: SPAN });
 
   const tile = buildSolid(grid, GW, GH, SPAN, new Uint8Array(cw * (GH - 1)).fill(1), GEOM);
-  const cord = buildDrape(grid, GW, GH, SPAN, band, GEOM, 0.6);
+  const cord = cordSolid(grid, plan, [Float64Array.from([1, 18, 18, 18])], 1.6, 0.6,
+    GEOM, admissibleCells(GW, GH, null));
   const inlays = buildDrape(grid, GW, GH, SPAN, pond, GEOM, top);
   assert.ok(cord && inlays);
 

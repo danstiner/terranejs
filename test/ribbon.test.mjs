@@ -3,42 +3,68 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { inflateRawSync } from "node:zlib";
-import { buildSolid, buildDrape } from "../src/core/mesh.js";
+import { buildSolid } from "../src/core/mesh.js";
+import { cordSolid, admissibleCells } from "../src/core/corridor.js";
 import { checkWatertight, signedVolume } from "../src/core/validate.js";
 import { planTile, bakeTileSolid, tileTo3mf } from "../src/core/pipeline.js";
-import { MIN_CORD_CELLS } from "../src/core/corridor.js";
 import { globalXToLon, globalYToLat } from "../src/core/tilemath.js";
 
-const GW = 60, GH = 60, H = 0.6;
+const GW = 60, GH = 60, H = 0.6, W = 1.6;
 const SPAN = { r0: 0, r1: GH - 1, c0: 0, c1: GW - 1 };
 const GEOM = { dx: 0.5, dy: 0.5, mmPerM: 0.04, emin: 0, exag: 1, base: 3 };
+const PLAN = /** @type {any} */ ({ gw: GW, gh: GH, dx: GEOM.dx, dy: GEOM.dy, span: SPAN });
+const ALL = admissibleCells(GW, GH, null);
 
-/** Lumpy but smooth terrain, so relief varies under the cord. */
+/** Lumpy but smooth terrain, so relief varies under the cord. The PRODUCT term is load-bearing,
+ *  not decoration: a separable f(c)+g(r) grid has zero twist in every cell, and there bilinear
+ *  and the terrain's two triangle planes agree exactly — so a separable fixture cannot tell a
+ *  correct underside from a bilinear one. Bounded rather than a plain c*r, which would push
+ *  relief high enough for float32 spacing to swamp the 0.6 mm thickness check below. */
 const grid = new Float32Array(GW * GH);
 for (let r = 0; r < GH; r++)
   for (let c = 0; c < GW; c++)
-    grid[r * GW + c] = 40 * Math.sin(c / 7) + 25 * Math.cos(r / 5) + 100;
+    grid[r * GW + c] = 40 * Math.sin(c / 7) + 25 * Math.cos(r / 5)
+      + 12 * Math.sin(c / 9) * Math.cos(r / 7) + 100;
 
-/** @param {(r:number,c:number)=>boolean} pred */
-function mask(pred) {
-  const cw = GW - 1, ch = GH - 1, m = new Uint8Array(cw * ch);
-  for (let r = 0; r < ch; r++) for (let c = 0; c < cw; c++) if (pred(r, c)) m[r * cw + c] = 1;
-  return m;
+/** @param {Float64Array[]} polys @param {number} [widthMm] */
+const cord = (polys, widthMm = W) => cordSolid(grid, PLAN, polys, widthMm, H, GEOM, ALL);
+
+/** Triangles with no area. checkWatertight is topology-only — it counts edges and never looks
+ *  at a coordinate — so a sliver between two coincident vertices is invisible to it, and to
+ *  signedVolume. Slicers are the ones that trip over them.
+ *  @param {import("../src/core/types.js").Solid} s */
+function zeroAreaTris(s) {
+  const { positions: P, indices: I } = s;
+  let n = 0;
+  for (let i = 0; i < I.length; i += 3) {
+    const [a, b, c] = [3 * I[i], 3 * I[i + 1], 3 * I[i + 2]];
+    const u = [P[b] - P[a], P[b + 1] - P[a + 1], P[b + 2] - P[a + 2]];
+    const v = [P[c] - P[a], P[c + 1] - P[a + 1], P[c + 2] - P[a + 2]];
+    const n2 = Math.hypot(u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]);
+    if (n2 <= 1e-12) n++;
+  }
+  return n;
 }
-const BAND = mask((r) => r >= 28 && r <= 31);                       // straight
-const CURVED = mask((r, c) => Math.abs(r - (30 + 15 * Math.sin(c / 10))) <= 2); // curved
-const CROSS = mask((r, c) => (r >= 28 && r <= 31) || (c >= 20 && c <= 23)); // self-crossing
-const TWO = mask((r) => (r >= 10 && r <= 12) || (r >= 40 && r <= 42));      // two segments
+
+// y = (r1 − row)·dy, so these sit around grid row 30 — mid-tile, clear of every edge.
+const BAND = [Float64Array.from([2, 14.5, 27, 14.5])];
+const CURVED = [Float64Array.from(
+  Array.from({ length: 40 }, (_, i) => [2 + i * 0.64, 14.5 + 5 * Math.sin(i / 6)]).flat())];
+const CROSS = [Float64Array.from([2, 14.5, 27, 14.5]), Float64Array.from([11, 2, 11, 27])];
+const RETRACE = [Float64Array.from([2, 14.5, 27, 14.5, 2, 14.5])];
+const TWO = [Float64Array.from([2, 24, 27, 24]), Float64Array.from([2, 5, 27, 5])];
 
 test("ribbon is watertight and positive-volume for every trail shape", () => {
-  /** @type {[string, Uint8Array][]} */
-  const shapes = [["straight", BAND], ["curved", CURVED], ["self-crossing", CROSS], ["two segments", TWO]];
-  for (const [name, m] of shapes) {
-    const rib = buildDrape(grid, GW, GH, SPAN, m, GEOM, H);
+  /** @type {[string, Float64Array[]][]} */
+  const shapes = [["straight", BAND], ["curved", CURVED], ["crossing", CROSS],
+    ["out-and-back", RETRACE], ["two segments", TWO]];
+  for (const [name, polys] of shapes) {
+    const rib = cord(polys);
     assert.ok(rib, `${name}: built`);
     const wt = checkWatertight(rib);
     assert.ok(wt.closed, `${name}: ${wt.unmatched} unmatched edges`);
     assert.ok(signedVolume(rib) > 0, `${name}: inside-out`);
+    assert.equal(zeroAreaTris(rib), 0, `${name}: degenerate triangles`);
   }
 });
 
@@ -56,51 +82,109 @@ function columns(P) {
   return m;
 }
 
+// Cross-mesh congruence: read the terrain height off the TILE SOLID's own emitted vertices,
+// through the tile's own triangulation, and compare it to the cord's underside at the same x,y.
+// The cord's vertices mostly do NOT coincide with grid vertices any more, so this interpolates —
+// and interpolating on the wrong surface is exactly the bug being hunted. A bilinear sample, or
+// a cord triangle straddling two terrain triangles, both break the constancy asserted here; the
+// absolute plane values are pinned separately in corridor.test.mjs.
 test("the underside is the terrain surface, offset by one constant", () => {
-  const rib = buildDrape(grid, GW, GH, SPAN, BAND, GEOM, H);
+  const rib = cord(BAND);
   assert.ok(rib);
   const tile = buildSolid(grid, GW, GH, SPAN, new Uint8Array((GW - 1) * (GH - 1)).fill(1), GEOM);
-  const top = columns(tile.positions);   // tile: hi = terrain surface, lo = z-0 base plane
-  const bot = columns(rib.positions);    // cord: lo = molded underside, hi = underside + H
+  const top = columns(tile.positions); // hi = terrain surface, lo = the z-0 base plane
+  /** Tile surface height at fractional grid coords, from the tile mesh's own vertices.
+   * @param {number} col @param {number} row */
+  const tileZ = (col, row) => {
+    const c = Math.min(Math.floor(col), GW - 2), r = Math.min(Math.floor(row), GH - 2);
+    const u = col - c, v = row - r;
+    /** @param {number} cc @param {number} rr */
+    const at = (cc, rr) => top.get(`${(cc * GEOM.dx).toFixed(6)},${((GH - 1 - rr) * GEOM.dy).toFixed(6)}`).hi;
+    const [A, B, C, D] = [at(c, r), at(c + 1, r), at(c, r + 1), at(c + 1, r + 1)];
+    return u + v <= 1 ? A + u * (B - A) + v * (C - A) : D + (1 - u) * (C - D) + (1 - v) * (B - D);
+  };
 
-  // Ground truth for the offset, computed independently of buildDrape: the corridor's own
-  // minimum relief over the vertex rows/cols BAND's cells touch (cell rows 28..31 span vertex
-  // rows 28..32; every column). A buildDrape that subtracted the tile's emin (0 here) or
-  // nothing at all would STILL produce a column-constant offset — top.hi - rib.lo always
-  // reduces to base + (whatever constant got subtracted), since relief(id) cancels regardless
-  // of what that constant is. Checking only that the offset is constant across columns cannot
-  // tell the right constant from a wrong one; pinning the VALUE against an independent
-  // computation is what actually exercises the congruence invariant.
-  let minRelief = Infinity;
-  for (let r = 28; r <= 32; r++)
-    for (let c = 0; c < GW; c++) minRelief = Math.min(minRelief, grid[r * GW + c] * GEOM.mmPerM);
-  const expected = GEOM.base + minRelief;
-
-  let checked = 0;
-  for (const [k, r] of bot) {
-    const t = top.get(k);
-    if (!t) continue;
-    const d = t.hi - r.lo;
-    assert.ok(Math.abs(d - expected) < 1e-6, `column ${k}: offset ${d}, expected ${expected}`);
+  const P = rib.positions;
+  const seen = new Map(); // (x,y) -> lowest z, i.e. the molded underside
+  for (let i = 0; i < P.length / 3; i++) {
+    const k = `${P[3 * i].toFixed(6)},${P[3 * i + 1].toFixed(6)}`;
+    seen.set(k, Math.min(seen.get(k) ?? Infinity, P[3 * i + 2]));
+  }
+  let offset = null, checked = 0, lowest = Infinity;
+  for (const [k, lo] of seen) {
+    const [x, y] = k.split(",").map(Number);
+    const d = tileZ(x / GEOM.dx, GH - 1 - y / GEOM.dy) - lo;
+    if (offset === null) offset = d;
+    // 1e-5, not 1e-9: both heights are read back out of Float32Array positions, and float32's
+    // spacing at these magnitudes is already ~5e-7. A bilinear underside is off by orders more.
+    assert.ok(Math.abs(d - offset) < 1e-5, `column ${k}: offset ${d}, expected ${offset}`);
+    lowest = Math.min(lowest, lo);
     checked++;
   }
-  assert.ok(checked > 100, `only ${checked} columns compared`);
+  assert.ok(checked > 200, `only ${checked} columns compared`);
+  // The offset is base + the cord's own floor, and the cord rests on the plate — so the floor is
+  // the terrain height under its lowest point, and the offset cannot be base alone.
+  assert.ok(Math.abs(lowest) < 1e-9, `lowest underside vertex at ${lowest}, expected 0`);
+  assert.ok(/** @type {number} */ (offset) > GEOM.base, `offset ${offset} carries no floor`);
 });
 
 test("the cord sits on the plate and has uniform thickness", () => {
-  const rib = buildDrape(grid, GW, GH, SPAN, BAND, GEOM, H);
+  const rib = cord(BAND);
   assert.ok(rib);
   const cols = columns(rib.positions);
   let lowest = Infinity;
   for (const { lo, hi } of cols.values()) {
     lowest = Math.min(lowest, lo);
-    assert.ok(Math.abs(hi - lo - H) < 1e-6, `thickness ${hi - lo}, expected ${H}`);
+    // 1e-5: hi and lo are both float32, so their difference carries that spacing (see above).
+    assert.ok(Math.abs(hi - lo - H) < 1e-5, `thickness ${hi - lo}, expected ${H}`);
   }
   assert.ok(Math.abs(lowest) < 1e-9, `lowest vertex at ${lowest}, expected 0`);
 });
 
+// Two pieces far apart in elevation: a shared floor would leave the higher one hanging in mid
+// air, still closed and positive-volume, so only its z gives it away.
+test("each disconnected piece rests on the plate", () => {
+  const stepped = new Float32Array(GW * GH);
+  for (let r = 0; r < GH; r++) for (let c = 0; c < GW; c++) stepped[r * GW + c] = r < GH / 2 ? 100 : 900;
+  const rib = cordSolid(stepped, PLAN, TWO, W, H, GEOM, ALL);
+  assert.ok(rib);
+  const P = rib.positions;
+  const lows = new Map(); // y band -> lowest z
+  let lowest = Infinity;
+  for (let i = 0; i < P.length / 3; i++) {
+    const y = P[3 * i + 1] > 12 ? "north" : "south";
+    lows.set(y, Math.min(lows.get(y) ?? Infinity, P[3 * i + 2]));
+    lowest = Math.min(lowest, P[3 * i + 2]);
+  }
+  assert.equal(lows.size, 2, "fixture must produce two separated pieces");
+  for (const [where, lo] of lows) assert.ok(Math.abs(lo) < 1e-9, `${where} piece floats at ${lo}`);
+  assert.equal(lowest, 0);
+});
+
+// The degenerate case the crossing-weld exists for. Everything here is an exact multiple of the
+// 0.5 mm pitch — trail on a lattice row, half-width exactly two sub-cells — so the cord's edges
+// land ON lattice vertices and their distance-to-trail is exactly the half-width. Those vertices
+// read as outside (the test is strict), and every crossing into them lands at t = 1. Welded to
+// the vertex, the clip degrades to the right closure. Unwelded, each incident edge mints its own
+// vertex at that same point, and the clipped polygon closes through two coincident corners — a
+// zero-area sliver. It stays topologically closed, so only zeroAreaTris sees it.
+// Measure-zero in real terrain, ordinary in an axis-aligned fixture — and in a hand-drawn trail.
+test("a cord whose edges land exactly on lattice vertices is still closed", () => {
+  const rib = cordSolid(grid, PLAN, [Float64Array.from([5, 14.5, 20, 14.5])], 2.0, H, GEOM, ALL);
+  assert.ok(rib);
+  const wt = checkWatertight(rib);
+  assert.ok(wt.closed, `${wt.unmatched} unmatched edges`);
+  assert.ok(signedVolume(rib) > 0);
+  assert.equal(zeroAreaTris(rib), 0, "an unwelded crossing leaves a sliver between coincident points");
+  let lo = Infinity, hi = -Infinity;
+  for (let i = 1; i < rib.positions.length; i += 3) {
+    lo = Math.min(lo, rib.positions[i]); hi = Math.max(hi, rib.positions[i]);
+  }
+  assert.ok(Math.abs(hi - lo - 2.0) < 1e-5, `spans ${(hi - lo).toFixed(6)} mm, want 2`);
+});
+
 test("an empty corridor yields no ribbon", () => {
-  assert.equal(buildDrape(grid, GW, GH, SPAN, new Uint8Array((GW - 1) * (GH - 1)), GEOM, H), null);
+  assert.equal(cord([Float64Array.from([-99, -99, -80, -99])]), null);
 });
 
 // --- pipeline wiring: bakeTileSolid / tileTo3mf --------------------------
@@ -122,13 +206,26 @@ test("bakeTileSolid: no trail -> ribbon is null", () => {
   assert.equal(ribbon, null);
 });
 
-test("bakeTileSolid: a ribbon narrower than MIN_CORD_CELLS*plan.dx throws naming the minimum", () => {
+// The width the old cell-snapped corridor refused outright. plan.dx here is 2.5 mm, so 0.4 mm
+// is a sixth of a grid cell — the case that motivated the sub-lattice.
+test("bakeTileSolid: a cord far narrower than the grid pitch bakes, and is 0.4 mm wide", () => {
   const plan = planTile(PIPE_SETTINGS, { z: 10 });
-  const trail = { segments: [[/** @type {[number, number]} */ ([0, 0])]], widthMm: plan.dx, heightMm: 1 };
-  const minMm = (MIN_CORD_CELLS * plan.dx).toFixed(2);
-  assert.throws(() => bakeTileSolid(flatMosaicFor(plan), plan, PIPE_SETTINGS, undefined, trail),
-    (/** @type {Error} */ err) => err.message.includes(`${minMm} mm`),
-    `error must name the ${minMm} mm minimum`);
+  const { window: win, z } = plan;
+  const lat = globalYToLat(win.gy0 + 20, z);
+  /** @type {import("../src/core/types.js").LatLon[][]} */
+  const segments = [[[lat, globalXToLon(win.gx0 + 8, z)], [lat, globalXToLon(win.gx0 + 32, z)]]];
+  const { ribbon } = bakeTileSolid(flatMosaicFor(plan), plan, PIPE_SETTINGS, undefined,
+    { segments, widthMm: 0.4, heightMm: 1 });
+  assert.ok(ribbon, `0.4 mm must bake on a ${plan.dx} mm grid`);
+  assert.ok(checkWatertight(ribbon).closed);
+  assert.ok(signedVolume(ribbon) > 0);
+  let lo = Infinity, hi = -Infinity;
+  for (let i = 1; i < ribbon.positions.length; i += 3) {
+    lo = Math.min(lo, ribbon.positions[i]); hi = Math.max(hi, ribbon.positions[i]);
+  }
+  // Exact but for float32: an axis-aligned cord's edges land on the isoline exactly, and what
+  // is left is the precision of Solid.positions at these tile coordinates.
+  assert.ok(Math.abs(hi - lo - 0.4) < 1e-4, `cord spans ${(hi - lo).toFixed(6)} mm across, want 0.4`);
 });
 
 // checkWatertight can't see this: it only reads `indices`, never z, so a mirrored ribbon with
@@ -232,7 +329,7 @@ function modelXml(bytes) {
 
 test("tileTo3mf writes the ribbon as a second object, clear of the tile", async () => {
   const tile = buildSolid(grid, GW, GH, SPAN, new Uint8Array((GW - 1) * (GH - 1)).fill(1), GEOM);
-  const rib = buildDrape(grid, GW, GH, SPAN, BAND, GEOM, H);
+  const rib = cord(BAND);
   assert.ok(rib);
   const xml = modelXml(await tileTo3mf("t", tile, undefined, rib));
   assert.equal((xml.match(/<object /g) ?? []).length, 2);
