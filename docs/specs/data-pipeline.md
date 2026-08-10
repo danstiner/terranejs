@@ -186,7 +186,9 @@ two orthogonal controls decide where the water and that line sit:
    design: a reservoir far above a river drops all the way to the shared plane, and how far any
    given water body falls depends on where it started — a single number cannot describe it. On
    one 667 km Peru tile the ocean falls 0.3 mm of print while a 5009 m lake falls 6.3 mm.
-2. **Water recess** (slider, 0–5 mm). Sinks all water that much further in print space without
+2. **Water recess** (slider, 0–5 mm in 0.5 mm steps — half a millimetre is 3–4 layers at a
+   typical layer height, and the shallowest step that still reads as a step). Sinks all water
+   that much further in print space without
    moving the color line — a groove between water and land. With the checkbox off, a large
    recess can sink even high water below the sea-level line — blue pits where lakes were;
    documented, not guarded.
