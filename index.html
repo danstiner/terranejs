@@ -169,6 +169,17 @@
         <button type="button" data-mode="2">Elevation</button>
         <button type="button" data-mode="3" title="Where the source data carries fine structure. Descriptive, not a quality score.">Detail</button>
       </div>
+      <!-- Camera compass. The disc IS the tile's ground plane as the camera sees it, so it
+           flattens as the view lowers; preview.js places the letters each frame. North is
+           exactly +y with no convergence caveat — Web Mercator is conformal with meridians as
+           vertical lines, so grid north is true north across the tile, and the picker is
+           north-up. Doubles as Reset view. -->
+      <button id="rose" type="button" title="Reset view" aria-label="Reset view">
+        <svg viewBox="-24 -24 48 48" aria-hidden="true">
+          <ellipse class="disc" cx="0" cy="0" rx="18" ry="18" />
+          <text class="n">N</text><text>E</text><text>S</text><text>W</text>
+        </svg>
+      </button>
     </div>
     <div id="results">
       <div id="resultbar">
