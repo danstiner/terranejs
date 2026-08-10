@@ -26,15 +26,18 @@ import { parseGpxText } from "./gpxparse.js";
 /** @typedef {import("../core/urlstate.js").ShareableState & { trail: Trail | null, cord: Cord }} AppState */
 /** @typedef {import("../core/pipeline.js").TileSettings} TileSettings */
 
-// Max source-tile budget per bake, one per quality tier (passed as `maxTiles`). Preview
-// detail is scaled to the viewport, not the print — a small tile budget keeps the bake fast
-// and the fetch light on a free tile host. See data-pipeline.md "Resolution floor".
-// 4 is a 2×2: a region narrower than the tile spacing touches at most two tiles per axis, so
-// the budget is met wherever it sits. 1 demands missing every border — a property of position,
-// not of need, with no floor under it. See data-pipeline.md "Resolution floor".
+// Max source-tile budget per bake, one per quality tier (passed as `maxTiles`). Preview detail
+// is scaled to the viewport, not the print — a small budget keeps the bake fast and the fetch
+// light on a free tile host. 4 is a 2×2: a region narrower than the tile spacing touches at most
+// two tiles per axis, so the budget is met wherever it sits; 1 demands missing every border, a
+// property of position rather than of need. See data-pipeline.md "Resolution floor".
 const FAST_MAX_TILES = 4;      // 2×2 → instant relief while the detailed bake runs
 const CRISP_MAX_TILES = 16;    // ~4×4 tiles → one zoom deeper on wide tiles, still a light fetch
 const EXPORT_MAX_TILES = 300;  // full print resolution (core's default tile budget)
+
+// Each tier gets its own timer, both restarted by every change.
+const QUICK_MS = 100;   // relief while the user is still moving
+const SETTLE_MS = 2000; // they stopped — the only moment worth spending a sharp bake on
 
 // A shared link carries the full state, not a preset name: presets get retuned (a recentre, a
 // scale nudge), and a name would silently repoint every old link at the new framing. An
@@ -93,7 +96,9 @@ const worker = new Worker(workerUrl, { type: "module" });
 let gen = 0;
 let previewGen = 0;
 let exportGen = -1; // -1 = no export in flight
-let previewPhase = /** @type {"idle" | "fast" | "crisp"} */ ("idle");
+// "pending" = quick mesh on screen, sharp pass owed but not posted. Nothing that describes the
+// crisp bake (water banner, detailSummary) may show while there.
+let previewPhase = /** @type {"idle" | "fast" | "pending" | "crisp"} */ ("idle");
 /** @type {TileSettings | null} */
 let previewSettings = null;
 /** The trail the live preview is being baked for, snapshotted with its settings: the crisp pass is
@@ -102,7 +107,9 @@ let previewSettings = null;
 let previewTrail = null;
 let exportName = "";
 let previewDeferred = false; // a preview requested during an export; run once the export finishes
-let lastHash = ""; // last payload written, so a settled debounce doesn't replaceState redundantly
+// The address bar as this tab last saw it — our write, or the user's. Seeded from the bar so
+// writeHash's guard doesn't read a restored link as somebody else's edit.
+let lastHash = location.hash.replace(/^#/, "");
 
 /** Put the state in the address bar. replaceState, not pushState: a map drag fires continuously
  * and each nudge as a history entry would bury the back button. (replaceState never fires
@@ -110,7 +117,12 @@ let lastHash = ""; // last payload written, so a settled debounce doesn't replac
  * @param {AppState} s */
 function writeHash(s) {
   const hash = encodeState(s);
-  if (hash && hash !== lastHash) { lastHash = hash; history.replaceState(null, "", `#${hash}`); }
+  if (!hash || hash === lastHash) return;
+  // Anything else in the bar is the user's — a paste, whose hashchange is queued behind this.
+  // Overwriting loses it silently: that handler would then see `h === lastHash` and bail.
+  if (location.hash.replace(/^#/, "") !== lastHash) return;
+  lastHash = hash;
+  history.replaceState(null, "", `#${hash}`);
 }
 
 // Both numbers below come off the FOOTPRINT, never the window: a clipped shape discards its
@@ -267,7 +279,8 @@ worker.onmessage = ({ data }) => {
   if (data.progress) { setProgress(`${mode} — fetching terrain ${data.progress.done}/${data.progress.total}`); return; }
   if (data.baking) { setProgress(`${mode} — baking…`); return; }
   // Hide the warning too — it describes the previous mesh, which "Preview failed" just orphaned.
-  if (data.error) { setProgress(`Preview failed: ${data.error}`); previewPhase = "idle"; $("waterWarn").hidden = true; return; }
+  // pump() so a change made during the failed bake isn't left waiting for the next one.
+  if (data.error) { setProgress(`Preview failed: ${data.error}`); previewPhase = "idle"; $("waterWarn").hidden = true; pump(); return; }
   // Both tiers report it: they bake at different pitches, so a cord the coarse pass refuses can
   // still be drawn by the sharp one, and the banner follows whichever mesh is on screen rather
   // than latching. The width is the snapshot the refused bake was issued for, not the live store,
@@ -280,9 +293,9 @@ worker.onmessage = ({ data }) => {
   preview.setTiles([{ positions: data.positions, indices: data.indices, normals: data.normals, bands: data.bands }], data.frame, data.cord);
   renderLegend(data.bands);
   if (previewPhase === "fast") {
-    previewPhase = "crisp"; // fast relief is up; refine to viewport-sharp
-    setProgress("Detailed preview…");
-    worker.postMessage({ gen: previewGen, settings: previewSettings, maxTiles: CRISP_MAX_TILES, format: "mesh", coverage: true, trail: previewTrail });
+    previewPhase = "pending"; // relief is up; the sharp pass waits for the settle timer
+    // Not detailSummary: those numbers are the crisp mesh's, and the coarse one is on screen.
+    setProgress("Quick preview…");
   } else {
     // Crisp pass only. The one-tile fast bake resolves the shoreline too coarsely to judge a
     // 1%-of-tile threshold, and letting it drive the banner makes it flash and vanish a second
@@ -291,6 +304,7 @@ worker.onmessage = ({ data }) => {
     previewPhase = "idle";
     setProgress(previewSettings ? detailSummary(previewSettings) : "");
   }
+  pump(); // the worker is free — hand it whatever came due while it was busy
 };
 
 // A worker-level failure (module load, uncaught throw) never yields a message, so
@@ -301,19 +315,64 @@ worker.onerror = (e) => {
   if (exportGen !== -1) { /** @type {HTMLButtonElement} */ ($("export")).disabled = false; exportGen = -1; }
 };
 
-// Debounced fetch+bake → preview whenever the tile or its geom changes. Coarse
-// (FAST_MAX_TILES) first for instant relief, then CRISP_MAX_TILES swaps in. Superseded runs' replies
-// are dropped by generation, so a slow bake for an old tile never clobbers a newer.
-let timer = 0;
+// Debounced fetch+bake → preview whenever the tile or its geom changes: coarse (FAST_MAX_TILES)
+// on the quick timer, CRISP_MAX_TILES on the settle timer. Superseded runs' replies are dropped
+// by generation, so a slow bake for an old tile never clobbers a newer.
+let quickTimer = 0;
+let settleTimer = 0;
+// What the worker owes once it is free. It runs one job at a time and never skips superseded
+// messages, so posting into a busy worker delays every job after it for a result nobody will
+// look at. A tier that comes due mid-bake waits here and is posted from that bake's reply.
+let quickDue = false;
+let crispDue = false;
+const bakeInFlight = () => previewPhase === "fast" || previewPhase === "crisp";
+
+/** Restart both timers, so a burst reads quick → quick → quick → (settle) → detailed. */
+function schedule() {
+  window.clearTimeout(quickTimer);
+  window.clearTimeout(settleTimer);
+  quickTimer = window.setTimeout(loadPreview, QUICK_MS);
+  settleTimer = window.setTimeout(settle, SETTLE_MS);
+}
+
+// The hash rides this timer, not the quick one: it describes state the user has stopped editing,
+// and at 100 ms a slider drag would replaceState several times a second (Safari has historically
+// throttled the History API to ~100 calls / 30 s). Cost: a URL copied within ~2 s of a change
+// loses it.
+function settle() {
+  writeHash(store.get());
+  crispDue = true;
+  pump();
+}
+
+// Post whatever the worker owes, now that it is free. Called from every reply. Quick first: it
+// is owed only because the state moved on, which is what makes a crisp for the older state moot.
+function pump() {
+  if (bakeInFlight()) return;
+  if (quickDue) { quickDue = false; loadPreview(); return; }
+  // Only from "pending": the crisp pass refines the quick mesh on screen, reusing its gen and
+  // settings snapshot.
+  if (crispDue && previewPhase === "pending") {
+    crispDue = false;
+    previewPhase = "crisp";
+    setProgress("Detailed preview…");
+    worker.postMessage({ gen: previewGen, settings: previewSettings, maxTiles: CRISP_MAX_TILES, format: "mesh", coverage: true, trail: previewTrail });
+  }
+}
+
 // A preview started mid-export would clobber the export's status line and just
 // queue behind it; defer it and run once the export finishes instead.
 function resyncAfterExport() {
-  if (previewDeferred) { previewDeferred = false; loadPreview(); }
+  if (previewDeferred) { previewDeferred = false; schedule(); }
 }
 function loadPreview() {
   if (exportGen !== -1) { previewDeferred = true; return; }
+  crispDue = false; // this bake replaces the state that crisp was owed to
+  if (bakeInFlight()) { quickDue = true; return; } // pump() posts it when that bake replies
+  // Reads the live state, so a quick timer armed for an earlier change would only bake it twice.
+  window.clearTimeout(quickTimer);
   const s = store.get();
-  if (!s.center) { preview.setTiles([]); setProgress("Click the map to place a tile."); return; }
+  if (!s.center) { preview.setTiles([]); previewPhase = "idle"; setProgress("Click the map to place a tile."); return; }
   // `trail` rides its own field (the worker reads only that one), so it is destructured out
   // rather than posted twice — a structured clone of 15.7k points per pass, for a field nothing
   // downstream of `settings` reads. Same split as the export click below.
@@ -367,8 +426,8 @@ store.subscribe((s) => {
   // trail measured (15.7k points), 4.4 ms at 100k.
   updateTrailWarning(s);
   // Unconditional, unlike the guard above: both height and layerMm change without the trail
-  // changing. No width clause any more — the cord's width no longer depends on the tile's grid,
-  // so there is no tile-derived minimum to warn about before the click.
+  // changing. Width has no clause — it doesn't depend on the tile's grid, so there is no
+  // tile-derived minimum to warn about before the click.
   $("cordHint").textContent = cordHint(s.cord.heightMm, s.layerMm);
   // The inlays are the volume the two water controls displaced, so with neither on there is no
   // volume and the export silently gains nothing. Say so at the checkbox rather than let the
@@ -396,8 +455,7 @@ store.subscribe((s) => {
   // See bakeInputsChanged.
   if (bakeInputsChanged(s)) {
     lastBakeState = s;
-    window.clearTimeout(timer);
-    timer = window.setTimeout(() => { writeHash(s); loadPreview(); }, 500); // same settling point
+    schedule();
   }
 });
 
@@ -447,8 +505,10 @@ window.addEventListener("hashchange", () => {
   const h = location.hash.replace(/^#/, "");
   if (h === lastHash) return;
   const s = decodeState(h);
-  if (!s) return;
+  // Recorded even when it doesn't decode: writeHash compares against it to tell our writes from
+  // the user's, so an unrecorded paste would block every later write and strand the bar on it.
   lastHash = h;
+  if (!s) return;
   presetSelect.value = "";
   syncControls(s);
   syncScaleInput(s.scale);
@@ -499,12 +559,9 @@ const warnTrail = (msg) => {
   w.hidden = false;
 };
 
-// Parse and fit BEFORE touching the store: a rejected import must leave the app
-// exactly as it was, and fitTile is where most rejections come from.
-//
-// One catch, because parseGpxText and fitTile both reject by throwing and both phrase
-// the message to complete the prefix below. A second shape — an empty return meaning
-// "no track points" — used to bypass it and print a differently-worded sentence.
+// Parse and fit BEFORE touching the store: a rejected import must leave the app untouched, and
+// fitTile is where most rejections come from. One catch covers both, because parseGpxText and
+// fitTile each reject by throwing and each phrase the message to complete the prefix below.
 /** @param {File} file */
 async function importTrail(file) {
   $("trailWarn").hidden = true; // clear a stale error before a new attempt can raise its own
@@ -552,12 +609,17 @@ $("export").addEventListener("click", () => {
   if (!s.center) return;
   const btn = /** @type {HTMLButtonElement} */ ($("export"));
   btn.disabled = true;
-  // Settle the hash first: clearTimeout below drops the pending write, which would otherwise
+  // Settle the hash first: the clearTimeouts below drop the pending write, which would otherwise
   // leave the address bar describing different settings than the model being exported.
   writeHash(s);
-  exportRefusal = null;       // this attempt's verdict supersedes the last one's
-  window.clearTimeout(timer); // cancel a queued preview…
-  previewGen = 0;             // …and void any in-flight one, so its trailing reply can't clobber the export status
+  exportRefusal = null;            // this attempt's verdict supersedes the last one's
+  window.clearTimeout(quickTimer); // cancel a queued preview…
+  window.clearTimeout(settleTimer);
+  previewGen = 0;                  // …and void any in-flight one, so its trailing reply can't clobber the export status
+  // Voiding the gen makes that reply return before it reaches pump(), so clear the phase here or
+  // bakeInFlight() parks every later preview in quickDue with nothing left to post it.
+  previewPhase = "idle";
+  quickDue = crispDue = false;     // both describe work this export supersedes
   // `trail` rides its own field below (the worker reads only that one), so it's destructured
   // out here rather than posted twice inside `settings` too.
   const { trail, ...settings } = { ...s, center: s.center };
