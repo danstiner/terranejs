@@ -5,6 +5,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { MAX_CHANGES, CORD_COLOR } from "../core/colors.js";
 import { sourcesAt, describeSources, rankSources, edgeDistance, featherPx, maxzoomFor } from "../core/coverage.js";
+import { roseMarks } from "./compass.js";
 
 /** @typedef {import("../core/types.js").Solid} Solid */
 /** @typedef {import("../core/colors.js").ColorChange} ColorChange */
@@ -41,6 +42,27 @@ import { sourcesAt, describeSources, rankSources, edgeDistance, featherPx, maxzo
 // speckling at ±0.1 m is straddling it.
 /** @param {number} m @returns {string} */
 const metres = (m) => `${m.toFixed(Math.abs(m) < 1 ? 3 : 1)} m`;
+
+// Home view: due south, 34.75 degrees above the plate. In tile space +x is east and +y is north
+// (buildSolid maps row -> (r1 - row) * dy), so a camera on -y puts north straight up-screen —
+// which is also what makes the compass rose readable at rest. Derived rather than typed so the
+// vector is unit by construction; the triple this replaced was 0.9993 long.
+const HOME_Z = 0.57;
+const HOME_Y = -Math.sqrt(1 - HOME_Z * HOME_Z); // -0.8216
+
+// Bounding-radius change big enough to buy a re-fit. About where clipping actually begins: the
+// fit frames the bounding SPHERE, whose radius equals a square tile's on-screen diagonal
+// half-extent three-quarter-on, so it carries only ~8% slack rather than the 41% that comparing
+// r to the half-width would suggest.
+//
+// Which settings can trip it is not fixed, because r is a sphere and so includes relief: gentle
+// relief on a wide tile moves ~1.12x across the whole 0.5-4 exag sweep, but at 1:4167 on a 150 mm
+// tile — 230 mm of relief over a 149.8 mm footprint — exag 1 -> 2.4 alone is 1.336x. That
+// looseness is affordable only because tripping costs the zoom and nothing else; it is why the
+// automatic path re-fits instead of reframing.
+const REFRAME_RATIO = 1.5;
+
+const ROSE_R = 18; // rose radius, in its own 48-unit viewBox
 
 // A lit terrain material that recolors by print-height: everything below a change's
 // Z prints in the lower filament, so banding by object-space position.z is the
@@ -240,6 +262,63 @@ export function initPreview(container) {
   const group = new THREE.Group();
   scene.add(group);
 
+  let boxR = 0;    // bounding radius of the current bake; 0 = nothing on screen
+  let framedR = 0; // boxR when the camera was last placed; 0 = no view yet
+
+  const fitDistance = () => boxR / Math.sin((camera.fov * Math.PI) / 180 / 2);
+
+  // Home view — the rose's job, and the ONLY thing that discards a viewpoint. Clip planes stay
+  // with setTiles: they track the bake, not the camera, so a rose click has no business moving
+  // them. The target returns to the origin only here, since OrbitControls pan moves it and
+  // preserving a camera without its pan preserves the wrong thing.
+  function frameView() {
+    if (!boxR) return;
+    const d = fitDistance();
+    camera.position.set(0, d * HOME_Y, d * HOME_Z);
+    controls.target.set(0, 0, 0);
+    controls.update();
+    framedR = boxR;
+  }
+
+  // The automatic path, for a tile that outgrew the view: pull the camera to the new fit distance
+  // along the line it is already on, so azimuth and elevation survive and only the zoom is spent.
+  // Rescaling the offset FROM THE TARGET rather than the world position matters once the view has
+  // been panned — scaling a panned position swings the camera off the tile.
+  function refitView() {
+    if (!boxR) return;
+    camera.position.sub(controls.target).setLength(fitDistance()).add(controls.target);
+    controls.update();
+    framedR = boxR;
+  }
+
+  // The rose is also the Reset view control (title/aria-label carry the name). Accepted cost: it
+  // takes pointer events, so an orbit drag cannot start on the disc.
+  const rose = /** @type {HTMLElement} */ (container.querySelector("#rose"));
+  const roseDisc = /** @type {SVGEllipseElement} */ (/** @type {unknown} */ (rose.querySelector(".disc")));
+  const roseText = /** @type {SVGTextElement[]} */ (/** @type {unknown} */ ([...rose.querySelectorAll("text")]));
+  rose.hidden = true; // nothing baked yet, and a compass over an empty pane orients nothing
+  rose.addEventListener("click", frameView);
+
+  // Redrawn from the live camera in the render loop below. Guarded on the last (az, sinPhi): with
+  // damping the camera is static most of the time, and an unmoved camera then writes no attributes.
+  let lastAz = NaN, lastSinPhi = NaN;
+  function updateRose() {
+    const vx = camera.position.x - controls.target.x;
+    const vy = camera.position.y - controls.target.y;
+    const vz = camera.position.z - controls.target.z;
+    const az = Math.atan2(vx, vy);
+    const sinPhi = vz / Math.hypot(vx, vy, vz);
+    if (az === lastAz && sinPhi === lastSinPhi) return;
+    lastAz = az; lastSinPhi = sinPhi;
+    // Floored: an <ellipse ry="0"> renders nothing, so a grazing view would lose the disc
+    // entirely rather than flatten it to the hairline it should be.
+    roseDisc.setAttribute("ry", String(Math.max(0.5, ROSE_R * Math.abs(sinPhi))));
+    roseMarks(az, sinPhi, ROSE_R).forEach((p, i) => {
+      roseText[i].setAttribute("x", p.x.toFixed(2));
+      roseText[i].setAttribute("y", p.y.toFixed(2));
+    });
+  }
+
   // Round down: clientWidth/clientHeight round to nearest, so a fractional pane yields a
   // canvas wider than its box. Where scrollbars take layout space that overflow adds one,
   // which shrinks the pane, which resizes the canvas — a loop with no fixed point.
@@ -277,6 +356,7 @@ export function initPreview(container) {
   const loop = () => {
     raf = requestAnimationFrame(loop);
     controls.update();
+    if (!rose.hidden) updateRose();
     if (probeDirty && frame && group.children.length) {
       raycaster.setFromCamera(pointer, camera);
       const hit = raycaster.intersectObjects(group.children, false)[0];
@@ -382,19 +462,32 @@ export function initPreview(container) {
       group.add(m);
     }
     applyView(); // the new bake carries new grids, so the overlay is rebuilt against them
-    if (box.isEmpty()) return;
+    // Forget the view along with the tile, so the next placement is framed rather than inheriting
+    // an orbit that belonged to a different region.
+    if (box.isEmpty()) { boxR = 0; framedR = 0; rose.hidden = true; return; }
 
-    // centre the assembly at the origin and frame it from a 3/4 southern view
+    // Recentre on EVERY bake, unlike the camera below: it is what keeps a preserved viewpoint
+    // stable when the bounding box moves, since relief height shifts the centre's z whenever
+    // exag, base or scale change.
     const center = box.getCenter(new THREE.Vector3());
     group.position.set(-center.x, -center.y, -center.z);
-    const r = box.getSize(new THREE.Vector3()).length() / 2;
-    const d = r / Math.sin((camera.fov * Math.PI) / 180 / 2);
-    camera.position.set(d * 0.31, -d * 0.76, d * 0.57);
+    boxR = box.getSize(new THREE.Vector3()).length() / 2;
+    // Placed here and not left to the loop: the markup's <text> carry no x/y, so between unhiding
+    // and the next animation frame all four letters sit stacked at the centre of a full circle.
+    rose.hidden = false;
+    updateRose();
+    // Clip planes follow the fit even when the camera is left alone: the z extent moves with
+    // exag/base/scale, and a stale far plane clips the relief the camera was preserved to show.
+    const d = fitDistance();
     camera.near = d / 100;
     camera.far = d * 10;
     camera.updateProjectionMatrix();
-    controls.target.set(0, 0, 0);
-    controls.update();
+    // First tile gets the home view; after that the camera is the user's, and outgrowing the frame
+    // buys a re-fit along the same line rather than a reset. Measured against the radius AT LAST
+    // FIT rather than at last bake, so a run of individually sub-threshold size steps still trips
+    // when their product crosses.
+    if (!framedR) frameView();
+    else if (boxR / framedR > REFRAME_RATIO || framedR / boxR > REFRAME_RATIO) refitView();
   }
 
   // Re-probe when coverage lands, or a cursor held still through the crisp pass keeps reading the

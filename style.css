@@ -145,6 +145,25 @@ label.check input { margin: 0; }
 #viewmodes button:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
 #viewmodes button.on { background: #2d6cdf; color: #fff; font-weight: 600; }
 
+/* Opposite corner from #viewmodes, and clear of the probe at bottom right. Unlike the probe this
+   one takes pointer events — it is the Reset view control — so an orbit drag cannot begin inside
+   it. A 48px dead zone in a corner is the accepted price of one control instead of two. */
+#rose {
+  position: absolute; top: 8px; right: 8px; z-index: 2;
+  width: 48px; height: 48px; padding: 0; border: 0; border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55); color: #d8d8d8; cursor: pointer;
+}
+#rose:hover { background: rgba(0, 0, 0, 0.75); color: #fff; }
+#rose svg { display: block; width: 100%; height: 100%; overflow: visible; }
+#rose .disc { fill: none; stroke: currentColor; stroke-width: 1; opacity: 0.45; }
+/* Unrotated and unsquashed: preview.js moves these, it never transforms them, because the glyph
+   is the part that has to stay readable when the disc flattens. */
+#rose text {
+  fill: currentColor; opacity: 0.65; font: 600 11px/1 system-ui, sans-serif;
+  text-anchor: middle; dominant-baseline: central;
+}
+#rose .n { opacity: 1; }
+
 /* Only wraps the scale input now; the margin replaces the hint paragraph that used to sit
    under it and carry the gap to the next control. */
 .row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
