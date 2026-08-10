@@ -3,7 +3,7 @@
 // combined bounds. three.js loads via the importmap.
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { MAX_CHANGES } from "../core/colors.js";
+import { MAX_CHANGES, CORD_COLOR } from "../core/colors.js";
 import { sourcesAt, describeSources, rankSources, edgeDistance, featherPx, maxzoomFor } from "../core/coverage.js";
 
 /** @typedef {import("../core/types.js").Solid} Solid */
@@ -18,6 +18,12 @@ import { sourcesAt, describeSources, rankSources, edgeDistance, featherPx, maxzo
 /**
  * @typedef {{ changes: ColorChange[], baseColor: [number,number,number], baseHex: string, baseName: string }} Bands
  *   worker payload for the mesh path; applyBands reads changes+baseColor, the app legend reads baseHex+baseName.
+ */
+/**
+ * @typedef {{ positions: Float32Array, indices: Uint32Array, normals: Float32Array }} Cord
+ *   the trail cord in the tile's own frame, baked for THIS placement: underside on the printed
+ *   terrain, where the trail runs. The export bakes the same mesh dropped to the plate instead
+ *   (cord.cordSolid), and drawing that one would bury it inside the tile.
  */
 /**
  * @typedef {{ features: import("../core/coverage.js").PlacedFeature[],
@@ -333,8 +339,9 @@ export function initPreview(container) {
   /**
    * @param {{ positions: Float32Array, indices: Uint32Array, normals: Float32Array, bands: Bands }[]} solids
    * @param {ProbeFrame | null} [probeFrame]
+   * @param {Cord | null} [cord]
    */
-  function setTiles(solids, probeFrame = null) {
+  function setTiles(solids, probeFrame = null, cord = null) {
     frame = probeFrame;
     coverage = null; // the new bake's provenance rides a later message; never show the old one against it
     for (const c of group.children) {
@@ -356,6 +363,23 @@ export function initPreview(container) {
       const mat = makeBandMaterial();
       applyBands(mat, s.bands);
       group.add(new THREE.Mesh(g, mat));
+    }
+    // In the group, so it inherits the centering below and the disposal above; outside `box`, so a
+    // cord cannot pull the camera off the tile it rests on.
+    if (cord && cord.positions.length) {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute("position", new THREE.BufferAttribute(cord.positions, 3));
+      g.setIndex(new THREE.BufferAttribute(cord.indices, 1));
+      g.setAttribute("normal", new THREE.BufferAttribute(cord.normals, 3));
+      // setRGB writes the WORKING space, so the sRGB tag is load-bearing: without it the authored
+      // color is read as linear and the cord renders visibly off.
+      const col = new THREE.Color().setRGB(...CORD_COLOR, THREE.SRGBColorSpace);
+      const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color: col, roughness: 0.95, metalness: 0 }));
+      // Non-pickable. The probe answers for the terrain CELL under the cursor, and the cord's top
+      // sits heightMm above it — a hit there would report an elevation over-read by
+      // heightMm/(mmPerM·exag) metres, with a source label, and no sign anything was wrong.
+      m.raycast = () => {};
+      group.add(m);
     }
     applyView(); // the new bake carries new grids, so the overlay is rebuilt against them
     if (box.isEmpty()) return;

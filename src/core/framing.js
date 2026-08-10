@@ -1,5 +1,9 @@
-// Trail geometry: frame a tile around a set of track points, and measure how much of
-// the trail a given framing cuts off. Pure and DOM-free.
+// Framing a tile against a trail: compute a framing that contains a set of track points, and
+// measure how much of the trail any given framing cuts off. Pure and DOM-free.
+//
+// Both directions, deliberately — clippedFraction is not an autofit postscript. It runs against
+// whatever framing is current, which is how the UI can warn about one the user set by hand after
+// declining or overriding the fit.
 //
 // Reading the GPX file itself lives in src/ui/gpxparse.js — parsing needs the browser's
 // XML parser, which this headless half of the project cannot reach.

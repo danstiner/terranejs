@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { inflateRawSync } from "node:zlib";
 import { buildSolid } from "../src/core/mesh.js";
-import { cordSolid, admissibleCells } from "../src/core/corridor.js";
+import { cordSolid, admissibleCells } from "../src/core/cord.js";
 import { checkWatertight, signedVolume } from "../src/core/validate.js";
 import { planTile, bakeTileSolid, tileTo3mf } from "../src/core/pipeline.js";
 import { globalXToLon, globalYToLat } from "../src/core/tilemath.js";
@@ -87,10 +87,11 @@ function columns(P) {
 // The cord's vertices mostly do NOT coincide with grid vertices any more, so this interpolates —
 // and interpolating on the wrong surface is exactly the bug being hunted. A bilinear sample, or
 // a cord triangle straddling two terrain triangles, both break the constancy asserted here; the
-// absolute plane values are pinned separately in corridor.test.mjs.
-test("the underside is the terrain surface, offset by one constant", () => {
-  const rib = cord(BAND);
-  assert.ok(rib);
+// absolute plane values are pinned separately in cord.test.mjs.
+/** Per-column gap from the cord's underside up to the tile's printed surface, plus the cord's
+ *  own lowest vertex. One reader for both placements — they differ only by these numbers.
+ *  @param {import("../src/core/types.js").Solid} rib */
+function undersideGaps(rib) {
   const tile = buildSolid(grid, GW, GH, SPAN, new Uint8Array((GW - 1) * (GH - 1)).fill(1), GEOM);
   const top = columns(tile.positions); // hi = terrain surface, lo = the z-0 base plane
   /** Tile surface height at fractional grid coords, from the tile mesh's own vertices.
@@ -110,22 +111,44 @@ test("the underside is the terrain surface, offset by one constant", () => {
     const k = `${P[3 * i].toFixed(6)},${P[3 * i + 1].toFixed(6)}`;
     seen.set(k, Math.min(seen.get(k) ?? Infinity, P[3 * i + 2]));
   }
-  let offset = null, checked = 0, lowest = Infinity;
+  /** @type {{ k: string, gap: number }[]} */
+  const gaps = [];
+  let lowest = Infinity;
   for (const [k, lo] of seen) {
     const [x, y] = k.split(",").map(Number);
-    const d = tileZ(x / GEOM.dx, GH - 1 - y / GEOM.dy) - lo;
-    if (offset === null) offset = d;
-    // 1e-5, not 1e-9: both heights are read back out of Float32Array positions, and float32's
-    // spacing at these magnitudes is already ~5e-7. A bilinear underside is off by orders more.
-    assert.ok(Math.abs(d - offset) < 1e-5, `column ${k}: offset ${d}, expected ${offset}`);
+    gaps.push({ k, gap: tileZ(x / GEOM.dx, GH - 1 - y / GEOM.dy) - lo });
     lowest = Math.min(lowest, lo);
-    checked++;
   }
-  assert.ok(checked > 200, `only ${checked} columns compared`);
+  return { gaps, lowest };
+}
+
+test("the underside is the terrain surface, offset by one constant", () => {
+  const rib = cord(BAND);
+  assert.ok(rib);
+  const { gaps, lowest } = undersideGaps(rib);
+  const offset = gaps[0].gap;
+  // 1e-5, not 1e-9: both heights are read back out of Float32Array positions, and float32's
+  // spacing at these magnitudes is already ~5e-7. A bilinear underside is off by orders more.
+  for (const { k, gap } of gaps) {
+    assert.ok(Math.abs(gap - offset) < 1e-5, `column ${k}: offset ${gap}, expected ${offset}`);
+  }
+  assert.ok(gaps.length > 200, `only ${gaps.length} columns compared`);
   // The offset is base + the cord's own floor, and the cord rests on the plate — so the floor is
   // the terrain height under its lowest point, and the offset cannot be base alone.
   assert.ok(Math.abs(lowest) < 1e-9, `lowest underside vertex at ${lowest}, expected 0`);
-  assert.ok(/** @type {number} */ (offset) > GEOM.base, `offset ${offset} carries no floor`);
+  assert.ok(offset > GEOM.base, `offset ${offset} carries no floor`);
+});
+
+// The preview's placement, asserted as the same congruence with the constant pinned to ZERO.
+// It shipped broken: the preview drew the export's plate-dropped cord, so every column's gap was
+// base plus the cord's own floor — the whole cord below the surface it mates with, and inside an
+// opaque tile. A non-zero constant here is that bug, whatever produced it.
+test("the terrain-mounted cord's underside IS the printed surface", () => {
+  const rib = cordSolid(grid, PLAN, BAND, W, H, GEOM, ALL, GEOM.base);
+  assert.ok(rib);
+  const { gaps } = undersideGaps(rib);
+  assert.ok(gaps.length > 200, `only ${gaps.length} columns compared`);
+  for (const { k, gap } of gaps) assert.ok(Math.abs(gap) < 1e-5, `column ${k}: sits ${gap} mm below the surface`);
 });
 
 test("the cord sits on the plate and has uniform thickness", () => {
@@ -185,6 +208,35 @@ test("a cord whose edges land exactly on lattice vertices is still closed", () =
 
 test("an empty corridor yields no ribbon", () => {
   assert.equal(cord([Float64Array.from([-99, -99, -80, -99])]), null);
+});
+
+// Same coarse-pitch case as cord.test.mjs, one level up: the assembled solid, not the soup.
+// A cord under two cells wide exercises the clip against far fewer parent triangles, so the
+// boundary is nearly all sub-cell crossings — assemble it and check it still closes.
+test("the ribbon is watertight at preview pitch", () => {
+  const N = 64;
+  const g = new Float32Array(N * N);
+  for (let r = 0; r < N; r++)
+    for (let c = 0; c < N; c++)
+      g[r * N + c] = 40 * Math.sin(c / 7) + 25 * Math.cos(r / 5) + 12 * Math.sin(c / 9) * Math.cos(r / 7) + 100;
+  const pitch = 0.8365;                             // FAST tier, where 1.6 mm is 1.91 cells
+  const plan = /** @type {any} */ ({ gw: N, gh: N, dx: pitch, dy: pitch,
+    span: { r0: 0, r1: N - 1, c0: 0, c1: N - 1 } });
+  const mid = ((N - 1) * pitch) / 2, len = (N - 6) * pitch;
+  /** @type {[string, Float64Array[]][]} */
+  const shapes = [
+    ["straight", [Float64Array.from([2 * pitch, mid, len, mid])]],
+    ["curved", [Float64Array.from(Array.from({ length: 40 },
+      (_, i) => [2 * pitch + (i * len) / 40, mid + 5 * Math.sin(i / 6)]).flat())]],
+  ];
+  for (const [name, polys] of shapes) {
+    const s = cordSolid(g, plan, polys, W, H, { mmPerM: 0.04, emin: 0, exag: 1 },
+      admissibleCells(N, N, null));
+    assert.ok(s, `${name}: no ribbon`);
+    const wt = checkWatertight(s);
+    assert.ok(wt.closed, `${name}: ${wt.unmatched} unmatched edges`);
+    assert.ok(signedVolume(s) > 0, `${name}: non-positive volume`);
+  }
 });
 
 // --- pipeline wiring: bakeTileSolid / tileTo3mf --------------------------
@@ -255,6 +307,30 @@ test("bakeTileSolid: with a wide-enough trail, ribbon is a validated watertight 
   assert.ok(ribbon);
   assert.ok(checkWatertight(ribbon).closed);
   assert.ok(signedVolume(ribbon) > 0);
+});
+
+// The wiring the preview rides on, at the level where it was missing. Flat terrain, so the
+// plate-dropped cord's underside is 0 and the terrain-mounted one's is exactly the base plate.
+test("bakeTileSolid: onTerrain places the cord on the printed surface, not the plate", () => {
+  const plan = planTile(PIPE_SETTINGS, { z: 10 });
+  const { window: win, z } = plan;
+  const lat = globalYToLat(win.gy0 + 20, z);
+  /** @type {import("../src/core/types.js").LatLon[][]} */
+  const segments = [[[lat, globalXToLon(win.gx0 + 10, z)], [lat, globalXToLon(win.gx0 + 30, z)]]];
+  const trail = { segments, widthMm: 12, heightMm: 1.5 };
+  /** @param {import("../src/core/types.js").Solid} s */
+  const lowest = (s) => {
+    let m = Infinity;
+    for (let i = 2; i < s.positions.length; i += 3) m = Math.min(m, s.positions[i]);
+    return m;
+  };
+  const plate = bakeTileSolid(flatMosaicFor(plan), plan, PIPE_SETTINGS, undefined, trail).ribbon;
+  const onTerrain = bakeTileSolid(flatMosaicFor(plan), plan, PIPE_SETTINGS, undefined,
+    { ...trail, onTerrain: true }).ribbon;
+  assert.ok(plate && onTerrain);
+  assert.ok(Math.abs(lowest(plate)) < 1e-6, `plate-dropped cord at ${lowest(plate)}, want 0`);
+  assert.ok(Math.abs(lowest(onTerrain) - PIPE_SETTINGS.base) < 1e-5,
+    `terrain-mounted cord at ${lowest(onTerrain)}, want the ${PIPE_SETTINGS.base} mm base`);
 });
 
 // The load-bearing ordering test: applyWaterRecess mutates the grid, and bakeTileSolid must

@@ -6,7 +6,7 @@ import { cellsBbox, cellWindows, footprintPx } from "./layout.js";
 import { sourceZoom, MAX_MERCATOR_LAT, globalXToLon, globalYToLat } from "./tilemath.js";
 import { cropGrid, gridRange } from "./resample.js";
 import { buildSolid, buildDrape, cellsFromVertexMask } from "./mesh.js";
-import { trailToPrintMm, cordSolid, admissibleCells } from "./corridor.js";
+import { trailToPrintMm, cordSolid, admissibleCells } from "./cord.js";
 import { clipPolygon, clipElevs, clipRange } from "./clip.js";
 import { applyWaterRecess } from "./water.js";
 import { checkWatertight, signedVolume } from "./validate.js";
@@ -130,7 +130,9 @@ export function planTile(settings, { z, maxTiles = 300 } = {}) {
  * @param {{ base: number, exag: number, flatten?: boolean, recessMm?: number, layerMm?: number,
  *   waterInlay?: boolean }} settings
  * @param {Uint8Array} [waterMask]
- * @param {{ segments: LatLon[][], widthMm: number, heightMm: number }} [trail]
+ * @param {{ segments: LatLon[][], widthMm: number, heightMm: number, onTerrain?: boolean }} [trail]
+ *   onTerrain places the cord on the printed terrain instead of dropping it to the plate — see
+ *   cord.cordSolid. Default (false) is the export's placement.
  * @returns {{ solid: Solid, ribbon: Solid | null, inlays: Solid | null, emin: number, emax: number, lineElev: number, landBluePct: number, waterAsLandPct: number }}
  */
 export function bakeTileSolid(mosaic, plan,
@@ -165,8 +167,11 @@ export function bakeTileSolid(mosaic, plan,
   if (trail && trail.segments.length) {
     // The cord's width is independent of the grid: its footprint is a distance field clipped
     // against the terrain's own triangles on a sub-lattice, not a union of whole cells.
+    // Both placements are validated below: they share every triangle and differ only in z, but a
+    // caller that asks for one must not be handed a mesh only the other was ever checked for.
     ribbon = cordSolid(grid, plan, trailToPrintMm(trail.segments, plan), trail.widthMm,
-      trail.heightMm, { mmPerM, emin, exag }, admissibleCells(gw, gh, clip));
+      trail.heightMm, { mmPerM, emin, exag }, admissibleCells(gw, gh, clip),
+      trail.onTerrain ? base : undefined);
     if (ribbon) {
       const rwt = checkWatertight(ribbon);
       if (!rwt.closed) throw new Error(`pipeline: non-watertight ribbon (${rwt.unmatched} unmatched edges)`);

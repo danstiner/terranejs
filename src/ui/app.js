@@ -12,7 +12,7 @@ import { PRESETS, DEFAULT_PRESET } from "./presets.js";
 import { BAND_NAMES } from "../core/colors.js";
 import { LAND_BLUE_WARN_PCT, WATER_AS_LAND_WARN_PCT } from "../core/water.js";
 import { HEX_H } from "../core/layout.js";
-import { fitTile, clippedFraction, TRAIL_CLIP_WARN } from "../core/gpx.js";
+import { fitTile, clippedFraction, TRAIL_CLIP_WARN } from "../core/framing.js";
 import { parseGpxText } from "./gpxparse.js";
 
 /** @typedef {{ name: string, segments: import("../core/types.js").LatLon[][] }} Trail
@@ -48,7 +48,7 @@ const store = createStore(/** @type {AppState} */ ({
     waterInlay: false,
   }),
   trail: null, // a restored link never carries one — see the AppState note above
-  cord: { widthMm: 1.6, heightMm: 0.6 }, // export-only: a hash carries no trail, so no cord either
+  cord: { widthMm: 1, heightMm: 1 }, // session-only: a hash carries no trail, so no cord either
 }));
 
 /** @param {string} id @returns {HTMLElement} */
@@ -96,6 +96,10 @@ let exportGen = -1; // -1 = no export in flight
 let previewPhase = /** @type {"idle" | "fast" | "crisp"} */ ("idle");
 /** @type {TileSettings | null} */
 let previewSettings = null;
+/** The trail the live preview is being baked for, snapshotted with its settings: the crisp pass is
+ * posted from the reply handler, long after the store may have moved on.
+ * @type {{ segments: import("../core/types.js").LatLon[][], widthMm: number, heightMm: number } | null} */
+let previewTrail = null;
 let exportName = "";
 let previewDeferred = false; // a preview requested during an export; run once the export finishes
 let lastHash = ""; // last payload written, so a settled debounce doesn't replaceState redundantly
@@ -167,10 +171,35 @@ function updateWaterWarning(data) {
 // label must match index.html — the sentence is only actionable if it names the
 // button. Reports "<1%" rather than rounding to "0%": a warning quoting zero
 // reads as a bug.
+//
+// Why the cord could not be drawn — or, when an export refused it, could not be printed either.
+// Held here rather than written straight to the banner because updateTrailWarning rewrites it on
+// every store change, and a message posted once would vanish on the next slider tick.
+let cordWarning = "";
+
+// The export's own refusal, kept apart from cordWarning because the two have different lifetimes.
+// A preview reply must not clear this: the two bake at different pitches and subK's refusal is
+// pitch-dependent in BOTH directions, so a preview that meshes the cord proves nothing about the
+// export that just refused it — and letting it through replaces a true report of a failed export
+// with "it will still export at full size", which that export disproved.
+//
+// It carries the cord it was refused for instead of a clear-here list, so it self-invalidates the
+// moment the user acts on the remedy: store.set rebuilds `cord` on any edit, so the identity check
+// fails and the message goes.
+/** @type {{ msg: string, cord: Cord } | null} */
+let exportRefusal = null;
 /** @param {AppState} s */
 function updateTrailWarning(s) {
   const warn = $("trailWarn");
   if (!s.trail || !s.center) { warn.hidden = true; return; }
+  // Export refusal first: it is the only one of the three that reports something already tried
+  // and failed, and it contradicts what the preview would otherwise claim.
+  if (exportRefusal && exportRefusal.cord === s.cord) {
+    warn.hidden = false; warn.textContent = exportRefusal.msg; return;
+  }
+  // Then ahead of the clip fraction: a trail that cannot be drawn at all outranks one running past
+  // the rim, and the sentence already names its own remedy.
+  if (cordWarning) { warn.hidden = false; warn.textContent = cordWarning; return; }
   const f = clippedFraction(s.trail.segments,
     { center: s.center, scale: s.scale, tileWidthMm: s.tileWidthMm, shape: s.shape });
   warn.hidden = f <= TRAIL_CLIP_WARN;
@@ -210,7 +239,13 @@ worker.onmessage = ({ data }) => {
       // reads as still running while the banner says it failed — so it gets a short pointer
       // instead of the raw pipeline error, which would only duplicate the banner's sentence.
       if (/^corridor:/.test(data.error)) {
-        warnTrail(`Could not export the trail: ${data.error.replace(/^corridor: /, "")}`);
+        // Held in exportRefusal, not written straight to the banner: the next store change re-runs
+        // updateTrailWarning, which would restore the preview's "it will still export at full
+        // size" — the very claim this refusal just disproved — and the store change most likely to
+        // follow is the user acting on the remedy.
+        exportRefusal = { msg: `Could not export the trail: ${data.error.replace(/^corridor: /, "")}`,
+          cord: store.get().cord };
+        warnTrail(exportRefusal.msg);
         setProgress("Export failed — see the trail warning above.");
       } else {
         setProgress(`Export failed: ${data.error}`);
@@ -233,12 +268,21 @@ worker.onmessage = ({ data }) => {
   if (data.baking) { setProgress(`${mode} — baking…`); return; }
   // Hide the warning too — it describes the previous mesh, which "Preview failed" just orphaned.
   if (data.error) { setProgress(`Preview failed: ${data.error}`); previewPhase = "idle"; $("waterWarn").hidden = true; return; }
-  preview.setTiles([{ positions: data.positions, indices: data.indices, normals: data.normals, bands: data.bands }], data.frame);
+  // Both tiers report it: they bake at different pitches, so a cord the coarse pass refuses can
+  // still be drawn by the sharp one, and the banner follows whichever mesh is on screen rather
+  // than latching. The width is the snapshot the refused bake was issued for, not the live store,
+  // which a later spinner click may already have moved past.
+  cordWarning = data.cordDropped && previewTrail
+    ? `The ${previewTrail.widthMm.toFixed(2)} mm cord is too fine to draw at preview resolution — `
+      + "it will still export at full size."
+    : "";
+  updateTrailWarning(store.get());
+  preview.setTiles([{ positions: data.positions, indices: data.indices, normals: data.normals, bands: data.bands }], data.frame, data.cord);
   renderLegend(data.bands);
   if (previewPhase === "fast") {
     previewPhase = "crisp"; // fast relief is up; refine to viewport-sharp
     setProgress("Detailed preview…");
-    worker.postMessage({ gen: previewGen, settings: previewSettings, maxTiles: CRISP_MAX_TILES, format: "mesh", coverage: true });
+    worker.postMessage({ gen: previewGen, settings: previewSettings, maxTiles: CRISP_MAX_TILES, format: "mesh", coverage: true, trail: previewTrail });
   } else {
     // Crisp pass only. The one-tile fast bake resolves the shoreline too coarsely to judge a
     // 1%-of-tile threshold, and letting it drive the banner makes it flash and vanish a second
@@ -270,11 +314,16 @@ function loadPreview() {
   if (exportGen !== -1) { previewDeferred = true; return; }
   const s = store.get();
   if (!s.center) { preview.setTiles([]); setProgress("Click the map to place a tile."); return; }
-  previewSettings = { ...s, center: s.center };
+  // `trail` rides its own field (the worker reads only that one), so it is destructured out
+  // rather than posted twice — a structured clone of 15.7k points per pass, for a field nothing
+  // downstream of `settings` reads. Same split as the export click below.
+  const { trail, ...settings } = { ...s, center: s.center };
+  previewSettings = settings;
+  previewTrail = trail ? { segments: trail.segments, ...s.cord } : null;
   previewGen = ++gen;
   previewPhase = "fast";
   setProgress("Quick preview…");
-  worker.postMessage({ gen: previewGen, settings: previewSettings, maxTiles: FAST_MAX_TILES, format: "mesh" });
+  worker.postMessage({ gen: previewGen, settings, maxTiles: FAST_MAX_TILES, format: "mesh", trail: previewTrail });
 }
 
 // Last trail rendered on the map. `trail` only ever changes reference on import or
@@ -284,26 +333,21 @@ function loadPreview() {
 /** @type {Trail | null} */
 let shownTrail = null;
 
-// Snapshot of the last state a bake was scheduled for, so an edit touching ONLY `cord` can skip
-// scheduling one. `cord` cannot change what bakeTile bakes — the worker's preview job never
-// reads it — so rescheduling for it costs a debounced fetch + decode + mesh at two tiers and a
-// "Quick preview…" flash for a spinner click that changes nothing on screen (PR2b's ribbon
-// sweep is what would consume it, and isn't wired up yet). A denylist, not an allowlist: any
-// OTHER field added to AppState later defaults to bake-relevant, which is the safe direction to
-// be wrong in.
+// Snapshot of the last state a bake was scheduled for. Every field counts, `cord` included: the
+// preview now meshes the cord at the requested width, so a spinner click changes what is on
+// screen and has to be rebaked for. Shallow by reference throughout — store.set spreads, so an
+// untouched field keeps its identity, and controls.js rebuilds `cord` on each edit.
 //
-// `waterInlay` stays on that safe side deliberately, even though the preview ignores it too
-// (bake.worker.js forces it off for a mesh job). Unlike `cord` it IS shareable state, and the
-// hash write rides this same timer — exempting it would stop the address bar tracking the
-// checkbox. The cost is one preview rebake per toggle: a checkbox clicked once before an
-// export, not a slider dragged, and Export cancels a pending preview anyway.
+// The cost is one rebake per cord edit, at both tiers. A cord-only job reusing the grid would
+// avoid the refetch, but the worker holds no mosaic between jobs (see bake.worker.js) — so it
+// would mean a cache whose only client is a number input clicked a few times before an export.
 /** @type {AppState | null} */
 let lastBakeState = null;
 /** @param {AppState} s @returns {boolean} */
 function bakeInputsChanged(s) {
   if (!lastBakeState) return true;
   for (const k of /** @type {(keyof AppState)[]} */ (Object.keys(s))) {
-    if (k !== "cord" && s[k] !== lastBakeState[k]) return true;
+    if (s[k] !== lastBakeState[k]) return true;
   }
   return false;
 }
@@ -347,8 +391,9 @@ store.subscribe((s) => {
     ? `1 ${tile} : ~${km >= 10 ? Math.round(km) : km.toFixed(1)} km`
     : "No tile placed.";
   $("settings").hidden = !s.center;
-  // A cord-only edit leaves any already-pending bake's timer running untouched, rather than
-  // pushing it back — see bakeInputsChanged above.
+  // A change that cannot reach the bake — re-selecting the preset already showing, whose `center`
+  // array keeps its identity — leaves any pending timer running rather than pushing it back.
+  // See bakeInputsChanged.
   if (bakeInputsChanged(s)) {
     lastBakeState = s;
     window.clearTimeout(timer);
@@ -469,6 +514,11 @@ async function importTrail(file) {
     // the hash, so a shared link can't carry "don't fit" and surprise whoever opens it.
     const autoFit = /** @type {HTMLInputElement} */ ($("autoFit")).checked;
     const { center, scale } = autoFit ? fitToTrail(segments) : store.get();
+    // cordWarning describes the bake currently on screen, so it's invalidated here, where that
+    // bake is about to be replaced — not on a failed attempt, which leaves the old trail (and its
+    // still-true warning) on screen. store.set below fires updateTrailWarning synchronously.
+    cordWarning = "";
+    exportRefusal = null; // a new trail is not the one that was refused
     store.set({ trail: { name: file.name, segments }, center, scale });
   } catch (err) {
     const why = err instanceof Error ? err.message : String(err);
@@ -505,6 +555,7 @@ $("export").addEventListener("click", () => {
   // Settle the hash first: clearTimeout below drops the pending write, which would otherwise
   // leave the address bar describing different settings than the model being exported.
   writeHash(s);
+  exportRefusal = null;       // this attempt's verdict supersedes the last one's
   window.clearTimeout(timer); // cancel a queued preview…
   previewGen = 0;             // …and void any in-flight one, so its trailing reply can't clobber the export status
   // `trail` rides its own field below (the worker reads only that one), so it's destructured

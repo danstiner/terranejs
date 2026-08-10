@@ -319,7 +319,7 @@ export function assembleSolid(topTris, N, xy, zTop, zBot, bottomMode) {
  * only caller that meshes with it — wants exactly that: it is what gives the part a printable
  * vertical wall and the clearance to seat, instead of a shoreline tapering to a knife edge (see
  * pipeline.js). The trail cord wanted the opposite and used to widen its stamp to cancel the
- * erosion out; it now clips a distance field against a sub-lattice instead (corridor.js), which
+ * erosion out; it now clips a distance field against a sub-lattice instead (cord.js), which
  * is why nothing here compensates for anything any more.
  *
  * `also` is a second vertex mask ANDed per corner (the footprint, for a clipped shape), applied
@@ -604,7 +604,7 @@ function labelPieces(gw, gh, span, mask) {
 // expression, so the mate is congruent by construction rather than by tolerance — which is the
 // whole reason the mask is stamped into cells rather than derived some other way. (The cord
 // wants the same congruence but not the same cell quantization, so it meshes its own sub-lattice
-// in corridor.js instead of coming through here.)
+// in cord.js instead of coming through here.)
 //
 // `top` is a second elevation grid, in `grid`'s own units, giving the upper surface directly:
 // the inlay's ORIGINAL water elevations, before flatten and recess moved them. Thickness is

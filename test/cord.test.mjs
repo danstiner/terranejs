@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { trailToPrintMm, chop, subK, subElev, admissibleCells, cordTris, SUB_ACROSS }
-  from "../src/core/corridor.js";
+  from "../src/core/cord.js";
 import { planTile } from "../src/core/pipeline.js";
 import { globalXToLon, globalYToLat } from "../src/core/tilemath.js";
 
@@ -70,6 +70,19 @@ function straight(deg, widthMm, gw, pitch, off = 0, grid = gridOf(gw, () => 0)) 
     cx + Math.cos(a) * L, cy + Math.sin(a) * L]);
   const soup = cordTris(grid, plan, [poly], widthMm, GEOM, allCells(gw));
   return { soup, L: 2 * L, plan, grid };
+}
+
+/** A sinusoidal cord across the grid, sampled like a real track. Every angle to the lattice
+ * appears along it, so it beads where the axis-parallel and 23° straights in `straight` do not.
+ * @param {number} widthMm @param {number} gw @param {number} pitch */
+function curved(widthMm, gw, pitch) {
+  const span = gw * pitch;
+  const pts = Array.from({ length: 40 }, (_, i) => {
+    const t = i / 39;
+    return [span * (0.15 + 0.7 * t), span * (0.5 + 0.15 * Math.sin(2 * Math.PI * t))];
+  }).flat();
+  return cordTris(gridOf(gw, () => 0), planOf(gw, pitch), [Float64Array.from(pts)],
+    widthMm, GEOM, allCells(gw));
 }
 
 /** Width implied by covered area: a capsule of length L and radius r has area 2rL + pi r^2.
@@ -171,9 +184,26 @@ test("subK: a 0.4 mm cord on a 0.376 mm pitch refines to four sub-cells across",
   assert.ok(hx <= 0.4 / SUB_ACROSS + 1e-12, `sub-pitch ${hx} must fit ${SUB_ACROSS} across`);
 });
 
+/** Shortest printed-trail length at which subK refuses `widthMm`, found by doubling then
+ *  bisecting. Derived, never hard-coded: the triangle allowance is a tunable, and a magic length
+ *  here turns into a silently passing no-op the next time it moves.
+ *  @param {number} widthMm @param {number} pitch @returns {number} */
+function refusalLen(widthMm, pitch) {
+  let hi = 1;
+  for (; hi < 1e9; hi *= 2) { try { subK(widthMm, pitch, pitch, hi); } catch { break; } }
+  let lo = hi / 2;
+  while (hi - lo > 1) {
+    const m = (lo + hi) / 2;
+    try { subK(widthMm, pitch, pitch, m); lo = m; } catch { hi = m; }
+  }
+  return hi;
+}
+
 test("subK: the triangle budget clamps k on an absurdly long trail", () => {
-  const near = subK(0.4, 0.376, 0.376, 200).k;
-  const far = subK(0.4, 0.376, 0.376, 10000).k; // 10 m of printed trail at 0.4 mm
+  const pitch = 0.376, W = 0.4;
+  const near = subK(W, pitch, pitch, 200).k;
+  // Just inside the refusal, so the clamp is provably engaged without tripping the guard below.
+  const far = subK(W, pitch, pitch, refusalLen(W, pitch) * 0.9).k;
   assert.ok(far < near, `budget must bite: ${far} vs ${near}`);
 });
 
@@ -367,18 +397,19 @@ test("the extreme tile/cord combination still meshes cleanly", () => {
   assert.ok(Math.abs(w - W) < 2e-3, `width ${w.toFixed(6)} mm, want ${W}`);
 });
 
-// Framing a tile around one stretch of a long import is the normal case — gpx.js warns about
+// Framing a tile around one stretch of a long import is the normal case — framing.js warns about
 // the clipped remainder rather than refusing it. The triangle budget must therefore be spent on
-// what the tile actually carries: counting the whole import here coarsens the lattice, and past
-// ~17 m of printed trail refuses the width outright, over geometry that is never printed.
+// what the tile actually carries: counting the whole import here would coarsen the lattice, and
+// past the refusal threshold reject the width outright, over geometry that is never printed.
 test("the triangle budget ignores trail that falls outside the tile", () => {
   const gw = 200, pitch = 0.376, W = 0.4;
   const inTile = Float64Array.from([30, 30, 45, 30]);
-  // A second <trkseg>, 20 m long and entirely off the tile — past the refusal threshold on its
-  // own. Separate rather than appended, so it adds no cord inside the tile to compare against.
-  const offTile = Float64Array.from([20000, 30, 20000, 20030]);
+  // A second <trkseg>, well past the refusal threshold on its own and entirely off the tile.
+  // Separate rather than appended, so it adds no cord inside the tile to compare against.
+  const offLen = refusalLen(W, pitch) * 2;
+  const offTile = Float64Array.from([20000, 30, 20000, 30 + offLen]);
   const grid = gridOf(gw, () => 0), plan = planOf(gw, pitch), cells = allCells(gw);
-  assert.throws(() => subK(W, pitch, pitch, 20000), /too long to carry/,
+  assert.throws(() => subK(W, pitch, pitch, offLen), /too long to carry/,
     "fixture must exceed the budget when the off-tile leg is counted");
 
   const bare = cordTris(grid, plan, [inTile], W, GEOM, cells);
@@ -393,4 +424,35 @@ test("a trail entirely off the tile yields no cord", () => {
   const soup = cordTris(gridOf(gw, () => 0), planOf(gw, pitch),
     [Float64Array.from([-50, -50, -40, -50])], 0.4, GEOM, allCells(gw));
   assert.equal(soup, null);
+});
+
+// The preview draws the EXPORT's cord, so the tier that broke the old cell-snapped corridor is
+// the one that matters. At the FAST budget a 200 mm tile at 1:30 000 has a 0.8365 mm pitch, where
+// a 1.6 mm cord is 1.91 cells: the all-four-corners rule claimed ZERO cells there, so the preview
+// showed an empty tile for a trail that exported perfectly, and that is the entire reason a
+// second sweep-based construction was once specified. The sub-lattice is what retired it, so the
+// property is pinned here rather than left to be rediscovered.
+//
+// Widths down to 0.4 mm — under HALF a cell at the coarse tier — because the floor a future
+// pitch-aware "fix" would reintroduce lands exactly there.
+//
+// Connectivity is checked on a CURVED cord too, and only here: a beaded corridor is a set of
+// islands, each a closed manifold on its own, so neither checkWatertight nor signedVolume can see
+// the gaps (cord.js says so at the width guard). Width-from-area is straight-only — a capsule
+// formula does not describe an arc — so the curve carries the connectivity assertion alone.
+test("a cord narrower than a grid cell still meshes at preview pitch", () => {
+  for (const pitch of [0.8365, 0.4183]) {          // FAST and CRISP on a 6 km tile
+    for (const widthMm of [0.4, 0.8, 1.6, 3.0]) {
+      const { soup, L } = straight(23, widthMm, 64, pitch);
+      const where = `${widthMm} mm cord on a ${pitch} mm pitch (${(widthMm / pitch).toFixed(2)} cells)`;
+      assert.ok(soup, `${where}: no corridor at all`);
+      assert.equal(components(soup), 1, `${where}: beaded into pieces`);
+      const w = widthFromArea(soupArea(soup), L);
+      assert.ok(Math.abs(w - widthMm) < 0.01, `${where}: measured ${w.toFixed(5)} mm`);
+
+      const arc = curved(widthMm, 64, pitch);
+      assert.ok(arc, `${where}, curved: no corridor at all`);
+      assert.equal(components(arc), 1, `${where}, curved: beaded into pieces`);
+    }
+  }
 });
