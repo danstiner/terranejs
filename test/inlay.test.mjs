@@ -6,7 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { inflateRawSync } from "node:zlib";
 import { buildSolid, buildDrape, cellsFromVertexMask } from "../src/core/mesh.js";
-import { cordSolid, admissibleCells } from "../src/core/corridor.js";
+import { cordSolid, admissibleCells } from "../src/core/cord.js";
 import { checkWatertight, signedVolume } from "../src/core/validate.js";
 import { planTile, bakeTileSolid, tileTo3mf } from "../src/core/pipeline.js";
 

@@ -32,6 +32,15 @@ export const BOUNDARY_NAMES = ["water line", "timberline", "tundra line", "snowl
 /** Fixed size of the preview shader's change arrays: one slot per threshold. */
 export const MAX_CHANGES = BAND_COLORS.length - 1; // 4
 
+/**
+ * Matte brick red for previewing trail cords, nicely contrasts the band colors.
+ *
+ * Authored in sRGB, unlike the bands: the preview feeds it to three.js as a display color, so it
+ * has to be tagged SRGBColorSpace there rather than written into the linear working space.
+ * @type {RGB}
+ */
+export const CORD_COLOR = [0.71, 0.27, 0.24];
+
 // --- Ecological band thresholds (metres vs |latitude|) --------------------
 // One base curve carries the shape: the timberline (closed-canopy forest edge) vs
 // |latitude|. It plateaus across the tropics/subtropics, then descends in two slopes —

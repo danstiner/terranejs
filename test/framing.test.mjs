@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { insideFootprint, fitTile, FIT_PAD, clippedFraction, TRAIL_CLIP_WARN } from "../src/core/gpx.js";
+import { insideFootprint, fitTile, FIT_PAD, clippedFraction, TRAIL_CLIP_WARN } from "../src/core/framing.js";
 import { MM_PER_KM_MIN, MM_PER_KM_MAX } from "../src/core/urlstate.js";
 import { tileSpanPx } from "../src/core/layout.js";
 import { lonToGlobalX, latToGlobalY } from "../src/core/tilemath.js";

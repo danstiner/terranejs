@@ -263,11 +263,17 @@ instructions (Color bands, below) for a color-banded print.
 ### Trail ribbon
 
 An imported trail also exports as a second object in the same 3MF: a
-constant-thickness cord, 1.6 mm × 0.6 mm by default, placed clear of the
-tile in +Y and dropped so its lowest point sits on the plate. Print it
-separately, in a contrasting filament, and set it on the finished tile —
-it self-registers, because its underside is the terrain's own surface,
-not an approximation of it.
+constant-thickness cord, 1 mm × 1 mm by default, placed clear of the
+tile in +Y, with each connected piece dropped so its lowest point sits on
+the plate. Print it separately, in a contrasting filament, and set it on
+the finished tile — it self-registers, because its underside is the
+terrain's own surface, not an approximation of it.
+
+The preview draws the same cord from the same bake, in red, but asks for
+the other placement: no plate drop, the underside left on the printed
+terrain, where the trail runs. The drop is an export concern — inside an
+opaque tile it would only bury the cord — and what the preview is for is
+the route across the relief.
 
 The cord's width is **independent of the grid**: 0.4 mm prints as
 0.4 mm on a tile whose mesh vertices are 3 mm apart. The corridor is the
@@ -389,8 +395,9 @@ there), `source unavailable` (the fetch failed) — because a silent unknown
 would read exactly like ground no source covers.
 
 A GPX trail can be imported — picked or dropped onto the map — to frame the tile
-around it. The trail draws in red, and the tile is centered on its bounds and
-scaled until the footprint contains it with a margin; print width is held fixed,
+around it. The trail draws in red on the map and as a red cord in the preview, and
+the tile is centered on its bounds and scaled until the footprint contains it
+with a margin; print width is held fixed,
 because it is a printer-bed constraint, so the map scale is what moves. The fit
 is shape-aware: a hex encloses about 65% of its bounding square and a circle
 about 79%, so a hex or circle always needs a wider ground extent than a square for
@@ -400,6 +407,14 @@ fitted framing but not the trail — the link
 is a URL fragment and cannot hold the file — and a framing that leaves part of
 the trail outside the footprint is warned about, since the tile prints only what
 its rim encloses.
+
+The preview meshes the cord at the width you set, so both cord spinners re-bake
+it. Its grid is coarser than the export's, and the sub-lattice is counted in
+cells across the cord's width — so the coarser grid asks for *more* subdivision
+to carry the same cord, and runs into the triangle allowance first. What that
+costs is the longest trail it will draw, not how accurately it draws one: a very
+long trail at a very narrow width can be too fine to *draw* while still
+exporting at full size. That case says so, and leaves the terrain on screen.
 
 The pipeline itself is headless — it lives in `src/core/`, has no DOM
 dependency, and is testable outside a browser. The browser-facing pieces

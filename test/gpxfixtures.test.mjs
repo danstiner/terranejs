@@ -12,10 +12,10 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { DOMParser } from "@xmldom/xmldom";
 import { segmentsFromDocument, segmentsOrExplain } from "../src/ui/gpxparse.js";
-import { fitTile, clippedFraction } from "../src/core/gpx.js";
+import { fitTile, clippedFraction } from "../src/core/framing.js";
 import { MM_PER_KM_MAX } from "../src/core/urlstate.js";
 import { planTile } from "../src/core/pipeline.js";
-import { trailToPrintMm, cordSolid, cordTris, admissibleCells } from "../src/core/corridor.js";
+import { trailToPrintMm, cordSolid, cordTris, admissibleCells } from "../src/core/cord.js";
 import { checkWatertight, signedVolume } from "../src/core/validate.js";
 
 const parser = new DOMParser({ onError: () => {} });
@@ -87,7 +87,7 @@ test("golden: Strava export", () => {
 // trimmed to 8 track points, spanning tens of meters rather than the kilometers the real
 // export covered, so every one of them asks for a scale past the input's ceiling and gets
 // clamped. Their unclamped asks were 1900, 5800 and 31000 mm/km. The 2-significant-figure
-// flooring underneath is covered by gpx.test.mjs, whose trail fits well inside the range.
+// flooring underneath is covered by framing.test.mjs, whose trail fits well inside the range.
 const FRAMINGS = [
   { file: "alltrails.gpx", center: [48.95168500189638, -121.63543], mmPerKm: MM_PER_KM_MAX },
   { file: "garmin-connect.gpx", center: [48.71770698597514, -121.14509384147823], mmPerKm: MM_PER_KM_MAX },

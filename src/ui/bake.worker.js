@@ -64,12 +64,44 @@ async function handle({ gen, settings, maxTiles, format, name, color, coverage, 
     for (let i = 0; i < wmGrid.length; i++) waterMask[i] = wmGrid[i] > 0.5 ? 1 : 0;
 
     post({ gen, baking: true }); // all tiles in hand → meshing + validation (synchronous, blocks the worker)
-    // waterInlay off for a preview, the way `trail` is simply never posted on that path: the
-    // preview draws the tile alone, and the inlays cost a second full-grid snapshot plus their
-    // own mesh — on every keystroke of a slider drag, for something nothing displays.
-    const { solid, ribbon, inlays, emin, emax, lineElev, landBluePct, waterAsLandPct } =
-      bakeTileSolid(mosaic, plan, { ...settings, waterInlay: format === "3mf" && !!settings.waterInlay },
-        waterMask, trail ?? undefined);
+    // waterInlay stays off for a preview: the inlays cost a second full-grid snapshot plus their
+    // own mesh — on every keystroke of a slider drag, for something nothing displays. The cord is
+    // the opposite case, so it rides both paths: it IS displayed, and meshing the same geometry
+    // the export ships beats drawing an approximation of it.
+    const opts = { ...settings, waterInlay: format === "3mf" && !!settings.waterInlay };
+    // The preview needs the cord ON the terrain — the tile is opaque, and the export's
+    // plate-dropped cord sits base + its own floor below the surface, invisible inside it.
+    // Same mesh either way; see cord.cordSolid.
+    const job = trail ? { ...trail, onTerrain: format === "mesh" } : undefined;
+    let cordDropped = false;
+    let baked;
+    try {
+      baked = bakeTileSolid(mosaic, plan, opts, waterMask, job);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // A cord the sub-lattice can't carry must not cost the preview its terrain: the tile is what
+      // is on screen and the cord is one object resting on it. Rebake without the trail and flag
+      // it. k counts sub-cells across the cord's width, so the preview's coarser grid asks for a
+      // HIGHER k than the export's and reaches subK's triangle allowance first — the flag, not the
+      // message, because core's wording names a remedy for a print that is not in trouble (the
+      // export draws this cord fine). The export still throws: there the cord is part of the
+      // deliverable, and dropping it silently would hand back a file missing what was asked for.
+      //
+      // Three throws, all of them the CORD's: subK's refusal, and the ribbon's own watertight and
+      // volume checks, which only a preview pitch is coarse enough to reach. The tile's identically
+      // worded `solid` failures are deliberately not here — there is no terrain left to show, so
+      // dropping the trail would rebake the same failure and blank the preview a beat later anyway.
+      if (format !== "mesh" ||
+        !/^corridor:|^pipeline: (non-watertight|non-positive-volume \(inside-out\)) ribbon/.test(msg)) throw err;
+      // Logged as well as flagged: three different throws land here — subK's refusal, and the
+      // ribbon's two validation failures — and the banner renders all of them as "too fine to
+      // draw". A real watertightness bug in the cord would otherwise present as that sentence and
+      // nothing else.
+      console.warn("bake worker: cord dropped from the preview —", msg);
+      cordDropped = true;
+      baked = bakeTileSolid(mosaic, plan, opts, waterMask);
+    }
+    const { solid, ribbon, inlays, emin, emax, lineElev, landBluePct, waterAsLandPct } = baked;
     // Latitude-adjusted color changes for THIS bake's frame. Shared by the preview
     // (returned as `bands`) and, later, the export embed. K>0 since exag ∈ [0.5,4].
     const K = plan.mmPerM * settings.exag;
@@ -116,8 +148,14 @@ async function handle({ gen, settings, maxTiles, format, name, color, coverage, 
         orig: probeGrid, mask: waterMask, detail, gw: plan.gw, gh: plan.gh, dx: plan.dx, dy: plan.dy,
         recessed: (settings.flatten ?? false) || (settings.recessMm ?? 0) > 0,
       };
-      post({ gen, positions: solid.positions, indices: solid.indices, normals, bands, frame: probeFrame, landBluePct, waterAsLandPct },
-        [solid.positions.buffer, solid.indices.buffer, normals.buffer, probeGrid.buffer, waterMask.buffer, detail.buffer]);
+      // The cord rides the tile's own message rather than a later one like coverage: they are one
+      // picture, and arriving apart would show a frame of terrain with the trail missing from it.
+      const cord = ribbon
+        ? { positions: ribbon.positions, indices: ribbon.indices, normals: vertexNormals(ribbon.positions, ribbon.indices) }
+        : null;
+      post({ gen, positions: solid.positions, indices: solid.indices, normals, bands, frame: probeFrame, landBluePct, waterAsLandPct, cord, cordDropped },
+        [solid.positions.buffer, solid.indices.buffer, normals.buffer, probeGrid.buffer, waterMask.buffer, detail.buffer,
+          ...(cord ? [cord.positions.buffer, cord.indices.buffer, cord.normals.buffer] : [])]);
       // Deliberately not awaited — see above. Detached from the job's own catch, so it carries
       // the same guard: a post() that throws here has no other handler.
       coverageJob?.then((c) => post({ gen, coverage: c })).catch((e) => { console.error("bake worker coverage:", e); });

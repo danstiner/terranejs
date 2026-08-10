@@ -19,6 +19,27 @@ import { cellsFromVertexMask, assembleSolid } from "./mesh.js";
 /** @typedef {import("./pipeline.js").TilePlan} TilePlan */
 
 /**
+ * Sub-cells across the cord's width.
+ *
+ * Not a precision knob. Distance to a line is affine, so linear interpolation along a sub-edge
+ * puts a crossing on the exact isoline and a straight cord comes out exactly the requested width
+ * at any k. This is about REPRESENTABILITY: the region has to contain interior lattice vertices,
+ * or a sub-triangle could span the whole cord with all three corners outside and emit nothing.
+ */
+export const SUB_ACROSS = 4;
+
+/** Maximum number of triangles in the top surface of trail cords. A guessed sanity limit to gate
+ * the longest trail that will mesh; it does not control accuracy of the trail cord. While it is
+ * ample the sub-lattice is as fine as the cord width requires, and past that subK refuses rather
+ * than let the cord bead. */
+const TRI_BUDGET = 1_000_000;
+
+/** How close along a sub-edge a crossing has to be before it counts as landing ON the endpoint.
+ * A fraction of one sub-cell, so it moves a boundary by ~1e-10 mm — twelve orders below a
+ * nozzle, and far below the float noise it exists to absorb. */
+const T_EPS = 1e-9;
+
+/**
  * Trail segments → tile-local print millimeters, one x,y-interleaved array per segment.
  *
  * The x/y expressions are copied from buildSolid's `xy(id)` deliberately: the cord has to land
@@ -78,29 +99,16 @@ export function chop(poly, maxLen) {
 }
 
 /**
- * Sub-cells across the cord's width.
- *
- * Not a precision knob. Distance to a line is affine, so linear interpolation along a sub-edge
- * puts a crossing on the exact isoline and a straight cord comes out exactly the requested width
- * at any k. This is about REPRESENTABILITY: the region has to contain interior lattice vertices,
- * or a sub-triangle could span the whole cord with all three corners outside and emit nothing.
- */
-export const SUB_ACROSS = 4;
-
-/** Top-triangle ceiling for the cord. A backstop against a pathologically long thin trail, not
- * a working constraint: at 0.4 mm it first bites past ~3 m of printed trail. */
-const TRI_BUDGET = 400_000;
-
-/** How close along a sub-edge a crossing has to be before it counts as landing ON the endpoint.
- * A fraction of one sub-cell, so it moves a boundary by ~1e-10 mm — twelve orders below a
- * nozzle, and far below the float noise it exists to absorb. */
-const T_EPS = 1e-9;
-
-/**
  * Sub-lattice refinement for a requested cord width.
  *
  * Cost scales with the CORD, not the tile — a cord already wider than SUB_ACROSS cells gets
  * k = 1 and costs what the cell-snapped version did.
+ *
+ * k counts sub-cells ACROSS THE WIDTH, so a coarser tile needs a higher k to carry the same cord,
+ * and halving the pitch halves the k that width asks for. That is the whole reason a preview-tier
+ * bake reaches TRI_BUDGET before an export-tier one does on the same trail — the coarse grid
+ * is asking for more subdivision, not for finer geometry. What the clamp below costs is therefore
+ * representability, never accuracy.
  *
  * @param {number} widthMm @param {number} dx @param {number} dy @param {number} trailLenMm
  * @returns {{ k: number, hx: number, hy: number }}
@@ -195,7 +203,7 @@ export function cordTris(grid, plan, polys, widthMm, geom, cellOk) {
   const halfW = widthMm / 2;
 
   // Chopped first, because the budget below measures only the part of the trail that can land
-  // ON the tile. Framing a tile around one stretch of a long import is normal — gpx.js warns
+  // ON the tile. Framing a tile around one stretch of a long import is normal — framing.js warns
   // about the clipped remainder rather than refusing it — and counting kilometres that are never
   // printed would coarsen the lattice, or refuse a width, over geometry the tile never carries.
   const maxLen = 4 * widthMm;
@@ -353,7 +361,7 @@ export function cordTris(grid, plan, polys, widthMm, geom, cellOk) {
 }
 
 /**
- * The printable cord: underside molded to the printed relief, top a constant `heightMm` above it.
+ * Per-vertex drop that rests every connected piece of the cord on the plate.
  *
  * Floors are PER CONNECTED PIECE, not per part: a trail split by the tile's footprint or by
  * multiple <trkseg>s can sit at very different elevations, and one shared floor would rest the
@@ -361,18 +369,10 @@ export function cordTris(grid, plan, polys, widthMm, geom, cellOk) {
  * nothing downstream would object. Pieces meeting at a single vertex merge, which is required
  * rather than incidental: one vertex cannot carry two z values.
  *
- * @param {Float32Array} grid @param {TilePlan} plan
- * @param {Float64Array[]} polys @param {number} widthMm @param {number} heightMm
- * @param {{ mmPerM: number, emin: number, exag: number }} geom
- * @param {Uint8Array} cellOk
- * @returns {Solid | null}
+ * @param {Uint32Array} tris @param {Float64Array} z @param {number} n vertex count
+ * @returns {(i: number) => number}
  */
-export function cordSolid(grid, plan, polys, widthMm, heightMm, geom, cellOk) {
-  const soup = cordTris(grid, plan, polys, widthMm, geom, cellOk);
-  if (!soup) return null;
-  const { tris, x, y, z } = soup;
-  const n = x.length;
-
+function plateDrop(tris, z, n) {
   const parent = new Int32Array(n);
   for (let i = 0; i < n; i++) parent[i] = i;
   /** @type {(i: number) => number} */
@@ -392,7 +392,34 @@ export function cordSolid(grid, plan, polys, widthMm, heightMm, geom, cellOk) {
     const v = tris[i], r = find(v);
     if (z[v] < floor[r]) floor[r] = z[v];
   }
-  /** @type {(i: number) => number} */
-  const rest = (i) => z[i] - floor[find(i)];
+  return (i) => z[i] - floor[find(i)];
+}
+
+/**
+ * The printable cord: underside molded to the printed relief, top a constant `heightMm` above it.
+ *
+ * One mesh, two placements. Without `baseMm` each connected piece drops to the plate — the
+ * EXPORT's requirement, since the cord prints as its own object beside the tile. With it the
+ * underside is `z + baseMm`, which is the printed tile's top surface term for term
+ * (mesh.js: `base + (e − emin)·mmPerM·exag`), so the cord rests on the relief it was measured
+ * against — the PREVIEW's requirement, where the tile is opaque and a plate-dropped cord is
+ * simply buried inside it. The plate drop is skipped entirely there, not undone: a translate
+ * cannot undo per-piece floors that differ.
+ *
+ * @param {Float32Array} grid @param {TilePlan} plan
+ * @param {Float64Array[]} polys @param {number} widthMm @param {number} heightMm
+ * @param {{ mmPerM: number, emin: number, exag: number }} geom
+ * @param {Uint8Array} cellOk
+ * @param {number} [baseMm] base-plate thickness; omit to drop each piece to the plate
+ * @returns {Solid | null}
+ */
+export function cordSolid(grid, plan, polys, widthMm, heightMm, geom, cellOk, baseMm) {
+  const soup = cordTris(grid, plan, polys, widthMm, geom, cellOk);
+  if (!soup) return null;
+  const { tris, x, y, z } = soup;
+  const n = x.length;
+  const rest = baseMm === undefined
+    ? plateDrop(tris, z, n)
+    : (/** @type {number} */ i) => z[i] + baseMm;
   return assembleSolid(tris, n, (i) => [x[i], y[i]], (i) => rest(i) + heightMm, rest, "mirror");
 }
