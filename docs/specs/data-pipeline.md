@@ -383,8 +383,20 @@ The website wraps this pipeline in an interactive loop: pick a region on a map
 (Leaflet), adjust print settings, watch a live 3D preview (three.js) re-bake and
 re-render as you go, then export — which reruns the same pipeline at full print
 resolution and downloads the resulting 3MF. The preview bakes at a lower,
-viewport-matched detail level than the export, and lands in two passes: a coarse
-mesh almost immediately, then a sharper one a moment later.
+viewport-matched detail level than the export, and lands in two passes on
+separate clocks: a coarse mesh a tenth of a second after you change something,
+and a sharper one once you have stopped for a couple of seconds. Keeping the
+sharp pass on the *stopping*, rather than chaining it to the coarse one
+finishing, is what lets a run of quick changes stay quick.
+
+Both tiers share one bake thread, and it is never given more than one job: a
+pass that comes due while a bake is running is remembered, not queued, and
+posted when that bake replies — against the newest settings, which by then may
+have moved again. Queueing instead would make every later pass wait behind a
+result nobody is going to look at. So a burst of adjustments costs fewer bakes
+than it has changes, and the mesh stays roughly one bake behind your hand
+rather than falling steadily further behind. The address bar settles on the
+slow clock too: it describes state you have stopped editing.
 
 Hovering the preview raises a probe for the cell under the cursor: elevation
 (a water cell's *original* elevation, which the recess no longer prints), water
