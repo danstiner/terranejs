@@ -75,11 +75,11 @@
                and was four paragraphs. data-help carries the text; controls.wireHelp shows it in
                one page-level popover. The row exists to sit the ? beside the label, nothing more. -->
           <div class="labelrow">
-            <label for="recess">Recess depth: <span id="recessVal">0 mm</span></label>
+            <label for="recess">Recess depth: <span id="recessVal">0.0 mm</span></label>
             <button type="button" class="help" aria-label="About recess depth"
               data-help="Sinks every water body this far below the waterline, so the shore has a step you can see and feel. Print millimetres, independent of map scale.">?</button>
           </div>
-          <input id="recess" type="range" min="0" max="5" step="1" value="0">
+          <input id="recess" type="range" min="0" max="5" step="0.5" value="0">
 
           <div class="labelrow">
             <label class="check"><input id="flatten" type="checkbox"> Flatten all water to one level</label>

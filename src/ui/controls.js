@@ -31,7 +31,7 @@ export function syncControls(s) {
   /** @type {HTMLInputElement} */ (el("waterInlay")).checked = s.waterInlay;
   el("exagVal").textContent = s.exag.toFixed(1);
   el("baseVal").textContent = s.base.toFixed(1);
-  el("recessVal").textContent = `${s.recessMm} mm`;
+  el("recessVal").textContent = `${s.recessMm.toFixed(1)} mm`;
 }
 
 /**
@@ -81,7 +81,7 @@ export function wireControls(store) {
   el("recess").addEventListener("input", (e) => {
     const v = num(e);
     store.set({ recessMm: v });
-    el("recessVal").textContent = `${v} mm`; // integer steps — no decimals
+    el("recessVal").textContent = `${v.toFixed(1)} mm`;
   });
   el("layerMm").addEventListener("input", (e) => {
     const v = num(e);
