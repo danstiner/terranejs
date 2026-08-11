@@ -472,10 +472,6 @@ export function initPreview(container) {
     const center = box.getCenter(new THREE.Vector3());
     group.position.set(-center.x, -center.y, -center.z);
     boxR = box.getSize(new THREE.Vector3()).length() / 2;
-    // Placed here and not left to the loop: the markup's <text> carry no x/y, so between unhiding
-    // and the next animation frame all four letters sit stacked at the centre of a full circle.
-    rose.hidden = false;
-    updateRose();
     // Clip planes follow the fit even when the camera is left alone: the z extent moves with
     // exag/base/scale, and a stale far plane clips the relief the camera was preserved to show.
     const d = fitDistance();
@@ -488,6 +484,14 @@ export function initPreview(container) {
     // when their product crosses.
     if (!framedR) frameView();
     else if (boxR / framedR > REFRAME_RATIO || framedR / boxR > REFRAME_RATIO) refitView();
+    // AFTER the camera is placed, and drawn here rather than left to the loop — both matter. A
+    // fresh camera and the orbit target both sit at the origin, so updateRose's
+    // sinPhi = vz/hypot(vx,vy,vz) is 0/0 until something moves the camera off it. And the markup's
+    // <text> carry no x/y, so deferring to the next animation frame stacks all four letters at the
+    // centre of a full circle. Nothing between here and boxR depends on the order: the clip planes
+    // read fitDistance(), a function of boxR, not of where the camera is.
+    rose.hidden = false;
+    updateRose();
   }
 
   // Re-probe when coverage lands, or a cursor held still through the crisp pass keeps reading the
