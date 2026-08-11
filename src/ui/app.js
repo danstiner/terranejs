@@ -381,6 +381,10 @@ function loadPreview() {
   previewTrail = trail ? { segments: trail.segments, ...s.cord } : null;
   previewGen = ++gen;
   previewPhase = "fast";
+  // Every posted quick bake owes a crisp, so the settle clock restarts with the POST, not only
+  // with the change: pump() reaches here without passing through schedule().
+  window.clearTimeout(settleTimer);
+  settleTimer = window.setTimeout(settle, SETTLE_MS);
   setProgress("Quick preview…");
   worker.postMessage({ gen: previewGen, settings, maxTiles: FAST_MAX_TILES, format: "mesh", trail: previewTrail });
 }
