@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { applyWaterRecess } from "../src/core/water.js";
+import { applyWaterRecess, filterUnprintableWater } from "../src/core/water.js";
 import { decodeWatermask } from "../src/core/terrain.js";
 import { clipPolygon, clipElevs, clipRange } from "../src/core/clip.js";
 import { bandOf, baseBand, colorChanges, bandThresholds, waterLineThresholds } from "../src/core/colors.js";
@@ -321,4 +321,103 @@ test("clipped rim: the slider sinks the rim with the water, not just the interio
   for (const e of clip.elev) {
     assert.equal(e, -sink, `crossing at ${e} m, expected the sunk water plane at ${-sink} m`);
   }
+});
+
+// filterUnprintableWater — dx 0.4 gives k = round(0.4/0.4) = 1, a 3x3 cell window; dx 1.0 gives
+// k = 0, where the width test is inert and only sub-cell water drops.
+/** @param {number} gw @param {number} gh @param {(r: number, c: number) => boolean} f */
+const vmask = (gw, gh, f) => {
+  const m = new Uint8Array(gw * gh);
+  for (let r = 0; r < gh; r++) for (let c = 0; c < gw; c++) if (f(r, c)) m[r * gw + c] = 1;
+  return m;
+};
+
+test("filterUnprintableWater: a sub-cell tail attached to a printable lake goes with it", () => {
+  const GW = 30, GH = 20;
+  const mask = vmask(GW, GH, (r, c) =>
+    (r >= 3 && r < 11 && c >= 3 && c < 11) || (r === 7 && c >= 11 && c < 22));
+  const { mask: out } = filterUnprintableWater(mask, GW, GH, 0.4);
+  const o = /** @type {Uint8Array} */ (out);
+  for (let r = 3; r < 11; r++) {
+    for (let c = 3; c < 11; c++) assert.equal(o[r * GW + c], 1, `lake vertex (${r},${c}) dropped`);
+  }
+  for (let c = 11; c < 22; c++) {
+    assert.equal(o[7 * GW + c], 0, `tail vertex (7,${c}) kept — the fill ran over vertices, not cells`);
+  }
+});
+
+test("filterUnprintableWater: sub-cell water drops even at k = 0", () => {
+  const GW = 12, GH = 6;
+  const mask = vmask(GW, GH, (r, c) => r === 3 && c >= 1 && c < 11);
+  const { mask: out, droppedPct } = filterUnprintableWater(mask, GW, GH, 1.0);
+  assert.deepEqual([...(/** @type {Uint8Array} */ (out))], new Array(GW * GH).fill(0));
+  assert.equal(droppedPct, 100);
+});
+
+test("filterUnprintableWater: a one-cell-wide river drops", () => {
+  const GW = 16, GH = 8;
+  const mask = vmask(GW, GH, (r, c) => (r === 3 || r === 4) && c >= 1 && c < 15);
+  assert.equal(filterUnprintableWater(mask, GW, GH, 0.4).droppedPct, 100);
+});
+
+test("filterUnprintableWater: the width test bites at (2k+1) cells", () => {
+  const GW = 12, GH = 12;
+  const four = vmask(GW, GH, (r, c) => r >= 4 && r <= 7 && c >= 4 && c <= 7);  // 3x3 cells: fits
+  assert.equal(filterUnprintableWater(four, GW, GH, 0.4).droppedPct, 0);
+  const three = vmask(GW, GH, (r, c) => r >= 4 && r <= 6 && c >= 4 && c <= 6); // 2x2 cells: does not
+  assert.equal(filterUnprintableWater(three, GW, GH, 0.4).droppedPct, 100);
+});
+
+test("filterUnprintableWater: out-of-grid reads as land, so an edge body still needs its square", () => {
+  const GW = 10, GH = 10;
+  const narrow = vmask(GW, GH, (r, c) => c < 3); // 2 cells wide, flush with the edge
+  assert.equal(filterUnprintableWater(narrow, GW, GH, 0.4).droppedPct, 100);
+  const wide = vmask(GW, GH, (r, c) => c < 4);   // 3 cells wide: the edge does not stop it
+  assert.equal(filterUnprintableWater(wide, GW, GH, 0.4).droppedPct, 0);
+});
+
+test("filterUnprintableWater: 8-connectivity — a seed in one lobe of a diagonal pinch saves both", () => {
+  const GW = 8, GH = 8;
+  // cells (0..3,0..3) and (4..5,4..5), touching only at their diagonal corner; only the big lobe seeds
+  const mask = vmask(GW, GH, (r, c) =>
+    (r <= 4 && c <= 4) || (r >= 4 && r <= 6 && c >= 4 && c <= 6));
+  assert.equal(filterUnprintableWater(mask, GW, GH, 0.4).droppedPct, 0,
+    "the small lobe was dropped — the fill is 4-connected, not 8");
+});
+
+test("filterUnprintableWater: droppedPct is an area share of water, not a body count", () => {
+  const GW = 20, GH = 10;
+  const mask = vmask(GW, GH, (r, c) =>
+    (r >= 1 && r <= 8 && c >= 1 && c <= 8) || (r === 3 && c >= 12 && c <= 17));
+  const { droppedPct } = filterUnprintableWater(mask, GW, GH, 0.4);
+  assert.ok(Math.abs(droppedPct - (100 * 6) / 70) < 1e-9, `6 of 70 water vertices, got ${droppedPct}`);
+});
+
+test("filterUnprintableWater: a surviving body keeps its stepped shore, losing only 1-vertex spurs", () => {
+  const GW = 12, GH = 12;
+  const mask = vmask(GW, GH, (r, c) => c <= r); // 45° staircase shore, 78 water vertices
+  const { mask: out, droppedPct } = filterUnprintableWater(mask, GW, GH, 0.4);
+  const o = /** @type {Uint8Array} */ (out);
+  // Exactly the two vertices belonging to no 2×2 all-water block: the tip, and the far corner
+  // whose only candidate cell falls off the cell grid. Everything else — interior AND the
+  // stepped edge — survives, which is what keeps a real lake's shoreline ramp.
+  const dropped = [];
+  for (let r = 0; r < GH; r++) {
+    for (let c = 0; c < GW; c++) if (mask[r * GW + c] && !o[r * GW + c]) dropped.push(`${r},${c}`);
+  }
+  assert.deepEqual(dropped, ["0,0", "11,11"]);
+  assert.ok(Math.abs(droppedPct - (100 * 2) / 78) < 1e-9, `2 of 78, got ${droppedPct}`);
+});
+
+test("filterUnprintableWater: no mask, empty mask and all-water are no-ops", () => {
+  assert.deepEqual(filterUnprintableWater(undefined, 8, 8, 0.4), { mask: undefined, droppedPct: 0 });
+  const empty = new Uint8Array(64);
+  const e = filterUnprintableWater(empty, 8, 8, 0.4);
+  assert.equal(e.droppedPct, 0);
+  assert.notEqual(e.mask, empty, "a new array, always — the caller's is never handed back");
+  assert.deepEqual([...(/** @type {Uint8Array} */ (e.mask))], [...empty]);
+  const all = new Uint8Array(64).fill(1);
+  const a = filterUnprintableWater(all, 8, 8, 0.4);
+  assert.equal(a.droppedPct, 0);
+  assert.deepEqual([...(/** @type {Uint8Array} */ (a.mask))], [...all]);
 });

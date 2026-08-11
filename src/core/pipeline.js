@@ -8,7 +8,7 @@ import { cropGrid, gridRange } from "./resample.js";
 import { buildSolid, buildDrape, cellsFromVertexMask } from "./mesh.js";
 import { trailToPrintMm, cordSolid, admissibleCells } from "./cord.js";
 import { clipPolygon, clipElevs, clipRange } from "./clip.js";
-import { applyWaterRecess } from "./water.js";
+import { applyWaterRecess, filterUnprintableWater } from "./water.js";
 import { checkWatertight, signedVolume } from "./validate.js";
 import { ThreeMFWriter } from "./threemf.js";
 import { fetchMosaic } from "./terrain.js";
@@ -24,14 +24,15 @@ import { fetchMosaic } from "./terrain.js";
 /**
  * @typedef {{ center: LatLon, scale: number, tileWidthMm: number, base: number, exag: number,
  *   flatten?: boolean, recessMm?: number, layerMm?: number, shape?: Shape,
- *   waterInlay?: boolean }} TileSettings
+ *   waterInlay?: boolean, waterFilter?: boolean }} TileSettings
  *   center = [lat,lon] of the tile; scale = 1:N; tileWidthMm = print size of the tile
  *   edge; base = base-plate thickness (mm); exag = vertical exaggeration; flatten = pull
  *   all water to one waterline below the land (default false); recessMm = extra water
  *   sink in print mm (default 0); layerMm = slicer layer height (default 0.15);
  *   shape = tile footprint (default "square"); tileWidthMm is the bounding-square side
  *   in every shape; waterInlay = also export the displaced water as drop-in parts
- *   (default false).
+ *   (default false); waterFilter = skip water too narrow to print a part for
+ *   (default true — see water.filterUnprintableWater).
  */
 /**
  * @typedef {{ z: number, bbox: BBox, window: Window, span: Span, gw: number, gh: number, dx: number, dy: number, mmPerM: number, shape: Shape, ring: Array<[number,number]> | null }} TilePlan
@@ -128,15 +129,16 @@ export function planTile(settings, { z, maxTiles = 300 } = {}) {
  * @param {Mosaic} mosaic
  * @param {TilePlan} plan
  * @param {{ base: number, exag: number, flatten?: boolean, recessMm?: number, layerMm?: number,
- *   waterInlay?: boolean }} settings
+ *   waterInlay?: boolean, waterFilter?: boolean }} settings
  * @param {Uint8Array} [waterMask]
  * @param {{ segments: LatLon[][], widthMm: number, heightMm: number, onTerrain?: boolean }} [trail]
  *   onTerrain places the cord on the printed terrain instead of dropping it to the plate — see
  *   cord.cordSolid. Default (false) is the export's placement.
- * @returns {{ solid: Solid, ribbon: Solid | null, inlays: Solid | null, emin: number, emax: number, lineElev: number, landBluePct: number, waterAsLandPct: number }}
+ * @returns {{ solid: Solid, ribbon: Solid | null, inlays: Solid | null, emin: number, emax: number, lineElev: number, landBluePct: number, waterAsLandPct: number, printedWaterMask: Uint8Array | undefined, waterDroppedPct: number }}
  */
 export function bakeTileSolid(mosaic, plan,
-  { base, exag, flatten = false, recessMm = 0, layerMm = 0.15, waterInlay = false }, waterMask, trail) {
+  { base, exag, flatten = false, recessMm = 0, layerMm = 0.15, waterInlay = false, waterFilter = true },
+  waterMask, trail) {
   const { window, span, gw, gh, dx, dy, mmPerM, ring } = plan;
   const grid = cropGrid(mosaic, window);
   // The inlay's TOP is the original water surface, and flatten destroys it in place (a flattened
@@ -149,7 +151,16 @@ export function bakeTileSolid(mosaic, plan,
   // Square fills its window, so it needs no clip and no footprint — keeping `footprint`
   // undefined there is what makes the square path bit-identical to before shapes existed.
   const footprint = clip ? clip.inside : undefined;
-  const { lineElev, landBluePct, waterAsLandPct } = applyWaterRecess(grid, waterMask, {
+  // ONE mask for the recess and the inlay. They disagreed before: the recess moved masked
+  // VERTICES while the inlay meshed all-four-corners CELLS, so water narrower than a cell was
+  // grooved with nothing built to fill it. Before applyWaterRecess, not inside the inlay branch —
+  // filtering only the inlay would leave the pit, which is the complaint.
+  // Off returns the caller's own array, so the two are the SAME object and the worker's
+  // land/printed/dropped annotation finds nothing to mark — which is the honest answer.
+  const { mask: printedWaterMask, droppedPct: waterDroppedPct } = waterFilter
+    ? filterUnprintableWater(waterMask, gw, gh, dx)
+    : { mask: waterMask, droppedPct: 0 };
+  const { lineElev, landBluePct, waterAsLandPct } = applyWaterRecess(grid, printedWaterMask, {
     flatten, recessMm, layerMm, K: mmPerM * exag, footprint,
   });
   if (clip) clipElevs(clip, grid);
@@ -196,8 +207,9 @@ export function bakeTileSolid(mosaic, plan,
     // it exactly — but taper to zero thickness along its whole shoreline. That is a knife edge
     // below any printable feature size, and it leaves zero clearance exactly where the part has
     // to drop in. Conceding the ramp cells buys a vertical wall the slicer can print and a
-    // groove at most one cell wide (dx, 0.1–0.6 mm at export pitch) to seat the part through.
-    const { cells, count } = cellsFromVertexMask(/** @type {Uint8Array} */ (waterMask), gw, gh, footprint);
+    // groove at most one cell wide (dx, a 0.083 mm median at export pitch) to seat the part through.
+    const { cells, count } = cellsFromVertexMask(
+      /** @type {Uint8Array} */ (printedWaterMask), gw, gh, footprint);
     if (count) {
       inlays = buildDrape(grid, gw, gh, span, cells, { dx, dy, mmPerM, emin, exag }, preWater);
       const iwt = checkWatertight(/** @type {Solid} */ (inlays));
@@ -209,7 +221,8 @@ export function bakeTileSolid(mosaic, plan,
     }
   }
 
-  return { solid, ribbon, inlays, emin, emax, lineElev, landBluePct, waterAsLandPct };
+  return { solid, ribbon, inlays, emin, emax, lineElev, landBluePct, waterAsLandPct,
+    printedWaterMask, waterDroppedPct };
 }
 
 // One to three solids → a .3mf blob. The tile sits at the plate origin; the cord and the water
@@ -290,7 +303,7 @@ export function defaultTileName({ center: [lat, lon], tileWidthMm, scale, shape 
 /**
  * @param {TileSettings} settings
  * @param {{ z?: number, maxTiles?: number, onProgress?: (done: number, total: number) => void }} [opts]
- * @returns {Promise<{ solid: Solid, emin: number, emax: number, lineElev: number, landBluePct: number, waterAsLandPct: number }>}
+ * @returns {Promise<ReturnType<typeof bakeTileSolid>>}
  */
 export async function bakeTile(settings, opts = {}) {
   const plan = planTile(settings, opts);

@@ -15,6 +15,9 @@ import { roseMarks } from "./compass.js";
  *   dx: number, dy: number, recessed: boolean }} ProbeFrame
  *   the bake's own inputs, shipped alongside the mesh: the hover probe reads elevations and the
  *   mask, the view overlays read all three grids.
+ *   `mask` is three-valued — 0 land, 1 water the tile printed as water, 2 water the size filter
+ *   left at terrain level. 2 exists because 0 would be a lie the user cannot see through: the
+ *   raster says water, the print says rock, and only the mask knows which question was asked.
  */
 /**
  * @typedef {{ changes: ColorChange[], baseColor: [number,number,number], baseHex: string, baseName: string }} Bands
@@ -187,8 +190,12 @@ function overlayTexture(f, mode) {
   for (let i = 0; i < n; i++) {
     let r, g, b;
     if (name === "water") {
-      // Flat colors, no ramp: the mask is one bit and a gradient would imply it isn't.
-      [r, g, b] = f.mask[i] ? [56, 108, 176] : [222, 219, 210];
+      // Flat colors, no ramp: the mask is three states and a gradient would imply an ordering.
+      // The dropped state is a washed-out blue rather than a fourth hue — it reads as "water,
+      // but not the printed kind" at a glance, which is the comparison being made.
+      [r, g, b] = f.mask[i] === 1 ? [56, 108, 176]
+        : f.mask[i] === 2 ? [142, 160, 180]
+          : [222, 219, 210];
     } else if (name === "height") {
       const v = 255 * Math.max(0, Math.min(1, (scalar[i] - lo) / (hi - lo)));
       [r, g, b] = [v, v, v];
@@ -374,8 +381,12 @@ export function initPreview(container) {
         const c = Math.round(lx / frame.dx);
         const r = frame.gh - 1 - Math.round(ly / frame.dy);
         const i = r >= 0 && r < frame.gh && c >= 0 && c < frame.gw ? r * frame.gw + c : -1;
-        if (i >= 0 && frame.mask[i]) {
+        if (i >= 0 && frame.mask[i] === 1) {
           probe.textContent = `${metres(frame.orig[i])} · water${frame.recessed ? " (recessed)" : ""}`;
+        } else if (i >= 0 && frame.mask[i] === 2) {
+          // The raster calls this water and the print does not. Reading `orig` is not a fallback
+          // here: the filter left the sample where it was, so this IS the printed elevation.
+          probe.textContent = `${metres(frame.orig[i])} · water (too narrow to print)`;
         } else {
           const elev = frame.emin + (lz - frame.base) / (frame.mmPerM * frame.exag);
           // Tag land explicitly: with only "· water" marked, a bare reading was ambiguous

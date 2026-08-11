@@ -101,7 +101,7 @@ async function handle({ gen, settings, maxTiles, format, name, color, coverage, 
       cordDropped = true;
       baked = bakeTileSolid(mosaic, plan, opts, waterMask);
     }
-    const { solid, ribbon, inlays, emin, emax, lineElev, landBluePct, waterAsLandPct } = baked;
+    const { solid, ribbon, inlays, emin, emax, lineElev, landBluePct, waterAsLandPct, printedWaterMask, waterDroppedPct } = baked;
     // Latitude-adjusted color changes for THIS bake's frame. Shared by the preview
     // (returned as `bands`) and, later, the export embed. K>0 since exag ∈ [0.5,4].
     const K = plan.mmPerM * settings.exag;
@@ -143,6 +143,16 @@ async function handle({ gen, settings, maxTiles, format, name, color, coverage, 
       // Detail overlay, off the PRE-recess grid for the same reason as the probe: flattened
       // water would read as zero detail. Cheap (O(cells)), so it rides every bake.
       const detail = detailMap(probeGrid, plan.gw, plan.gh);
+      // 0 land, 1 water the bake printed as water, 2 water the size filter left at terrain level.
+      // The raw mask alone would report "water (recessed)" over a body sitting at terrain level;
+      // the filtered mask alone would call it land, which is the raster's answer to a question
+      // nobody asked. Three states is what lets the probe and the overlay say which happened.
+      //
+      // Annotated in place, so no third grid: the worker owns this array, the bake kept its own
+      // filtered copy, and with the filter off the two are the same object and the loop marks
+      // nothing. ?? is for the type only — this path always passes a mask.
+      const printed = printedWaterMask ?? waterMask;
+      for (let i = 0; i < waterMask.length; i++) if (waterMask[i] && !printed[i]) waterMask[i] = 2;
       const probeFrame = {
         emin, base: settings.base, mmPerM: plan.mmPerM, exag: settings.exag,
         orig: probeGrid, mask: waterMask, detail, gw: plan.gw, gh: plan.gh, dx: plan.dx, dy: plan.dy,
@@ -153,7 +163,7 @@ async function handle({ gen, settings, maxTiles, format, name, color, coverage, 
       const cord = ribbon
         ? { positions: ribbon.positions, indices: ribbon.indices, normals: vertexNormals(ribbon.positions, ribbon.indices) }
         : null;
-      post({ gen, positions: solid.positions, indices: solid.indices, normals, bands, frame: probeFrame, landBluePct, waterAsLandPct, cord, cordDropped },
+      post({ gen, positions: solid.positions, indices: solid.indices, normals, bands, frame: probeFrame, landBluePct, waterAsLandPct, waterDroppedPct, cord, cordDropped },
         [solid.positions.buffer, solid.indices.buffer, normals.buffer, probeGrid.buffer, waterMask.buffer, detail.buffer,
           ...(cord ? [cord.positions.buffer, cord.indices.buffer, cord.normals.buffer] : [])]);
       // Deliberately not awaited — see above. Detached from the job's own catch, so it carries

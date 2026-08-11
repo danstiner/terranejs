@@ -332,3 +332,86 @@ test("defaultTileName: names the shape only when it is not a square", () => {
   assert.ok(!defaultTileName(SETTINGS).includes("square"));
   assert.ok(defaultTileName({ ...SETTINGS, shape: "hex" }).includes("hex"));
 });
+
+test("bakeTileSolid: a sub-cell pond is dropped, so recess and inlay see the same water", () => {
+  const plan = planTile(SETTINGS, { z: 10 });
+  const lakeOnly = new Uint8Array(plan.gw * plan.gh);
+  for (let r = 5; r <= 15; r++) for (let c = 5; c <= 15; c++) lakeOnly[r * plan.gw + c] = 1;
+  const withPond = Uint8Array.from(lakeOnly);
+  withPond[30 * plan.gw + 30] = 1; // one vertex: no all-four-corners cell can ever cover it
+  const opts = { ...SETTINGS, recessMm: 2, waterInlay: true };
+  const a = bakeTileSolid(mosaicFor(plan), plan, opts, withPond);
+  const b = bakeTileSolid(mosaicFor(plan), plan, opts, lakeOnly);
+  assert.equal(a.printedWaterMask?.[30 * plan.gw + 30], 0, "the sub-cell pond survived the filter");
+  assert.equal(signedVolume(a.solid), signedVolume(b.solid), "the pond moved terrain");
+  assert.ok(a.inlays && b.inlays, "both bakes produce inlays");
+  assert.equal(signedVolume(a.inlays), signedVolume(b.inlays), "the pond changed the inlays");
+  assert.ok(Math.abs(a.waterDroppedPct - 100 / 122) < 1e-9, `1 of 122, got ${a.waterDroppedPct}`);
+  assert.equal(b.waterDroppedPct, 0);
+});
+
+test("bakeTileSolid: a dropped body anchors the flatten plane from the land side", () => {
+  const plan = planTile(SETTINGS, { z: 10 }); // mosaicFor: elev = 500 + 3c + 2r, min 500 at (0,0)
+  const lakeOnly = new Uint8Array(plan.gw * plan.gh);
+  for (let r = 5; r <= 15; r++) for (let c = 5; c <= 15; c++) lakeOnly[r * plan.gw + c] = 1;
+  const withPond = Uint8Array.from(lakeOnly);
+  withPond[0] = 1; // the tile's LOWEST sample: kept, it would anchor the plane as water
+  const opts = { ...SETTINGS, flatten: true };
+  const a = bakeTileSolid(mosaicFor(plan), plan, opts, withPond);
+  const b = bakeTileSolid(mosaicFor(plan), plan, opts, lakeOnly);
+  assert.equal(a.lineElev, b.lineElev, "the filter did not make the two masks equivalent");
+  assert.equal(a.emin, b.emin, "emin drives base, baseBand and every colorChanges z");
+  // 500 − 2·lift can only be reached by counting the dropped vertex as LAND: as water it would
+  // anchor at 500 itself. This is the same land-loop membership that shifts landBluePct on a
+  // coastal tile, so pinning it here pins that too.
+  const lift = 0.15 / (plan.mmPerM * SETTINGS.exag); // layerMm default
+  assert.ok(Math.abs(a.lineElev - (500 - 2 * lift)) < 1e-3,
+    `plane at ${a.lineElev}; a dropped body must hold it down from the LAND side (500 − 2·lift)`);
+});
+
+test("bakeTileSolid: a tile whose water is all sub-cell loses its water line entirely", () => {
+  const plan = planTile(SETTINGS, { z: 10 });
+  const mask = new Uint8Array(plan.gw * plan.gh);
+  for (let c = 2; c < 20; c++) mask[10 * plan.gw + c] = 1; // one vertex tall: never any cell
+  const r = bakeTileSolid(mosaicFor(plan), plan, { ...SETTINGS, recessMm: 2 }, mask);
+  assert.equal(r.waterDroppedPct, 100);
+  assert.equal(r.lineElev, -Infinity, "the blue band must leave the tile, not sit at 0 m");
+  assert.equal(r.landBluePct, 0);
+});
+
+test("bakeTileSolid: the inlay reads the filtered mask too, not just the recess", () => {
+  // z12 puts dx at 0.625 mm, so k = 1 and the width test bites. At the 2.5 mm cells the tests
+  // above use, k = 0 makes cells(filtered) === cells(raw) identically, and no fixture there can
+  // tell the inlay reading the filtered mask from it reading the raw one.
+  const plan = planTile(SETTINGS, { z: 12 });
+  assert.equal(plan.gw, 161, "fixture drifted — this test needs dx = 0.625 mm, i.e. k = 1");
+  const lakeOnly = new Uint8Array(plan.gw * plan.gh);
+  for (let r = 20; r <= 40; r++) for (let c = 20; c <= 40; c++) lakeOnly[r * plan.gw + c] = 1;
+  const withRiver = Uint8Array.from(lakeOnly);
+  // One cell tall (two vertex rows), so unlike a sub-cell pond it HAS cells: a raw-mask inlay
+  // would build parts for it, a filtered-mask one must not.
+  for (let r = 100; r <= 101; r++) for (let c = 20; c <= 120; c++) withRiver[r * plan.gw + c] = 1;
+  const opts = { ...SETTINGS, recessMm: 2, waterInlay: true };
+  const a = bakeTileSolid(mosaicFor(plan), plan, opts, withRiver);
+  const b = bakeTileSolid(mosaicFor(plan), plan, opts, lakeOnly);
+  assert.ok(Math.abs(a.waterDroppedPct - (100 * 202) / 643) < 1e-9,
+    `the river must be dropped whole (202 of 643 water vertices), got ${a.waterDroppedPct}`);
+  assert.equal(signedVolume(a.solid), signedVolume(b.solid), "the river moved terrain");
+  assert.ok(a.inlays && b.inlays, "both bakes produce inlays");
+  assert.equal(signedVolume(a.inlays), signedVolume(b.inlays),
+    "the river got an inlay — cellsFromVertexMask is reading the raw mask, not the filtered one");
+});
+
+test("bakeTileSolid: waterFilter off keeps sub-cell water, and hands back the caller's own array", () => {
+  const plan = planTile(SETTINGS, { z: 10 });
+  const mask = new Uint8Array(plan.gw * plan.gh);
+  for (let c = 2; c < 20; c++) mask[10 * plan.gw + c] = 1; // one vertex tall: never any cell
+  const opts = { ...SETTINGS, recessMm: 2, waterFilter: false };
+  const r = bakeTileSolid(mosaicFor(plan), plan, opts, mask);
+  assert.equal(r.waterDroppedPct, 0);
+  // The SAME object, not a copy: the worker's land/printed/dropped annotation walks both arrays
+  // and marks a vertex dropped only where they disagree, so identity is what makes it a no-op.
+  assert.equal(r.printedWaterMask, mask);
+  // With the filter on this same fixture loses its water line entirely (test above); off, it keeps it.
+  assert.equal(r.lineElev, 0);
+});

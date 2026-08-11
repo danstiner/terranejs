@@ -135,6 +135,12 @@
           </div>
         </div>
 
+        <!-- Advanced and Trail are the only groups allowed to hold a control the hash does not
+             carry. Every control above them is shareable, so a link opens the tile the sharer
+             saw — put a new one up there and it must go in the hash too. Trail's exception is
+             structural (a URL fragment cannot carry GPX bytes); Advanced's is editorial, and
+             applies only to the two checkboxes below — #tileW and #layerMm sit here for
+             prominence, not privacy, and are both in the hash. -->
         <details class="group">
           <summary>Advanced</summary>
           <div class="labelrow">
@@ -144,7 +150,15 @@
           </div>
           <input id="tileW" type="number" min="50" max="1000" step="5" value="200" class="num">
 
+          <!-- These two describe the MACHINE, not the tile, so a reader's printer answers for
+               them rather than the sharer's. app.js reads both off the DOM at bake time. -->
           <label class="check"><input id="colorExport" type="checkbox"> Export color changes (PrusaSlicer only)</label>
+
+          <div class="labelrow">
+            <label class="check"><input id="waterFilter" type="checkbox" checked> Skip water too small to print</label>
+            <button type="button" class="help" aria-label="About skipping small water"
+              data-help="Leaves water narrower than 0.8 mm of print at terrain level — two passes of a 0.4 mm nozzle, and nothing thinner survives being pressed into a groove. Print millimetres, not ground metres, so a wide tile keeps no rivers: 0.8 mm is 120 m of ground at 1:150000.">?</button>
+          </div>
 
           <div class="labelrow">
             <label for="layerMm">Layer height (mm)</label>
