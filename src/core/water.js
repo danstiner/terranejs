@@ -9,6 +9,8 @@
 // See docs/specs/data-pipeline.md §4 (Water) and
 // docs/superpowers/specs/2026-08-01-water-plane-simplification-design.md.
 
+import { cellsFromVertexMask } from "./mesh.js";
+
 /** Warning threshold: % of land printing blue before the UI nudges toward the flatten checkbox.
  * Strict (5) because the remedy is one click and blue land here means land genuinely at/below
  * the waterline (polders, deltas) — the line sits at the true waterline, so ordinary coasts
@@ -22,6 +24,18 @@ export const LAND_BLUE_WARN_PCT = 5;
  * 100% of its water — share-of-water would shout at the default view and stay silent on the
  * defect. See docs/superpowers/specs/2026-08-04-water-as-land-warning-design.md. */
 export const WATER_AS_LAND_WARN_PCT = 1;
+
+/** Narrowest water body worth keeping, in PRINT mm. Two 0.4 mm extrusions: #cordW's floor is
+ * already one, and an insert is a free-standing part pressed into a groove rather than a bead
+ * fused to the tile. Print mm and not ground metres because "too small to print" is a property of
+ * the part — which is why a wide tile keeps no rivers: 0.8 mm is 120 m of ground at 1:150000. */
+export const MIN_WATER_BODY_WIDTH_MM = 0.8;
+
+/** Warning threshold: % of the tile's WATER left at terrain level before the UI says so. Share of
+ * water, not of tile (unlike WATER_AS_LAND_WARN_PCT), because the case that matters is a tile
+ * whose water is ALL tarns — 100% dropped and ~0% of the tile. Looser than the other two: their
+ * remedy is one click, this one's is a scale change, so a false alarm costs more. */
+export const WATER_DROPPED_WARN_PCT = 20;
 
 /**
  * Anchor the water colour line and optionally flatten/sink the water for one bake, in place.
@@ -92,4 +106,92 @@ export function applyWaterRecess(grid, mask, { flatten, recessMm, layerMm, K, fo
     // Share of the TILE, unlike landBluePct's share of the land — see WATER_AS_LAND_WARN_PCT.
     waterAsLandPct: cells > 0 ? (100 * waterAsLand) / cells : 0,
   };
+}
+
+/**
+ * Drop water no printable part could fill, BEFORE anything moves it. A body survives if it holds
+ * a square MIN_WATER_BODY_WIDTH_MM across that is entirely water; the whole body then survives,
+ * shoreline included.
+ *
+ * Everything runs on CELLS — cellsFromVertexMask's all-four-corners rule, the same cells the inlay
+ * meshes — and only the last step returns to vertices. Reconstructing over the VERTEX mask looks
+ * equivalent and is not: vertex-8-connectivity is coarser than cell-8-connectivity, so the fill
+ * leaks along every sub-cell tail attached to a surviving body, which is the recessed-with-no-inlay
+ * case this exists to remove. Measured: a 1-vertex tail on a printable lake, 11/11 vertices kept
+ * under a vertex fill, 0/11 under this one.
+ *
+ * One bit per cell, so "the whole (2k+1)² neighbourhood is water" is a window SUM against 2k+1 —
+ * two sliding passes carrying O(1) state, not a min-filter, which would cost O(N·k). Out-of-range
+ * reads as land, so a body must fit its square inside the grid.
+ *
+ * Surviving bodies keep their shoreline ramp but are NOT bit-identical to the unfiltered mask:
+ * vertices belonging to no all-water cell — the 1-vertex spurs of a jagged raster shoreline — go
+ * too. They are exactly the vertices no part could cover.
+ * @param {Uint8Array | undefined} mask 1 = water, gw·gh vertices; never mutated
+ * @param {number} gw
+ * @param {number} gh
+ * @param {number} dx print mm per grid cell
+ * @returns {{ mask: Uint8Array | undefined, droppedPct: number }} a NEW mask, always
+ */
+export function filterUnprintableWater(mask, gw, gh, dx) {
+  if (!mask) return { mask: undefined, droppedPct: 0 };
+  let water = 0;
+  for (let i = 0; i < mask.length; i++) if (mask[i]) water++;
+  const out = new Uint8Array(gw * gh);
+  if (!water) return { mask: out, droppedPct: 0 };
+
+  const cw = gw - 1, ch = gh - 1;
+  const { cells } = cellsFromVertexMask(mask, gw, gh);
+  const k = Math.round(MIN_WATER_BODY_WIDTH_MM / 2 / dx);
+  const win = 2 * k + 1;
+
+  // Seeds go straight onto the fill stack; a separate seed array would cost another cw·ch bytes
+  // for a value read once. k = 0 needs no special case — a 1-wide window is the identity.
+  const kept = new Uint8Array(cw * ch);
+  // Every cell is marked kept before it is pushed, so it enters once and cw·ch bounds the
+  // frontier exactly. A boxed number[] would peak at one entry per seed — the column pass emits
+  // them all before the first pop — which is +282 MB on an ocean-heavy export grid.
+  const stack = new Int32Array(cw * ch);
+  let sp = 0;
+  const row = new Uint8Array(cw * ch);
+  for (let r = 0; r < ch; r++) {
+    const o = r * cw;
+    let sum = 0;
+    for (let c = 0; c < cw; c++) {
+      sum += cells[o + c];
+      if (c >= win) sum -= cells[o + c - win];
+      if (c >= win - 1 && sum === win) row[o + c - k] = 1;
+    }
+  }
+  for (let c = 0; c < cw; c++) {
+    let sum = 0;
+    for (let r = 0; r < ch; r++) {
+      sum += row[r * cw + c];
+      if (r >= win) sum -= row[(r - win) * cw + c];
+      if (r >= win - 1 && sum === win) { const i = (r - k) * cw + c; kept[i] = 1; stack[sp++] = i; }
+    }
+  }
+
+  // Explicit stack: a recursive fill would blow the JS stack on a grid-scale body.
+  while (sp) {
+    const i = stack[--sp];
+    const r = (i / cw) | 0, c = i - r * cw;
+    for (let nr = Math.max(0, r - 1); nr <= Math.min(ch - 1, r + 1); nr++) {
+      for (let nc = Math.max(0, c - 1); nc <= Math.min(cw - 1, c + 1); nc++) {
+        const j = nr * cw + nc;
+        if (cells[j] && !kept[j]) { kept[j] = 1; stack[sp++] = j; }
+      }
+    }
+  }
+
+  for (let r = 0; r < ch; r++) {
+    for (let c = 0; c < cw; c++) {
+      if (!kept[r * cw + c]) continue;
+      const A = r * gw + c;
+      out[A] = 1; out[A + 1] = 1; out[A + gw] = 1; out[A + gw + 1] = 1;
+    }
+  }
+  let survived = 0;
+  for (let i = 0; i < out.length; i++) if (out[i]) survived++;
+  return { mask: out, droppedPct: (100 * (water - survived)) / water };
 }

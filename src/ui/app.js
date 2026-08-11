@@ -10,7 +10,7 @@ import { defaultTileName, planTile } from "../core/pipeline.js";
 import { encodeState, decodeState } from "../core/urlstate.js";
 import { PRESETS, DEFAULT_PRESET } from "./presets.js";
 import { BAND_NAMES } from "../core/colors.js";
-import { LAND_BLUE_WARN_PCT, WATER_AS_LAND_WARN_PCT } from "../core/water.js";
+import { LAND_BLUE_WARN_PCT, WATER_AS_LAND_WARN_PCT, WATER_DROPPED_WARN_PCT } from "../core/water.js";
 import { HEX_H } from "../core/layout.js";
 import { fitTile, clippedFraction, TRAIL_CLIP_WARN } from "../core/framing.js";
 import { parseGpxText } from "./gpxparse.js";
@@ -164,17 +164,22 @@ function detailSummary(settings) {
 // layer above the line, so water within one layer of it still prints blue — tens of metres of
 // elevation at map scale. Percentages are differently based on purpose — see WATER_AS_LAND_WARN_PCT.
 // The quoted label must match index.html: the sentence is only actionable if it names the control.
-/** @param {{ landBluePct: number, waterAsLandPct: number }} data */
+/** @param {{ landBluePct: number, waterAsLandPct: number, waterDroppedPct: number }} data */
 function updateWaterWarning(data) {
   const clauses = [];
   if (data.landBluePct > LAND_BLUE_WARN_PCT) clauses.push(`${Math.round(data.landBluePct)}% of the land will print blue`);
   // One decimal: rounding a firing 1.4% to "1%" would quote the threshold at which it stays silent.
   if (data.waterAsLandPct > WATER_AS_LAND_WARN_PCT) clauses.push(`water covering ${data.waterAsLandPct.toFixed(1)}% of the tile will show as land`);
-  const warn = $("waterWarn");
-  warn.hidden = clauses.length === 0;
-  if (clauses.length) {
-    warn.textContent = `${clauses.join(" and ")} — tick "Flatten all water to one level" to separate land from water.`;
+  const sentences = [];
+  if (clauses.length) sentences.push(`${clauses.join(" and ")} — tick "Flatten all water to one level" to separate land from water.`);
+  // Its own sentence, not a third clause: the remedy above cannot reach it. A dropped body is out
+  // of the mask, so flattening does nothing to it; only a tighter scale prints it wide enough.
+  if (data.waterDroppedPct > WATER_DROPPED_WARN_PCT) {
+    sentences.push(`${data.waterDroppedPct.toFixed(1)}% of this tile's water is too narrow to print and stays at terrain level — raise "Map scale" to print it wider.`);
   }
+  const warn = $("waterWarn");
+  warn.hidden = sentences.length === 0;
+  if (sentences.length) warn.textContent = sentences.join(" ");
 }
 
 // The tile only prints what its footprint encloses, so a trail running past the
@@ -327,6 +332,11 @@ let quickDue = false;
 let crispDue = false;
 const bakeInFlight = () => previewPhase === "fast" || previewPhase === "crisp";
 
+// Read at bake time, never stored: a printability judgement about the machine rather than a
+// description of the tile, so it stays out of the store and the hash. Same treatment as
+// #colorExport — but unlike that one it reshapes the terrain, so it also has to rebake.
+const waterFilterOn = () => /** @type {HTMLInputElement} */ ($("waterFilter")).checked;
+
 /** Restart both timers, so a burst reads quick → quick → quick → (settle) → detailed. */
 function schedule() {
   window.clearTimeout(quickTimer);
@@ -376,7 +386,7 @@ function loadPreview() {
   // `trail` rides its own field (the worker reads only that one), so it is destructured out
   // rather than posted twice — a structured clone of 15.7k points per pass, for a field nothing
   // downstream of `settings` reads. Same split as the export click below.
-  const { trail, ...settings } = { ...s, center: s.center };
+  const { trail, ...settings } = { ...s, center: s.center, waterFilter: waterFilterOn() };
   previewSettings = settings;
   previewTrail = trail ? { segments: trail.segments, ...s.cord } : null;
   previewGen = ++gen;
@@ -495,6 +505,9 @@ syncControls(store.get()); // unconditional: app.js owns the defaults, index.htm
 /** @type {HTMLInputElement} */ ($("cordH")).value = String(store.get().cord.heightMm);
 
 wireControls(store);
+// Not wired in controls.js with the rest: that file's job is to move store state, and this
+// checkbox holds none — it drives a rebake directly instead.
+$("waterFilter").addEventListener("change", schedule);
 wireHelp();
 
 // Pasting a link into this tab's address bar changes only the fragment — no reload, no module
@@ -622,7 +635,7 @@ $("export").addEventListener("click", () => {
   quickDue = crispDue = false;     // both describe work this export supersedes
   // `trail` rides its own field below (the worker reads only that one), so it's destructured
   // out here rather than posted twice inside `settings` too.
-  const { trail, ...settings } = { ...s, center: s.center };
+  const { trail, ...settings } = { ...s, center: s.center, waterFilter: waterFilterOn() };
   exportGen = ++gen;
   exportName = defaultTileName(settings); // lat/lng/width/scale → describes the tile
   setProgress("Export…");

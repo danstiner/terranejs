@@ -191,6 +191,23 @@ two orthogonal controls decide where the water and that line sit:
    recess can sink even high water below the sea-level line — blue pits where lakes were;
    documented, not guarded.
 
+Before either control runs, water too narrow to print is dropped from the mask: a body survives
+only if it holds a square 0.8 mm across that is entirely water — two 0.4 mm extrusions, the width
+of a free-standing part you can press into a groove. A dropped body is not recessed, not
+flattened, does not anchor the flatten plane, and gets no inlay; it sits at true elevation and
+prints blue only if it falls in the blue band on its own. The threshold is print millimetres, so a
+wide tile keeps no rivers — 0.8 mm is 120 m of ground at 1:150,000. One filtered mask feeds both
+the recess and the inlay, which is what makes them agree: the recess moves masked vertices while
+the inlay meshes all-four-corners cells, so before this, water narrower than a cell was grooved
+with nothing built to fill it. The tile says so when more than 20% of its water is dropped, and
+the hover probe and water overlay mark those cells as a third state — neither printed water nor
+land — so a lake that failed to groove can be asked about directly. A checkbox under Advanced
+turns the whole filter off. It sits there, and not with the water controls, because it is not
+in the shared link: the water controls describe the tile, this one describes the nozzle
+printing it, and someone opening the link on different hardware should get their own answer
+rather than the sharer's. Advanced and Trail are the only groups that may hold a control the
+hash does not carry.
+
 Both controls move geometry, and what they move can be exported back as separate drop-in parts —
 see "Water inlays" under Export.
 
@@ -338,7 +355,7 @@ the water vertex, and top and bottom meet at that unmoved land vertex —
 so an inlay covering the ramp would fill the hollow exactly but taper
 to zero thickness along its whole shoreline. Conceding those cells buys
 a vertical wall the slicer can print, and a groove at most one cell wide
-(0.1–0.6 mm at export pitch) to seat the part through.
+(a 0.083 mm median at export pitch) to seat the part through.
 
 Water bodies on one tile can sit far apart in elevation, so each
 connected piece gets its own floor and rests on the plate independently.
