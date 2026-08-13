@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildSolid } from "../src/core/mesh.js";
+import { buildSolid, assembleSolid } from "../src/core/mesh.js";
 import { signedVolume, checkWatertight } from "../src/core/validate.js";
 import { clipElevs, clipPolygon } from "../src/core/clip.js";
 
@@ -537,4 +537,19 @@ test("clip: invariant bundle holds with a hex flat edge on a grid line", () => {
     const m = buildSolid(grid, gw, gh, { r0: 0, r1: gh - 1, c0: 0, c1: gw - 1 }, null, GEOM, clip);
     assertSane(m, `hex flat-edge offset ${d}`);
   }
+});
+
+test("assembleSolid reports whether it took the mirror fallback", () => {
+  // A plain 2x2-vertex quad: one loop, flat base. The y flip is not decoration -- gridTopTris'
+  // (A, C, B) order is CCW only because buildSolid maps row to (r1 - row), and a fixture that
+  // skips the flip hands assembleSolid a CW top, whose loop has area2 <= 0, which nulls
+  // baseTriangles and takes the mirror fallback this test is trying to assert against.
+  const tris = Uint32Array.from([0, 2, 1, 1, 2, 3]);
+  const xy = (/** @type {number} */ id) => /** @type {[number, number]} */ ([id % 2, 1 - ((id / 2) | 0)]);
+  const flat = assembleSolid(tris, 4, xy, () => 1, () => 0, "flat");
+  assert.equal(flat.mirrored, false);
+  assert.equal(flat.loops, 1);
+  const mir = assembleSolid(tris, 4, xy, () => 1, () => 0, "mirror");
+  assert.equal(mir.mirrored, true);
+  assert.equal(mir.loops, 0);
 });

@@ -307,6 +307,8 @@ export function assembleSolid(topTris, N, xy, zTop, zBot, bottomMode) {
   return {
     positions: nv * 3 === positions.length ? positions : positions.subarray(0, nv * 3),
     indices: ni === indices.length ? indices : indices.subarray(0, ni),
+    mirrored,
+    loops: bases ? bases.length : 0,
   };
 }
 
