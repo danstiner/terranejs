@@ -519,7 +519,9 @@ cells across the cord's width — so the coarser grid asks for *more* subdivisio
 to carry the same cord, and runs into the triangle allowance first. What that
 costs is the longest trail it will draw, not how accurately it draws one: a very
 long trail at a very narrow width can be too fine to *draw* while still
-exporting at full size. That case says so, and leaves the terrain on screen.
+exporting at full size. That case says so, and leaves the terrain on screen —
+without the trail's inset either, since the rescue re-bakes the tile with no
+trail at all.
 
 The pipeline itself is headless — it lives in `src/core/`, has no DOM
 dependency, and is testable outside a browser. The browser-facing pieces

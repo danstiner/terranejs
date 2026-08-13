@@ -3,6 +3,7 @@
 /** @typedef {import("./app.js").AppState} AppState */
 /** @typedef {import("../core/urlstate.js").ShareableState} ShareableState */
 import { MM_PER_KM_MIN, MM_PER_KM_MAX } from "../core/urlstate.js";
+import { trenchWidthMm } from "../core/cord.js";
 
 /** @param {string} id @returns {HTMLElement} */
 const el = (id) => {
@@ -91,13 +92,14 @@ export function wireControls(store) {
   // Same guard shape as tileW/layerMm: a cleared number input reads "" -> Number("") -> 0, and
   // an unguarded 0 or negative height reaches buildDrape as a degenerate or inside-out solid
   // (pipeline.js's watertight check is topology-only and cannot see it — see bakeTileSolid).
-  /** @param {"widthMm"|"heightMm"} k @param {number} min @param {number} max */
+  /** @param {"widthMm"|"heightMm"|"trenchDepthMm"} k @param {number} min @param {number} max */
   const cord = (k, min, max) => (/** @type {Event} */ e) => {
     const v = num(e);
     if (Number.isFinite(v) && v >= min && v <= max) store.set({ cord: { ...store.get().cord, [k]: v } });
   };
   el("cordW").addEventListener("input", cord("widthMm", 0.4, 6));   // matches index.html's min/max
   el("cordH").addEventListener("input", cord("heightMm", 0.15, 3));
+  el("trenchD").addEventListener("input", cord("trenchDepthMm", 0, 2));
 }
 
 /**
@@ -116,6 +118,30 @@ export function cordHint(heightMm, layerMm) {
   const printed = layers * layerMm;
   const tail = Math.abs(printed - heightMm) > 1e-9 ? ` (${printed.toFixed(2)} mm printed)` : "";
   return `${heightMm.toFixed(2)} mm — ${layers} layer${layers === 1 ? "" : "s"} at ${layerMm} mm${tail}`;
+}
+
+/**
+ * The derived channel width, and where the cord ends up in it.
+ *
+ * The width is DERIVED, never set: the cord plus one clearance per side, at every pitch. Surfacing
+ * it is still the point — it is what has to fit, and nothing else on the panel says so.
+ *
+ * Protrusion crosses zero inside the slider's range against a 1 mm cord, so this changes voice
+ * rather than reporting a negative "proud" figure.
+ *
+ * @param {number} trenchDepthMm @param {number} cordWidthMm @param {number} cordHeightMm
+ * @returns {string}
+ */
+export function trenchHint(trenchDepthMm, cordWidthMm, cordHeightMm) {
+  if (!(trenchDepthMm > 0)) return "";
+  const T = trenchWidthMm(cordWidthMm);
+  const proud = cordHeightMm - trenchDepthMm;
+  const sit = Math.abs(proud) < 5e-3 ? "sits flush with the surface"
+    : proud > 0 ? `stands ${proud.toFixed(2)} mm proud`
+      : `sits ${(-proud).toFixed(2)} mm below the surface`;
+  // "wide" is load-bearing: the sentence ends on how the trail SITS, so a bare leading number
+  // reads as the depth the user just typed rather than the width they never set.
+  return `${T.toFixed(2)} mm wide channel — the trail ${sit}.`;
 }
 
 /**

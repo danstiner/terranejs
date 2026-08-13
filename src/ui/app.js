@@ -5,7 +5,7 @@
 import { createStore } from "./store.js";
 import { initMap } from "./map.js";
 import { initPreview } from "./preview.js";
-import { wireControls, syncControls, wireHelp, cordHint } from "./controls.js";
+import { wireControls, syncControls, wireHelp, cordHint, trenchHint } from "./controls.js";
 import { defaultTileName, planTile } from "../core/pipeline.js";
 import { encodeState, decodeState } from "../core/urlstate.js";
 import { PRESETS, DEFAULT_PRESET } from "./presets.js";
@@ -17,7 +17,7 @@ import { parseGpxText } from "./gpxparse.js";
 
 /** @typedef {{ name: string, segments: import("../core/types.js").LatLon[][] }} Trail
  *   An imported GPX: the source filename, and one polyline per track segment. */
-/** @typedef {{ widthMm: number, heightMm: number }} Cord */
+/** @typedef {{ widthMm: number, heightMm: number, trenchDepthMm: number }} Cord */
 // The app state is the shareable state PLUS the trail (and its cord) — one typedef, so a new
 // field can't be added here and silently dropped from every link. Both are the deliberate
 // exception: a hash is a URL fragment and cannot carry GPX bytes, so a trail — and the cord
@@ -51,7 +51,7 @@ const store = createStore(/** @type {AppState} */ ({
     waterInlay: false,
   }),
   trail: null, // a restored link never carries one — see the AppState note above
-  cord: { widthMm: 1, heightMm: 1 }, // session-only: a hash carries no trail, so no cord either
+  cord: { widthMm: 1, heightMm: 1, trenchDepthMm: 0 }, // session-only: a hash carries no trail, so no cord either
 }));
 
 /** @param {string} id @returns {HTMLElement} */
@@ -103,7 +103,8 @@ let previewPhase = /** @type {"idle" | "fast" | "pending" | "crisp"} */ ("idle")
 let previewSettings = null;
 /** The trail the live preview is being baked for, snapshotted with its settings: the crisp pass is
  * posted from the reply handler, long after the store may have moved on.
- * @type {{ segments: import("../core/types.js").LatLon[][], widthMm: number, heightMm: number } | null} */
+ * @type {{ segments: import("../core/types.js").LatLon[][], widthMm: number, heightMm: number,
+ *   trenchDepthMm: number } | null} */
 let previewTrail = null;
 let exportName = "";
 let previewDeferred = false; // a preview requested during an export; run once the export finishes
@@ -200,10 +201,11 @@ let cordWarning = "";
 // export that just refused it — and letting it through replaces a true report of a failed export
 // with "it will still export at full size", which that export disproved.
 //
-// It carries the cord it was refused for instead of a clear-here list, so it self-invalidates the
-// moment the user acts on the remedy: store.set rebuilds `cord` on any edit, so the identity check
-// fails and the message goes.
-/** @type {{ msg: string, cord: Cord } | null} */
+// It carries the whole state it was refused for instead of a clear-here list, so it
+// self-invalidates the moment the user acts on ANY remedy it names. Not `cord` alone: the base-cut
+// refusal names the base and the exaggeration, and subK's is pitch-dependent, so the scale and the
+// tile width unstick it too — all of them bake inputs, none of them `cord`.
+/** @type {{ msg: string, at: AppState } | null} */
 let exportRefusal = null;
 /** @param {AppState} s */
 function updateTrailWarning(s) {
@@ -211,7 +213,7 @@ function updateTrailWarning(s) {
   if (!s.trail || !s.center) { warn.hidden = true; return; }
   // Export refusal first: it is the only one of the three that reports something already tried
   // and failed, and it contradicts what the preview would otherwise claim.
-  if (exportRefusal && exportRefusal.cord === s.cord) {
+  if (exportRefusal && sameBakeInputs(s, exportRefusal.at)) {
     warn.hidden = false; warn.textContent = exportRefusal.msg; return;
   }
   // Then ahead of the clip fraction: a trail that cannot be drawn at all outranks one running past
@@ -261,7 +263,7 @@ worker.onmessage = ({ data }) => {
         // size" — the very claim this refusal just disproved — and the store change most likely to
         // follow is the user acting on the remedy.
         exportRefusal = { msg: `Could not export the trail: ${data.error.replace(/^corridor: /, "")}`,
-          cord: store.get().cord };
+          at: store.get() };
         warnTrail(exportRefusal.msg);
         setProgress("Export failed — see the trail warning above.");
       } else {
@@ -285,14 +287,39 @@ worker.onmessage = ({ data }) => {
   if (data.baking) { setProgress(`${mode} — baking…`); return; }
   // Hide the warning too — it describes the previous mesh, which "Preview failed" just orphaned.
   // pump() so a change made during the failed bake isn't left waiting for the next one.
-  if (data.error) { setProgress(`Preview failed: ${data.error}`); previewPhase = "idle"; $("waterWarn").hidden = true; pump(); return; }
+  if (data.error) {
+    previewPhase = "idle"; $("waterWarn").hidden = true;
+    // Same reason waterWarn is hidden: it describes the mesh this failure just orphaned. Left set,
+    // the next store change reinstates "it will still export at full size" over a refusal that
+    // disproved it.
+    cordWarning = "";
+    // Split exactly as the export branch above, and for the same reasons: `corridor: ` is a routing
+    // token (trench.js), not part of the sentence, and the remainder is a trail fact that belongs
+    // on the banner every other trail problem uses — not on a status line the next preview
+    // overwrites. It also has to say what is on screen, because the tile still standing there is
+    // the last one that baked: without that clause a REFUSED inset reads as one that did nothing.
+    if (/^corridor:/.test(data.error)) {
+      warnTrail(`Could not draw the trail: ${data.error.replace(/^corridor: /, "")}. `
+        + "The tile on screen is the last one that baked.");
+      setProgress("Preview failed — see the trail warning above.");
+    } else {
+      setProgress(`Preview failed: ${data.error}`);
+    }
+    pump();
+    return;
+  }
   // Both tiers report it: they bake at different pitches, so a cord the coarse pass refuses can
   // still be drawn by the sharp one, and the banner follows whichever mesh is on screen rather
   // than latching. The width is the snapshot the refused bake was issued for, not the live store,
   // which a later spinner click may already have moved past.
+  // The rescue rebakes with no trail AT ALL, so with an inset set the channel is missing from the
+  // preview too — and a sentence naming only the cord would have the user hunting for a groove
+  // that was never meshed.
   cordWarning = data.cordDropped && previewTrail
-    ? `The ${previewTrail.widthMm.toFixed(2)} mm cord is too fine to draw at preview resolution — `
-      + "it will still export at full size."
+    ? `The ${previewTrail.widthMm.toFixed(2)} mm trail is too fine to draw at preview resolution — `
+      + (previewTrail.trenchDepthMm > 0
+        ? "neither it nor its channel is shown, but both still export at full size."
+        : "it will still export at full size.")
     : "";
   updateTrailWarning(store.get());
   preview.setTiles([{ positions: data.positions, indices: data.indices, normals: data.normals, bands: data.bands }], data.frame, data.cord);
@@ -416,14 +443,16 @@ let shownTrail = null;
 // would mean a cache whose only client is a number input clicked a few times before an export.
 /** @type {AppState | null} */
 let lastBakeState = null;
-/** @param {AppState} s @returns {boolean} */
-function bakeInputsChanged(s) {
-  if (!lastBakeState) return true;
-  for (const k of /** @type {(keyof AppState)[]} */ (Object.keys(s))) {
-    if (s[k] !== lastBakeState[k]) return true;
+/** @param {AppState} a @param {AppState | null} b @returns {boolean} */
+function sameBakeInputs(a, b) {
+  if (!b) return false;
+  for (const k of /** @type {(keyof AppState)[]} */ (Object.keys(a))) {
+    if (a[k] !== b[k]) return false;
   }
-  return false;
+  return true;
 }
+/** @param {AppState} s @returns {boolean} */
+function bakeInputsChanged(s) { return !sameBakeInputs(s, lastBakeState); }
 
 store.subscribe((s) => {
   map.setLayout(s);
@@ -443,6 +472,10 @@ store.subscribe((s) => {
   // changing. Width has no clause — it doesn't depend on the tile's grid, so there is no
   // tile-derived minimum to warn about before the click.
   $("cordHint").textContent = cordHint(s.cord.heightMm, s.layerMm);
+  // No plan needed any more: the channel's width is the cord's plus a fixed clearance, so it is
+  // the same number at every tier and cannot disagree with the one that cuts.
+  $("trenchHint").textContent = s.center
+    ? trenchHint(s.cord.trenchDepthMm, s.cord.widthMm, s.cord.heightMm) : "";
   // The inlays are the volume the two water controls displaced, so with neither on there is no
   // volume and the export silently gains nothing. Say so at the checkbox rather than let the
   // user find a .3mf with one object in it.
@@ -507,6 +540,7 @@ syncControls(store.get()); // unconditional: app.js owns the defaults, index.htm
 // reconciliation as every other control, just done here instead of there.
 /** @type {HTMLInputElement} */ ($("cordW")).value = String(store.get().cord.widthMm);
 /** @type {HTMLInputElement} */ ($("cordH")).value = String(store.get().cord.heightMm);
+/** @type {HTMLInputElement} */ ($("trenchD")).value = String(store.get().cord.trenchDepthMm);
 
 wireControls(store);
 // Not wired in controls.js with the rest: that file's job is to move store state, and this
