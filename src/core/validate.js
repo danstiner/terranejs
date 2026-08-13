@@ -63,3 +63,34 @@ export function toTriangleSoup({ positions: P, indices: I }) {
   }
   return out;
 }
+
+// Two triangles at the same three positions. TESTS ONLY — see the plan's deviation note: this
+// keys a Set by quantised position, and V8 caps Map/Set at 2^24 entries, which an export-scale
+// tile can pass. It is also strictly weaker than it looks: it catches a cell claimed by two
+// builders (identical positions, identical winding), and nothing else. A T-junction leaves the
+// two curtains overlapping but never identical — one side hangs k narrow quads over sub-vertices,
+// the other one wide quad over corners — and even a pure weld miss escapes, because assembleSolid
+// splits each skirt quad on the tv->bu diagonal and the opposite-facing curtain traverses that edge
+// reversed, so it splits on the other one. The gates that see those are `mirrored` and `loops`.
+/**
+ * @param {Solid} solid
+ * @param {number} [q] position quantum in mm
+ * @returns {{ ok: boolean, duplicates: number }}
+ */
+export function checkNoCoincidentFaces({ positions: P, indices: I }, q = 1e-6) {
+  /** @type {Set<string>} */
+  const seen = new Set();
+  let duplicates = 0;
+  /** @type {string[]} */
+  const t = ["", "", ""];
+  for (let i = 0; i < I.length; i += 3) {
+    for (let j = 0; j < 3; j++) {
+      const v = 3 * I[i + j];
+      t[j] = `${Math.round(P[v] / q)},${Math.round(P[v + 1] / q)},${Math.round(P[v + 2] / q)}`;
+    }
+    t.sort();
+    const key = `${t[0]}|${t[1]}|${t[2]}`;
+    if (seen.has(key)) duplicates++; else seen.add(key);
+  }
+  return { ok: duplicates === 0, duplicates };
+}

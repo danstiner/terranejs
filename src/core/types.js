@@ -16,9 +16,14 @@
  *   by stiching several tiles together into a single "mosaic". `data` is a
  *   row-major width×height Float32Array of metres; (originGx,originGy) is the
  *   global pixel of data[0] (row 0 = north); z is the source zoom.
- * @typedef {{ positions: Float32Array, indices: Uint32Array }} Solid
+ * @typedef {{ positions: Float32Array, indices: Uint32Array,
+ *   mirrored?: boolean, loops?: number }} Solid
  *   Indexed watertight mesh: xyz per vertex in `positions`, three vertex ids per
- *   triangle in `indices`, outward-wound.
+ *   triangle in `indices`, outward-wound. `mirrored` records that assembleSolid could not stitch
+ *   a flat base and mirrored the top instead — not a defect on its own, since buildDrape and the
+ *   cord ask for it, but on a TILE it is the fingerprint of a non-conforming seam that no other
+ *   check can see. `loops` is how many boundary loops that flat base was stitched from; 0 when
+ *   mirrored.
  * @typedef {{ r0: number, r1: number, c0: number, c1: number }} Span
  *   Half-open grid-cell span: rows [r0,r1), columns [c0,c1) selecting a tile's cells.
  * @typedef {{ inside: Uint8Array, crossOf: Map<number, number[]>,

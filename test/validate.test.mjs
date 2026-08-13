@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { signedVolume, checkWatertight, toTriangleSoup } from "../src/core/validate.js";
+import { signedVolume, checkWatertight, toTriangleSoup, checkNoCoincidentFaces } from "../src/core/validate.js";
 
 /** @typedef {import("../src/core/types.js").Solid} Solid */
 
@@ -70,4 +70,19 @@ test("toTriangleSoup: explodes indices, preserves volume", () => {
       soup[i + 2] * (soup[i + 3] * soup[i + 7] - soup[i + 4] * soup[i + 6])) / 6;
   }
   assert.ok(Math.abs(vol - 8) < 1e-6);
+});
+
+test("checkNoCoincidentFaces finds a doubled triangle at distinct ids", () => {
+  // Same three positions, different vertex ids: the shape a cell claimed by two builders takes.
+  const positions = Float32Array.from([0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0]);
+  const indices = Uint32Array.from([0, 1, 2, 3, 4, 5]);
+  const r = checkNoCoincidentFaces({ positions, indices });
+  assert.equal(r.ok, false);
+  assert.equal(r.duplicates, 1);
+});
+
+test("checkNoCoincidentFaces passes a mesh whose triangles merely share edges", () => {
+  const positions = Float32Array.from([0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 0]);
+  const indices = Uint32Array.from([0, 1, 2, 1, 3, 2]);
+  assert.equal(checkNoCoincidentFaces({ positions, indices }).ok, true);
 });
