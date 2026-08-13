@@ -282,17 +282,19 @@ instructions (Color bands, below) for a color-banded print.
 ### Trail ribbon
 
 An imported trail also exports as a second object in the same 3MF: a
-constant-thickness cord, 1 mm × 1 mm by default, placed clear of the
-tile in +Y, with each connected piece dropped so its lowest point sits on
-the plate. Print it separately, in a contrasting filament, and set it on
+constant-thickness cord, 1 mm × 1 mm by default, written in the tile's
+own frame and placed there untranslated, resting on the surface it was
+moulded to. Print it separately, in a contrasting filament, and set it on
 the finished tile — it self-registers, because its underside is the
 terrain's own surface, not an approximation of it.
 
-The preview draws the same cord from the same bake, in red, but asks for
-the other placement: no plate drop, the underside left on the printed
-terrain, where the trail runs. The drop is an export concern — inside an
-opaque tile it would only bury the cord — and what the preview is for is
-the route across the relief.
+Seated rather than plated beside the tile because the placement is only
+recoverable in one direction: a slicer scatters a plate with one button,
+and no button puts a part back where it was measured. The preview draws
+the same cord from the same bake, in red, in the same frame — one
+placement, not two. The water inlays below are still plated in +Y, since
+their z is the water surface they displaced rather than the tile's, and
+in place they would sit inside the tile rather than on it.
 
 The cord's width is **independent of the grid**: 0.4 mm prints as
 0.4 mm on a tile whose mesh vertices are 3 mm apart. The corridor is the

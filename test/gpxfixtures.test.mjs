@@ -179,7 +179,7 @@ test("strava.gpx meshes a corridor and bakes a watertight cord", () => {
   const want = 1.6 * len + Math.PI * 0.8 * 0.8; // capsule: width x length, plus two half-caps
   assert.ok(Math.abs(area - want) / want < 0.02, `${area.toFixed(3)} mm^2 vs ${want.toFixed(3)}`);
 
-  const rib = cordSolid(grid, plan, polys, 1.6, 0.6, geom, cellOk);
+  const rib = cordSolid(grid, plan, polys, 1.6, 0.6, geom, cellOk, 3);
   assert.ok(rib);
   assert.ok(checkWatertight(rib).closed);
   assert.ok(signedVolume(rib) > 0);

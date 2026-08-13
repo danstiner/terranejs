@@ -25,9 +25,8 @@ import { roseMarks } from "./compass.js";
  */
 /**
  * @typedef {{ positions: Float32Array, indices: Uint32Array, normals: Float32Array }} Cord
- *   the trail cord in the tile's own frame, baked for THIS placement: underside on the printed
- *   terrain, where the trail runs. The export bakes the same mesh dropped to the plate instead
- *   (cord.cordSolid), and drawing that one would bury it inside the tile.
+ *   the trail cord in the tile's own frame: underside on the printed terrain, where the trail
+ *   runs. The export writes the very same mesh, which is what lets it seat in its channel.
  */
 /**
  * @typedef {{ features: import("../core/coverage.js").PlacedFeature[],
