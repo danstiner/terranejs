@@ -4,8 +4,8 @@
 // plane, or the underside stops mating with the surface that prints.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { trailToPrintMm, chop, subK, subElev, admissibleCells, cordTris, SUB_ACROSS }
-  from "../src/core/cord.js";
+import { trailToPrintMm, chop, subK, subElev, admissibleCells, cordTris, SUB_ACROSS,
+  distField, cordLattice } from "../src/core/cord.js";
 import { planTile } from "../src/core/pipeline.js";
 import { globalXToLon, globalYToLat } from "../src/core/tilemath.js";
 
@@ -32,6 +32,20 @@ function gridOf(gw, f) {
 
 /** @param {number} n */
 const allCells = (n) => new Uint8Array((n - 1) * (n - 1)).fill(1);
+
+/** A triangle soup as a sorted list of sorted xyz triples: the surface, with vertex numbering and
+ *  emission order factored out. @param {{tris: Uint32Array, x: Float64Array, y: Float64Array, z: Float64Array}} s */
+function canon(s) {
+  const out = [];
+  for (let i = 0; i < s.tris.length; i += 3) {
+    const v = [0, 1, 2].map((j) => {
+      const id = s.tris[i + j];
+      return `${s.x[id].toFixed(9)},${s.y[id].toFixed(9)},${s.z[id].toFixed(9)}`;
+    });
+    out.push(v.sort().join("|"));
+  }
+  return out.sort();
+}
 
 /** Total xy area of a triangle soup. @param {{tris: Uint32Array, x: Float64Array, y: Float64Array}} s */
 function soupArea(s) {
@@ -455,4 +469,73 @@ test("a cord narrower than a grid cell still meshes at preview pitch", () => {
       assert.equal(components(arc), 1, `${where}, curved: beaded into pieces`);
     }
   }
+});
+
+// At k = 1 the sub-lattice IS the grid: strideC = (gw-1)*1 + 1 = gw, so the map key is the plain
+// grid vertex index. That identity is what will let a second builder record a displacement against
+// a grid vertex id straight from a lattice key, and it is worth pinning rather than rediscovering.
+test("distField at k=1 keys by grid vertex index", () => {
+  const plan = planOf(20, 1);                     // 20x20 grid, 1 mm pitch
+  const poly = Float64Array.from([5, 14, 9, 14]); // y = 14 is grid row 19 - 14 = 5
+  const dist = distField([chop(poly, 4)], plan, 0.5, 1);
+  const key = 5 * 20 + 7;                         // row 5, col 7 -- on the trail
+  assert.ok(dist.has(key), "expected the grid vertex index as the key");
+  assert.ok(/** @type {number} */ (dist.get(key)) < 1e-9, "vertex on the trail is at distance 0");
+});
+
+// The lattice is now chosen once and handed to whoever meshes against it. If two builders ever
+// pick their own, their crossings stop being bit-identical and the shared edges stop welding.
+test("cordLattice picks the same k cordTris used to pick internally", () => {
+  const plan = planOf(30, 1);
+  const poly = Float64Array.from([2, 14, 27, 14]);
+  const { chopped, k } = cordLattice([poly], plan, 1);
+  assert.equal(k, subK(1, plan.dx, plan.dy,
+    chopped.reduce((a, st) => {
+      let L = 0;
+      for (let i = 2; i < st.length; i += 2) L += Math.hypot(st[i] - st[i - 2], st[i + 1] - st[i - 1]);
+      return a + L;
+    }, 0)).k);
+  assert.ok(k >= 1);
+});
+
+// One shared field, stamped WIDER than the cord, still has to serve the cord. The band is dilated
+// past `half`, so a wider stamp covers the cord's narrower one a fortiori -- but only if the cord
+// keeps filtering on its own half-width rather than the field's.
+//
+// Compared as GEOMETRY, not as index arrays. cordTris walks `for (const [A] of dist)` in Map
+// insertion order, and a wider stamp visits the band in a different order, so the same surface
+// comes out with different vertex ids. deepEqual on `tris` would fail on a correct implementation.
+test("a cord meshed from a wider field is the same surface as one meshed from its own", () => {
+  const plan = planOf(30, 1);
+  // A tilted plane with a product term: a separable grid has zero twist in every cell, where
+  // bilinear and the terrain's two triangle planes agree exactly, so it cannot tell them apart.
+  const grid = gridOf(30, (c, r) => 0.1 * c + 0.03 * r + 0.004 * c * r);
+  const poly = [Float64Array.from([2, 14, 27, 14])];
+  const ok = allCells(30);
+  const W = 1, wide = 0.7; // > W/2
+  const { chopped, k } = cordLattice(poly, plan, W);
+  const own = cordTris(grid, plan, poly, W, GEOM, ok);
+  const shared = cordTris(grid, plan, poly, W, GEOM, ok,
+    { half: wide, k, chopped, dist: distField(chopped, plan, wide, k) });
+  assert.ok(own && shared);
+  assert.deepEqual(canon(own), canon(shared));
+});
+
+// The half-share the type now forbids, from a caller the type checker never saw. Silent when it
+// gets through: `dist`'s keys are packed with the stride the SHARED k implies, decoding them with
+// the k this call picks for itself names different sub-cells, and the cord meshes there — closed,
+// positive-volume, and nowhere near the trail, so no gate downstream reports it.
+test("a partly shared lattice is refused rather than decoded against the wrong k", () => {
+  const plan = planOf(30, 1);
+  const grid = gridOf(30, () => 0);
+  const poly = [Float64Array.from([2, 14, 27, 14])];
+  const W = 1, wide = 0.7;
+  const { chopped, k } = cordLattice(poly, plan, W);
+  const dist = distField(chopped, plan, wide, k);
+  for (const partial of [{ half: wide, dist }, { half: wide, k, dist }, { half: wide, k, chopped }]) {
+    assert.throws(() => cordTris(grid, plan, poly, W, GEOM, allCells(30),
+      /** @type {any} */ (partial)), /k, chopped and dist together/);
+  }
+  // The whole share is still accepted, so the guard is not simply refusing everything.
+  assert.ok(cordTris(grid, plan, poly, W, GEOM, allCells(30), { half: wide, k, chopped, dist }));
 });
