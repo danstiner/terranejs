@@ -6,6 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { trailToPrintMm, chop, subK, subElev, admissibleCells, cordTris, SUB_ACROSS,
   distField, cordLattice, trenchWidthMm } from "../src/core/cord.js";
+import { trenchAdmissibleCells, featherField, trenchTop } from "../src/core/trench.js";
 import { planTile } from "../src/core/pipeline.js";
 import { globalXToLon, globalYToLat } from "../src/core/tilemath.js";
 
@@ -45,6 +46,27 @@ function canon(s) {
     out.push(v.sort().join("|"));
   }
   return out.sort();
+}
+
+/** Evaluate a triangle soup's surface at (x, y), or null if no triangle covers it. Barycentric,
+ *  so it reads the emitted plane rather than a nearby vertex.
+ * @param {{ tris: Uint32Array }} soup
+ * @param {(id: number) => [number, number, number]} xyz
+ * @param {number} x @param {number} y */
+function planeZAt(soup, xyz, x, y) {
+  for (let i = 0; i < soup.tris.length; i += 3) {
+    const [ax, ay, az] = xyz(soup.tris[i]);
+    const [bx, by, bz] = xyz(soup.tris[i + 1]);
+    const [cx, cy, cz] = xyz(soup.tris[i + 2]);
+    const den = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy);
+    if (Math.abs(den) < 1e-12) continue;
+    const u = ((by - cy) * (x - cx) + (cx - bx) * (y - cy)) / den;
+    const v = ((cy - ay) * (x - cx) + (ax - cx) * (y - cy)) / den;
+    const w = 1 - u - v;
+    if (u < -1e-9 || v < -1e-9 || w < -1e-9) continue;
+    return u * az + v * bz + w * cz;
+  }
+  return null;
 }
 
 /** Total xy area of a triangle soup. @param {{tris: Uint32Array, x: Float64Array, y: Float64Array}} s */
@@ -224,7 +246,7 @@ test("subK: the triangle budget clamps k on an absurdly long trail", () => {
 // Below half the width the region can slip between lattice rows and bead into islands, each a
 // valid closed manifold on its own — so checkWatertight passes and the print is a dotted line.
 test("subK throws rather than mesh a width the clamped lattice cannot carry", () => {
-  assert.throws(() => subK(0.02, 0.376, 0.376, 5e6), /too long to carry/);
+  assert.throws(() => subK(0.02, 0.376, 0.376, 5e6), /too long to draw/);
 });
 
 test("admissibleCells: no clip means every cell", () => {
@@ -423,7 +445,7 @@ test("the triangle budget ignores trail that falls outside the tile", () => {
   const offLen = refusalLen(W, pitch) * 2;
   const offTile = Float64Array.from([20000, 30, 20000, 30 + offLen]);
   const grid = gridOf(gw, () => 0), plan = planOf(gw, pitch), cells = allCells(gw);
-  assert.throws(() => subK(W, pitch, pitch, offLen), /too long to carry/,
+  assert.throws(() => subK(W, pitch, pitch, offLen), /too long to draw/,
     "fixture must exceed the budget when the off-tile leg is counted");
 
   const bare = cordTris(grid, plan, [inTile], W, GEOM, cells);
@@ -548,4 +570,125 @@ test("trench width is the cord plus one clearance per side, at any pitch", () =>
     assert.ok(Math.abs(trenchWidthMm(W) - (W + 0.2)) < 1e-9,
       `${W} mm cord: channel ${trenchWidthMm(W)}, want ${W + 0.2}`);
   }
+});
+
+
+// Known limitation, pinned so it is not rediscovered as a bug. Two arms of a switchback merge the
+// CHANNEL when their separation is under T, but merge the CORD only under W -- and T = W + 2*FIT_MM
+// by construction, so the window is exactly 0.2 mm wide now instead of the 2(sqrt2*dx + FIT) the
+// carve left. Inside it the cord is two arms in one wide flat groove with no ridge between them, so
+// it can slide. The merging width IS the width the floor requires, so there is no cheap fix; this
+// records the behaviour and its boundary.
+//
+// Measured on the displacement trenchTop actually recorded, at k = 1 where every lattice vertex is
+// a grid vertex and the whole channel therefore lands in `drop`.
+test("a switchback tighter than the channel width merges into one groove", () => {
+  const gw = 40, pitch = 0.2, W = 1, depth = 0.6, T = trenchWidthMm(W); // a 0.2 mm window
+  const plan = planOf(gw, pitch), yMid = ((gw - 1) / 2) * pitch;
+  /** Grid rows between the two arms that were left standing at terrain.
+   *  @param {number} sep centreline separation in print mm */
+  const ridgeRows = (sep) => {
+    const polys = [Float64Array.from([2, yMid + sep / 2, gw * pitch - 2, yMid + sep / 2]),
+      Float64Array.from([2, yMid - sep / 2, gw * pitch - 2, yMid - sep / 2])];
+    const { chopped, k } = cordLattice(polys, plan, W);
+    assert.equal(k, 1, "fixture assumes the lattice IS the grid");
+    const trenchOk = trenchAdmissibleCells(gw, gw, null);
+    const out = trenchTop(gridOf(gw, () => 0), plan, distField(chopped, plan, T / 2, k), k, T / 2,
+      depth, featherField(gw, gw, trenchOk), trenchOk, { mmPerM: 1, emin: 0, exag: 1, base: 3 },
+      gw * gw);
+    assert.ok(out, `sep ${sep}: no channel was meshed`);
+    let ridge = 0;
+    const col = gw / 2;
+    for (let r = Math.ceil((gw - 1) - (yMid + sep / 2) / pitch);
+      r <= Math.floor((gw - 1) - (yMid - sep / 2) / pitch); r++) {
+      if (out.drop[r * gw + col] === 0) ridge++;
+    }
+    return ridge;
+  };
+  assert.ok(W <= 1.1 && 1.1 < T, "fixture must sit inside the merge window");
+  assert.equal(ridgeRows(1.1), 0, "arms inside the window must merge into one groove");
+  assert.ok(ridgeRows(2.4) > 0, "arms wider than the channel must keep a ridge between them");
+});
+
+// app.js strips the prefix and puts the remainder on the trail banner verbatim, so the wording is
+// a user-facing string, not a developer note. The carve's coarse-grid refusal is gone with the
+// carve; subK's is the throw that survives, and it carries the same contract.
+test("the lattice refusal names a remedy the user can act on", () => {
+  assert.throws(
+    () => subK(0.02, 0.376, 0.376, 5e6),
+    (/** @type {Error} */ e) => {
+      assert.match(e.message, /^corridor: /);
+      const shown = e.message.replace(/^corridor: /, "");
+      assert.match(shown, /too long/);
+      assert.match(shown, /widen it|shorter trail/);
+      assert.ok(!/sub-lattice|distField|vertex|lattice/.test(shown), `leaks mechanism: ${shown}`);
+      return true;
+    });
+});
+
+// The claim the feature rests on: the cord's underside and the channel floor are the same surface,
+// by construction rather than by two builders agreeing. Sampled across a feather ramp, which is
+// where a constant sink would part company with the floor.
+test("the cord's underside tracks the feather ramp, not a constant sink", () => {
+  const gw = 30, pitch = 1, W = 1, depth = 0.6;
+  const plan = planOf(gw, pitch);
+  const grid = gridOf(gw, () => 0);
+  const polys = [Float64Array.from([2, 14.5, 27, 14.5])];
+  const trenchOk = trenchAdmissibleCells(gw, gw, null);
+  const water = new Uint8Array(gw * gw);
+  for (let r = 0; r < gw; r++) for (let c = 20; c < gw; c++) water[r * gw + c] = 1; // a lake east
+  const feather = featherField(gw, gw, trenchOk, water);
+  const { chopped, k } = cordLattice(polys, plan, W);
+  const T = trenchWidthMm(W);
+  const dist = distField(chopped, plan, T / 2, k);
+  const soup = cordTris(grid, plan, polys, W, GEOM, allCells(gw),
+    { half: T / 2, k, chopped, dist, feather, depthMm: depth });
+  assert.ok(soup);
+  let sunk = 0, flatOnTop = 0;
+  for (let i = 0; i < soup.z.length; i++) {
+    const want = -depth * subElev(feather, gw, gw, soup.x[i] / pitch, (gw - 1) - soup.y[i] / pitch);
+    assert.ok(Math.abs(soup.z[i] - want) < 1e-9,
+      `cord vertex at x=${soup.x[i]} sits at ${soup.z[i]}, want ${want}`);
+    if (soup.z[i] < -1e-9) sunk++; else flatOnTop++;
+  }
+  assert.ok(sunk > 0 && flatOnTop > 0, "the sample must straddle the ramp");
+});
+
+// Containment, MEASURED on the emitted mesh rather than derived. The tempting assertion --
+// T/2 - d >= FIT_MM over cord vertices -- is vacuous: d <= W/2 holds by construction and
+// T/2 - W/2 = FIT_MM by the width formula, so it passes on arbitrary geometry and pins nothing but
+// the arithmetic of trenchWidthMm. It also cannot see feathering eating into the seat, because
+// feather scales depth, not lateral extent.
+test("every cord vertex lands on the channel floor the tile actually emitted", () => {
+  const gw = 30, pitch = 1, W = 1, depth = 0.6;
+  const plan = planOf(gw, pitch);
+  // Twisted terrain: on a separable grid the two triangle planes and bilinear agree, so a flat
+  // fixture cannot tell a correct underside from a wrong interpolation.
+  const grid = gridOf(gw, (c, r) => 0.2 * c + 0.1 * r + 0.01 * c * r);
+  const polys = [Float64Array.from([4, 14.5, 25, 14.5, 25, 6])];
+  const T = trenchWidthMm(W);
+  const { chopped, k } = cordLattice(polys, plan, W);
+  const dist = distField(chopped, plan, T / 2, k);
+  const trenchOk = trenchAdmissibleCells(gw, gw, null);
+  const feather = featherField(gw, gw, trenchOk);
+  const shared = { half: T / 2, k, chopped, dist, feather, depthMm: depth };
+  const tile = trenchTop(grid, plan, dist, k, T / 2, depth, feather, trenchOk,
+    { mmPerM: 1, emin: 0, exag: 1, base: 0 }, gw * gw);
+  const cord = cordTris(grid, plan, polys, W, GEOM, allCells(gw), shared);
+  assert.ok(tile && cord);
+  // buildSolid's z for a parent grid vertex, under this test's passthrough geom: the terrain
+  // minus whatever displacement trenchTop recorded for it.
+  /** @type {(id: number) => [number, number, number]} */
+  const xyz = (id) => id < gw * gw
+    ? [(id % gw) * pitch, ((gw - 1) - ((id / gw) | 0)) * pitch, grid[id] - tile.drop[id]]
+    : [tile.x[id - gw * gw], tile.y[id - gw * gw], tile.z[id - gw * gw]];
+  let checked = 0;
+  for (let i = 0; i < cord.x.length; i++) {
+    const z = planeZAt(tile, xyz, cord.x[i], cord.y[i]);
+    assert.notEqual(z, null, `no channel triangle under cord vertex ${i}`);
+    assert.ok(Math.abs(/** @type {number} */ (z) - cord.z[i]) < 1e-9,
+      `cord vertex ${i} at ${cord.z[i]}, channel floor at ${z}`);
+    checked++;
+  }
+  assert.ok(checked > 0);
 });

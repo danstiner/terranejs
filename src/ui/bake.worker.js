@@ -84,12 +84,12 @@ async function handle({ gen, settings, maxTiles, format, name, color, coverage, 
       // export draws this cord fine). The export still throws: there the cord is part of the
       // deliverable, and dropping it silently would hand back a file missing what was asked for.
       //
-      // Three throws, all of them the CORD's: subK's refusal, and the ribbon's own watertight and
-      // volume checks, which only a preview pitch is coarse enough to reach. The tile's identically
-      // worded `solid` failures are deliberately not here — there is no terrain left to show, so
-      // dropping the trail would rebake the same failure and blank the preview a beat later anyway.
-      if (format !== "mesh" ||
-        !/^corridor:|^pipeline: (non-watertight|non-positive-volume \(inside-out\)) ribbon/.test(msg)) throw err;
+      // Cord-owned throws carry `dropCord` (see cord.js / pipeline.js). Matching the message is
+      // what this used to do, and it broke the moment `corridor: ` gained a second meaning: the
+      // trail inset's base-cut refusal is the TILE's problem, and swallowing it told the user the
+      // cord was too fine and offered a remedy that does nothing.
+      if (format !== "mesh" || !(err instanceof Error &&
+        /** @type {{ dropCord?: boolean }} */ (err).dropCord === true)) throw err;
       // Logged as well as flagged: three different throws land here — subK's refusal, and the
       // ribbon's two validation failures — and the banner renders all of them as "too fine to
       // draw". A real watertightness bug in the cord would otherwise present as that sentence and

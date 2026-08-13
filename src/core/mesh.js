@@ -353,19 +353,20 @@ export function cellsFromVertexMask(vert, gw, gh, also) {
  * @param {number} gw
  * @param {Span} span
  * @param {Uint8Array} mask
+ * @param {Uint8Array} [skip] cells another builder has already meshed
  * @returns {Uint32Array}
  */
-function gridTopTris(gw, span, mask) {
+function gridTopTris(gw, span, mask, skip) {
   const { r0, r1, c0, c1 } = span;
   const cw = gw - 1;
   let n = 0;
   for (let r = r0; r < r1; r++)
-    for (let c = c0; c < c1; c++) if (mask[r * cw + c]) n++;
+    for (let c = c0; c < c1; c++) if (mask[r * cw + c] && !(skip && skip[r * cw + c])) n++;
   const topTris = new Uint32Array(6 * n);
   let p = 0;
   for (let r = r0; r < r1; r++) {
     for (let c = c0; c < c1; c++) {
-      if (!mask[r * cw + c]) continue;
+      if (!mask[r * cw + c] || (skip && skip[r * cw + c])) continue;
       const A = r * gw + c, B = A + 1, C = A + gw, D = C + 1;
       // each cell = 2 tris across the B–C diagonal, both wound +Z (CCW from above)
       topTris[p++] = A; topTris[p++] = C; topTris[p++] = B;
@@ -470,9 +471,10 @@ function cellPoly(clip, r, c) {
  * @param {number} gw
  * @param {Span} span
  * @param {import("./types.js").Clip} clip
+ * @param {Uint8Array} [skip] cells another builder has already meshed
  * @returns {Uint32Array}
  */
-function clippedTopTris(gw, span, clip) {
+function clippedTopTris(gw, span, clip, skip) {
   const { r0, r1, c0, c1 } = span;
   const { inside, bcells } = clip; // buildSolid already asserts clip.gw === gw
   let n = 0;
@@ -483,7 +485,15 @@ function clippedTopTris(gw, span, clip) {
       // A cell the boundary touches must be walked even when every corner reads outside: a
       // convex corner can poke through one side, which corner parity alone cannot see.
       const touched = bcells.has(r * (gw - 1) + c);
-      if (!touched) { if (k === 4) n += 2; continue; }
+      // `skip` is honoured only on the branch below, which is correct because the channel's cells
+      // are eroded one ring in from the footprint and so are never boundary cells. If that ever
+      // stopped holding, this cell would be emitted twice — once clipped here, once sub-meshed —
+      // and a doubled face is the one corruption no runtime check sees (checkNoCoincidentFaces is
+      // tests-only, and the pair is still watertight and positive-volume). Refuse instead.
+      if (touched && skip && skip[r * (gw - 1) + c]) {
+        throw new Error(`buildSolid: the channel claimed boundary cell ${r},${c}`);
+      }
+      if (!touched) { if (k === 4 && !(skip && skip[r * (gw - 1) + c])) n += 2; continue; }
       const m = cellPoly(clip, r, c);
       if (m >= 3) n += m - 2;
     }
@@ -495,7 +505,7 @@ function clippedTopTris(gw, span, clip) {
       const A = r * gw + c, B = A + 1, C = A + gw, D = C + 1;
       const k = inside[A] + inside[B] + inside[C] + inside[D];
       if (!bcells.has(r * (gw - 1) + c)) {
-        if (k !== 4) continue;
+        if (k !== 4 || (skip && skip[r * (gw - 1) + c])) continue;
         topTris[p++] = A; topTris[p++] = C; topTris[p++] = B;
         topTris[p++] = B; topTris[p++] = C; topTris[p++] = D;
         continue;
@@ -521,9 +531,14 @@ function clippedTopTris(gw, span, clip) {
  * @param {Uint8Array | null} mask
  * @param {{ dx: number, dy: number, mmPerM: number, emin: number, exag: number, base: number }} geom
  * @param {import("./types.js").Clip} [clip]
+ * @param {{ tris: Uint32Array, x: Float64Array, y: Float64Array, z: Float64Array,
+ *   drop: Float64Array, claimed: Uint8Array, idBase: number } | null} [trench]
+ *   the trail channel, meshed on a sub-lattice by trench.js. Its ids continue the rim's, so its
+ *   idBase has to be exactly gv + rim — asserted rather than assumed, because a mismatch would
+ *   read another builder's vertex table at an offset and produce a plausible, wrong tile.
  * @returns {Solid}
  */
-export function buildSolid(grid, gw, gh, span, mask, geom, clip) {
+export function buildSolid(grid, gw, gh, span, mask, geom, clip, trench) {
   // clippedTopTris' cell-walk loops index by the `gw`/`gh` params, but cellPoly (called from
   // inside it) destructures both from `clip` — a disagreement would walk cell corners with a
   // different stride or row bound, reading `clip.inside`/`crossOf`/`ringOf` at the wrong offset.
@@ -537,14 +552,36 @@ export function buildSolid(grid, gw, gh, span, mask, geom, clip) {
   // Closures below only dereference `cl` on the id>=gv branch, reachable only when `clip`
   // was passed (N stays gv otherwise) — same non-null contract as the `mask` cast above.
   const cl = /** @type {import("./types.js").Clip} */ (clip);
-  const topTris = clip
-    ? clippedTopTris(gw, span, clip)
-    : gridTopTris(gw, span, /** @type {Uint8Array} */ (mask));
-  return assembleSolid(topTris, clip ? gv + cl.col.length : gv,
+  const rim = clip ? cl.col.length : 0;
+  if (trench && trench.idBase !== gv + rim) {
+    throw new Error(`buildSolid: trench idBase ${trench.idBase} != ${gv + rim}`);
+  }
+  const skip = trench ? trench.claimed : undefined;
+  const plainTris = clip
+    ? clippedTopTris(gw, span, clip, skip)
+    : gridTopTris(gw, span, /** @type {Uint8Array} */ (mask), skip);
+  let topTris = plainTris;
+  if (trench) {
+    topTris = new Uint32Array(plainTris.length + trench.tris.length);
+    topTris.set(plainTris);
+    topTris.set(trench.tris, plainTris.length);
+  }
+  // A displaced grid vertex is only ever referenced by cells the channel meshed — feather is 0 at
+  // every corner shared with a cell it did not — so one flat per-vertex array needs no ownership
+  // bookkeeping and cannot give one id two heights.
+  const drop = trench ? trench.drop : null;
+  return assembleSolid(topTris, gv + rim + (trench ? trench.x.length : 0),
     (id) => (id < gv
       ? [((id % gw) - c0) * dx, (r1 - ((id / gw) | 0)) * dy]
-      : [(cl.col[id - gv] - c0) * dx, (r1 - cl.row[id - gv]) * dy]),
-    (id) => base + ((id < gv ? grid[id] : cl.elev[id - gv]) - emin) * mmPerM * exag,
+      : id < gv + rim
+        ? [(cl.col[id - gv] - c0) * dx, (r1 - cl.row[id - gv]) * dy]
+        : [/** @type {NonNullable<typeof trench>} */ (trench).x[id - gv - rim],
+          /** @type {NonNullable<typeof trench>} */ (trench).y[id - gv - rim]]),
+    (id) => (id < gv
+      ? base + (grid[id] - emin) * mmPerM * exag - (drop ? drop[id] : 0)
+      : id < gv + rim
+        ? base + (cl.elev[id - gv] - emin) * mmPerM * exag
+        : /** @type {NonNullable<typeof trench>} */ (trench).z[id - gv - rim]),
     () => 0, "flat");
 }
 

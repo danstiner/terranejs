@@ -102,7 +102,12 @@ export function chop(poly, maxLen) {
  * Sub-lattice refinement for a requested cord width.
  *
  * Cost scales with the CORD, not the tile — a cord already wider than SUB_ACROSS cells gets
- * k = 1 and costs what the cell-snapped version did.
+ * k = 1 and costs what the cell-snapped version did. That is now a statement about the CORD only:
+ * the tile's top sub-meshes the same lattice over roughly T + dx, so in the clamped regime it can
+ * pass TRI_BUDGET by ~2× at a 1 mm cord and ~3× at 0.4 mm. Accepted rather than fixed — the clamp
+ * is a ceiling on a soft budget, not a correctness bound, and re-deriving kMax against the channel
+ * width would couple the cord's lattice to the channel's, which is the coupling this design
+ * removed.
  *
  * k counts sub-cells ACROSS THE WIDTH, so a coarser tile needs a higher k to carry the same cord,
  * and halving the pitch halves the k that width asks for. That is the whole reason a preview-tier
@@ -125,8 +130,9 @@ export function subK(widthMm, dx, dy, trailLenMm) {
   if (pitch / k > widthMm / 2) {
     // Reads as a sentence in the UI's trail banner (app.js), so it names the remedy rather than
     // the mechanism — nobody can act on "sub-lattice".
-    throw new Error(`corridor: this trail is too long to carry a ${widthMm} mm cord — ` +
-      `widen it to at least ${(2 * pitch / kMax).toFixed(2)} mm, or import a shorter trail`);
+    throw Object.assign(new Error(`corridor: this trail is too long to draw ${widthMm} mm wide — ` +
+      `widen it to at least ${(2 * pitch / kMax).toFixed(2)} mm, or import a shorter trail`),
+    { dropCord: true }); // the CORD cannot be drawn; a preview keeps its terrain (bake.worker.js)
   }
   return { k, hx: dx / k, hy: dy / k };
 }
@@ -156,6 +162,7 @@ const FIT_MM = 0.1;
 export function trenchWidthMm(cordWidthMm) {
   return cordWidthMm + 2 * FIT_MM;
 }
+
 
 /**
  * Elevation at fractional grid coordinates, on the terrain's OWN triangulation.
@@ -389,12 +396,15 @@ export function subClip(dist, half, k, strideC, pushLattice, pushCross) {
  * and positive-volume it passes every gate downstream. Half a share is the "two builders, one
  * lattice" failure this whole arrangement exists to prevent, so it is made unrepresentable.
  *
- * `half` is the width the field was stamped at, which may be WIDER than the cord's: the extra
- * entries are vertices outside the cord, not padding, and the cord still filters on its own halfW.
+ * `half` is the width the field was stamped at, WIDER than the cord's: the extra entries are
+ * vertices outside the cord, not padding, and the cord still filters on its own halfW. `feather`
+ * and `depthMm`, when both given, sink the underside by the SAME per-triangle interpolation of the
+ * SAME field the channel floor used, so the two surfaces agree by construction.
  *
- * @typedef {{ half: number, k?: undefined, chopped?: undefined, dist?: undefined }
- *   | { half: number, k: number, chopped: Float64Array[],
- *   dist: Map<number, number> }} CordShared
+ * @typedef {{ half: number, k?: undefined, chopped?: undefined, dist?: undefined,
+ *   feather?: undefined, depthMm?: undefined }
+ *   | { half: number, k: number, chopped: Float64Array[], dist: Map<number, number>,
+ *   feather?: Float32Array, depthMm?: number }} CordShared
  */
 
 /**
@@ -438,11 +448,20 @@ export function cordTris(grid, plan, polys, widthMm, geom, cellOk, shared) {
   /** @type {number[]} */ const Y = [];
   /** @type {number[]} */ const Z = [];
   const relK = mmPerM * exag;
+  // Derived from the sink, not the other way round: with no inset there is nothing to subtract,
+  // and a feather held here would still cost a subElev per cord vertex to multiply by zero.
+  const sink = shared?.feather && shared.depthMm ? shared.depthMm : 0;
+  const feather = sink ? shared?.feather : undefined;
   /** Local vertex at fractional grid coords. */
   const push = (/** @type {number} */ col, /** @type {number} */ row) => {
     X.push((col - c0) * dx);
     Y.push((r1 - row) * dy);
-    Z.push((subElev(grid, gw, gh, col, row) - emin) * relK);
+    // The channel floor, term for term: the SAME subElev interpolation of the SAME feather field
+    // the tile's top used. Two interpolants of a varying field at different lattice resolutions
+    // disagree between samples; one rule cannot, which is why this reads feather rather than a
+    // constant depth.
+    Z.push((subElev(grid, gw, gh, col, row) - emin) * relK
+      - (feather ? sink * subElev(feather, gw, gh, col, row) : 0));
     return X.length - 1;
   };
   const { clipTri } = subClip(dist, halfW, k, strideC, (_key, col, row) => push(col, row), push);
@@ -478,9 +497,9 @@ export function cordTris(grid, plan, polys, widthMm, geom, cellOk, shared) {
  * One placement, shared by the preview and the export: the underside is `z + baseMm`, which is
  * the printed tile's top surface term for term (mesh.js: `base + (e − emin)·mmPerM·exag`), so the
  * cord rests on the relief it was measured against and needs no alignment in either. The export
- * used to drop each connected piece to the plate instead; that placement is gone, because no
- * slicer button can put a moved part back where it was measured, and the preview could not use it
- * at all — inside an opaque tile a plate-dropped cord is simply buried.
+ * used to drop each connected piece to the plate instead; that placement is gone, because a cord
+ * written into the tile's own frame lands in its channel, and no slicer button can put a moved
+ * part back where it was measured.
  *
  * @param {Float32Array} grid @param {TilePlan} plan
  * @param {Float64Array[]} polys @param {number} widthMm @param {number} heightMm

@@ -269,7 +269,20 @@ Before export, the solid is checked for two things a slicer requires:
 that it's **watertight** (a fully closed surface, with no gaps) and that
 it has **positive volume** (not degenerate or inside-out). A tile that
 fails either check is rejected rather than handed to a slicer that can't
-make sense of it.
+make sense of it. An imported trail's cord is checked the same way, and
+separately: it prints as its own object, and the tile's verdict says
+nothing about it.
+
+A tile carrying a trail inset (below) is checked for two more things,
+because the failure a sub-meshed channel can produce is invisible to the
+first two. A seam that does not meet vertex for vertex leaves every
+directed edge still paired — the tile closes, around zero volume. So a
+bake with a channel in it additionally requires that the base stitched
+flat rather than falling back to mirroring the top surface, and that the
+footprint came out as exactly one boundary loop. Both are asked only of
+those bakes: the mirror fallback is legitimate for the degenerate rims a
+coarse hex or circle can produce, and demanding a flat base everywhere
+would reject tiles that print today.
 
 ## 7. Export
 
@@ -283,10 +296,11 @@ instructions (Color bands, below) for a color-banded print.
 
 An imported trail also exports as a second object in the same 3MF: a
 constant-thickness cord, 1 mm × 1 mm by default, written in the tile's
-own frame and placed there untranslated, resting on the surface it was
-moulded to. Print it separately, in a contrasting filament, and set it on
-the finished tile — it self-registers, because its underside is the
-terrain's own surface, not an approximation of it.
+own frame and placed there untranslated — seated in its channel, or
+resting on the surface it was moulded to when no inset is set. Print it
+separately, in a contrasting filament, and set it on the finished tile —
+it self-registers, because its underside is the terrain's own surface,
+not an approximation of it.
 
 Seated rather than plated beside the tile because the placement is only
 recoverable in one direction: a slicer scatters a plate with one button,
@@ -332,6 +346,64 @@ The cord stops at the last fully interior cell of a hex or circle tile.
 Over a rim cell the printed top is the clipped polygon rather than two
 plain triangles, so a cord there would mate with a surface that is not
 what prints.
+
+### Trail inset
+
+**Trail inset depth** (default 0, off) cuts a channel along the trail for
+the cord to seat in, instead of leaving it resting on the surface. Set it
+to the cord's height and the trail finishes flush with the terrain; set it
+shallower and the cord stands proud by the difference. The cord need not
+be printed at all — an empty channel is a legible trail on its own, drawn
+into the relief as a groove.
+
+The channel is the cord's width plus 0.1 mm of clearance per side, and
+nothing else. That clearance is not for support scarring, which printing
+the cord upside down already avoids; it pays for the way FDM prints slots
+undersize and bosses oversize as material flows into concave corners, so
+a nominal fit binds. What is absent is a term for the grid pitch. Carving
+the channel into the elevation grid would force one: a carve can only put
+the channel's edge on a grid vertex, and a cell only reaches full depth
+when all four of its corners are inside, so the flat floor erodes by up to
+a cell from each side and has to be paid back — √2·dx per side, which at
+the resolution floor is by far the larger half of a 2.6 mm channel for a 1 mm
+cord, wide enough that the trail reads as a road.
+
+Instead the channel is meshed on the same sub-lattice the cord is, and
+against the same distance field, so its boundary lands on the isoline
+exactly rather than snapping to a grid vertex, and its floor is the
+requested width along the whole run. The two surfaces are the same
+surface: the cord's underside and the channel's floor are one
+interpolation of one field, so they mate by construction rather than by
+two builders agreeing. And the grid is read, never written — the channel
+contributes triangles to the top surface and displaces only the vertices
+it owns. The tile's elevation range is therefore what it would be with no
+inset at all, and so are the z-frame, the printed height, and the
+elevations the color bands fall at. A carve moved all of those, by the
+depth.
+
+The channel stops short of the rim and of water. It keeps one cell
+further in than the cord does, because a cell carrying it has subdivided
+edges and its neighbours must be retriangulated to match — which a rim
+cell, whose top is a clipped polygon rather than two triangles, cannot
+be. It also never lowers a water-masked vertex, per vertex rather than
+per cell, or the drop-in inlay moulded to that shore would no longer
+seat. At both borders the depth ramps to zero over the last cell rather
+than ending in a step, and the cord's underside follows the same ramp,
+so a trail running off the tile or across a lake stays seated to where
+it stops.
+
+Two things refuse an inset outright, both reported on the trail warning.
+The lattice is chosen from the cord's width against a triangle budget
+(Trail ribbon, above), so a long trail at a narrow width can leave it too
+coarse to carry the cord — the same refusal the cord alone hits, and the
+one a coarse preview tier meets first. And the channel's floor must stay
+strictly above the base plate: a floor level with it is a zero-thickness
+membrane, and one below it opens the bottom of the tile. That check is
+taken over the channel's own boundary, which lies half a channel width
+off the trail and so dips below anything sampled along the trail itself
+wherever the ground falls away from it. It refuses rather than quietly
+cutting a shallower channel, because a channel that is not the depth
+asked for is a fit failure discovered in the slicer, or in the print.
 
 ### Water inlays
 

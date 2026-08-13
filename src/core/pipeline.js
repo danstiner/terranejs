@@ -6,7 +6,9 @@ import { cellsBbox, cellWindows, footprintPx } from "./layout.js";
 import { sourceZoom, MAX_MERCATOR_LAT, globalXToLon, globalYToLat } from "./tilemath.js";
 import { cropGrid, gridRange } from "./resample.js";
 import { buildSolid, buildDrape, cellsFromVertexMask } from "./mesh.js";
-import { trailToPrintMm, cordSolid, admissibleCells } from "./cord.js";
+import { trailToPrintMm, cordSolid, admissibleCells, cordLattice, distField,
+  trenchWidthMm } from "./cord.js";
+import { trenchAdmissibleCells, featherField, trenchTop } from "./trench.js";
 import { clipPolygon, clipElevs, clipRange } from "./clip.js";
 import { applyWaterRecess, filterUnprintableWater } from "./water.js";
 import { checkWatertight, signedVolume } from "./validate.js";
@@ -131,7 +133,8 @@ export function planTile(settings, { z, maxTiles = 300 } = {}) {
  * @param {{ base: number, exag: number, flatten?: boolean, recessMm?: number, layerMm?: number,
  *   waterInlay?: boolean, waterFilter?: boolean }} settings
  * @param {Uint8Array} [waterMask]
- * @param {{ segments: LatLon[][], widthMm: number, heightMm: number }} [trail]
+ * @param {{ segments: LatLon[][], widthMm: number, heightMm: number,
+ *   trenchDepthMm?: number }} [trail]
  * @returns {{ solid: Solid, ribbon: Solid | null, inlays: Solid | null, emin: number, emax: number, lineElev: number, landBluePct: number, waterAsLandPct: number, printedWaterMask: Uint8Array | undefined, waterDroppedPct: number }}
  */
 export function bakeTileSolid(mosaic, plan,
@@ -161,38 +164,108 @@ export function bakeTileSolid(mosaic, plan,
   const { lineElev, landBluePct, waterAsLandPct } = applyWaterRecess(grid, printedWaterMask, {
     flatten, recessMm, layerMm, K: mmPerM * exag, footprint,
   });
-  if (clip) clipElevs(clip, grid);
-  const { min: emin, max: emax } = clip ? clipRange(grid, clip) : gridRange(grid);
-  const solid = buildSolid(grid, gw, gh, span,
-    clip ? null : new Uint8Array((gw - 1) * (gh - 1)).fill(1),
-    { dx, dy, mmPerM, emin, exag, base }, clip ?? undefined);
-  const wt = checkWatertight(solid);
-  if (!wt.closed) throw new Error(`pipeline: non-watertight solid (${wt.unmatched} unmatched edges)`);
-  if (signedVolume(solid) <= 0) throw new Error("pipeline: non-positive-volume (inside-out) solid");
-
-  // AFTER applyWaterRecess and with the tile's own emin: the cord mates with the surface that
-  // prints, not with the raw DEM, so a trail over recessed water follows the recess.
-  let ribbon = null;
-  if (trail && trail.segments.length) {
+  // Projected once, because the channel and the cord must be measured against the same polyline,
+  // and meshed against the same lattice: two builders picking their own k would compute crossings
+  // that agree to within a float rather than bit-for-bit, and the seam between them would not weld.
+  const trailPolys = trail && trail.segments.length ? trailToPrintMm(trail.segments, plan) : null;
+  /** @type {{ half: number, k: number, chopped: Float64Array[], dist: Map<number, number>,
+   *   feather?: Float32Array, depthMm?: number } | null} */
+  let shared = null;
+  /** @type {ReturnType<typeof trenchTop>} */
+  let trenchMesh = null;
+  /** @type {Uint8Array | null} */
+  let trenchOk = null;
+  if (trail && trailPolys) {
+    const { chopped, k } = cordLattice(trailPolys, plan, trail.widthMm);
+    const half = trenchWidthMm(trail.widthMm) / 2;
+    // Stamped at the CHANNEL's half-width, which covers the cord's narrower band a fortiori --
+    // distField dilates past `half` by 2h either way.
+    shared = { half, k, chopped, dist: distField(chopped, plan, half, k) };
+    // Validated on PRESENCE, not on truthiness. NaN is falsy, so folding this into the `if` below
+    // would wave a NaN depth through as "no inset" and silently bake a tile with no channel. The
+    // depth is a raw mm figure straight from the caller — nothing scales or derives it, so nothing
+    // upstream guarantees it is even a number, and a non-finite one must be refused rather than
+    // read as "off". Absent and 0 both DO mean off, and are not errors: the control rests at 0.
+    if (trail.trenchDepthMm != null && trail.trenchDepthMm !== 0 &&
+        !(Number.isFinite(trail.trenchDepthMm) && trail.trenchDepthMm > 0)) {
+      throw new Error(`corridor: trail inset depth must be a positive distance, got ${trail.trenchDepthMm}`);
+    }
     // Checked here rather than left to the volume gate below: with the cord in the tile's own
     // frame its top and bottom faces cancel only to rounding, so a zero height now yields a
     // positive noise volume instead of the exact 0 a plate-dropped cord produced.
     if (!(trail.heightMm > 0)) {
       throw new Error(`corridor: trail height must be a positive distance, got ${trail.heightMm}`);
     }
+    if (trail.trenchDepthMm) {
+      trenchOk = trenchAdmissibleCells(gw, gh, clip);
+      // Unconditional on waterInlay: that toggle is export-only, so keying tile geometry to it
+      // would make the previewed tile a different object from the exported one. The PRINTED mask,
+      // for the reason filterUnprintableWater exists: water too narrow to print is ordinary land
+      // in the tile now, and feathering the channel out over it would leave the trail dotted
+      // across ground that has no water on it.
+      shared.feather = featherField(gw, gh, trenchOk, printedWaterMask);
+      shared.depthMm = trail.trenchDepthMm;
+    }
+  }
+  if (clip) clipElevs(clip, grid);
+  const { min: emin, max: emax } = clip ? clipRange(grid, clip) : gridRange(grid);
+  if (shared && shared.feather) {
+    // AFTER clipElevs and the range, because the channel is meshed rather than carved: it reads the
+    // grid the tile is measured from and never writes to it, so emin no longer absorbs the inset
+    // and the tile stops growing with depth.
+    trenchMesh = trenchTop(grid, plan, shared.dist, shared.k, shared.half,
+      /** @type {number} */ (shared.depthMm), shared.feather,
+      /** @type {Uint8Array} */ (trenchOk), { mmPerM, emin, exag, base },
+      gw * gh + (clip ? clip.col.length : 0));
+  }
+  const solid = buildSolid(grid, gw, gh, span,
+    clip ? null : new Uint8Array((gw - 1) * (gh - 1)).fill(1),
+    { dx, dy, mmPerM, emin, exag, base }, clip ?? undefined, trenchMesh);
+  const wt = checkWatertight(solid);
+  if (!wt.closed) throw new Error(`pipeline: non-watertight solid (${wt.unmatched} unmatched edges)`);
+  if (signedVolume(solid) <= 0) throw new Error("pipeline: non-positive-volume (inside-out) solid");
+  // checkWatertight is blind to the failure a sub-meshed seam produces: a non-conforming edge is
+  // classified as rim on both sides, the skirt hangs two coincident opposite-facing curtains, the
+  // fake edges stitch into a zero-area loop, baseTriangles returns null and the base silently
+  // mirrors — with every directed edge still paired and zero enclosed volume. These two integers
+  // are the cascade's fingerprints, and assembleSolid already computed them.
+  // Conditioned on the channel, deliberately. assembleSolid's own comment calls the mirror
+  // fallback "correct, just bigger" — it also covers holes and degenerate rims, and hardening it
+  // into a refusal for every bake would turn tiles that export fine today into errors, which is
+  // not this feature's business. Both gates fingerprint a sub-meshed seam (and the detached blocks
+  // a mis-scoped trench predicate builds), so they belong to the bakes that have one.
+  //
+  // Neither gate can tell such a rim from a broken seam, so a tile that mirrored on its OWN would
+  // start failing here the moment an inset was switched on. No legal footprint does: 38,880 hex
+  // and circle tiles through footprintPx/clipPolygon — z6 to z14, spans 2 to 33 px, the coarsest
+  // MIN_SPAN_PX allows — all stitched flat in one loop. The other route in is a partial mask, and
+  // the pipeline only ever passes one unclipped.
+  if (trenchMesh) {
+    if (solid.mirrored) throw new Error("pipeline: tile base could not be stitched flat (non-conforming seam)");
+    if (solid.loops !== 1) throw new Error(`pipeline: tile has ${solid.loops} boundary loops, want 1`);
+  }
+
+  // AFTER applyWaterRecess and with the tile's own emin: the cord mates with the surface that
+  // prints, not with the raw DEM, so a trail over recessed water follows the recess.
+  let ribbon = null;
+  if (trail && trailPolys) {
     // The cord's width is independent of the grid: its footprint is a distance field clipped
     // against the terrain's own triangles on a sub-lattice, not a union of whole cells.
-    // The tile's own z frame, for the preview and the export alike: the cord is written where it
-    // mates, so the export ships a part that sits on the tile with nothing to align.
-    ribbon = cordSolid(grid, plan, trailToPrintMm(trail.segments, plan), trail.widthMm,
-      trail.heightMm, { mmPerM, emin, exag }, admissibleCells(gw, gh, clip), base);
+    // The tile's own z frame, for the preview and the export alike: the cord is written where
+    // it mates, so the export drops it into its channel with nothing to align.
+    ribbon = cordSolid(grid, plan, trailPolys, trail.widthMm,
+      trail.heightMm, { mmPerM, emin, exag }, admissibleCells(gw, gh, clip),
+      base, /** @type {NonNullable<typeof shared>} */ (shared));
     if (ribbon) {
       const rwt = checkWatertight(ribbon);
-      if (!rwt.closed) throw new Error(`pipeline: non-watertight ribbon (${rwt.unmatched} unmatched edges)`);
+      if (!rwt.closed) {
+        throw Object.assign(new Error(`pipeline: non-watertight ribbon (${rwt.unmatched} unmatched edges)`),
+          { dropCord: true }); // the CORD's own mesh, not the tile's; a preview keeps the terrain (bake.worker.js)
+      }
       // checkWatertight is topology-only (see validate.js) and cannot see a zero or negative
       // heightMm — the mirrored solid still closes. Mirrors the tile's own check above.
       if (signedVolume(ribbon) <= 0) {
-        throw new Error("pipeline: non-positive-volume (inside-out) ribbon");
+        throw Object.assign(new Error("pipeline: non-positive-volume (inside-out) ribbon"), { dropCord: true });
       }
     }
   }
@@ -249,8 +322,8 @@ export async function tileTo3mf(name, solid, colorChanges, ribbon, inlays) {
   if (colorChanges && colorChanges.length) writer.setColorChanges(colorChanges);
   await writer.addObject(name, solid, 0, 0);
   // Untranslated, deliberately: the cord already carries the tile's own frame, so at the origin
-  // it sits on the relief it was moulded to, mating face on mating face. Slicers scatter a plate
-  // with one button; none of them can put a part back where it fits.
+  // it sits in the channel it was measured against, mating face on mating face. Slicers scatter
+  // a plate with one button; none of them can put a part back where it fits.
   if (ribbon) await writer.addObject(`${name}_trail`, ribbon, 0, 0);
   // The inlays cannot follow it in: their z is the water surface they displaced, with no base
   // term (bakeTileSolid), so in place they would sit inside the tile rather than on it. Cleared
