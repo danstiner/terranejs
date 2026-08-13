@@ -289,14 +289,14 @@ function modelXml(bytes) {
   return xml;
 }
 
-test("tileTo3mf stacks tile, cord and inlays without overlap", async () => {
+test("tileTo3mf seats the cord in the tile and plates the inlays clear of both", async () => {
   const grid = new Float32Array(GW * GH);
   for (let r = 0; r < GH; r++) for (let c = 0; c < GW; c++) grid[r * GW + c] = 100 + 3 * c;
   const cw = GW - 1;
-  // A trail across the NORTH and a pond in the SOUTH — deliberately, not incidentally. The cord
-  // then has a high own-y and the pond a low one, which is the ordering that makes a missing
-  // −lo correction land the pond inside the cord rather than merely wasting plate. With the two
-  // swapped, the 10 mm gap absorbs the error and the placement bug is invisible.
+  // A pond in the SOUTH — deliberately, not incidentally: its own y is then far below the tile's
+  // top edge, which is the ordering that makes a missing −lo correction place it back inside the
+  // tile rather than merely wasting plate. A pond at the north edge would let the 10 mm gap
+  // absorb the error and the placement bug would be invisible.
   const pond = new Uint8Array(cw * (GH - 1));
   for (let r = 32; r <= 36; r++) for (let c = 2; c <= 8; c++) pond[r * cw + c] = 1;
   const top = new Float32Array(GW * GH);
@@ -305,7 +305,7 @@ test("tileTo3mf stacks tile, cord and inlays without overlap", async () => {
 
   const tile = buildSolid(grid, GW, GH, SPAN, new Uint8Array(cw * (GH - 1)).fill(1), GEOM);
   const cord = cordSolid(grid, plan, [Float64Array.from([1, 18, 18, 18])], 1.6, 0.6,
-    GEOM, admissibleCells(GW, GH, null));
+    GEOM, admissibleCells(GW, GH, null), GEOM.base);
   const inlays = buildDrape(grid, GW, GH, SPAN, pond, GEOM, top);
   assert.ok(cord && inlays);
 
@@ -330,11 +330,14 @@ test("tileTo3mf stacks tile, cord and inlays without overlap", async () => {
     const [lo, hi] = yRange(s);
     return [lo + ty, hi + ty];
   });
-  assert.ok(yRange(cord)[0] - yRange(inlays)[0] > 10,
-    "fixture must put the cord's low edge more than one gap above the pond's, or a missing " +
+  assert.ok(yRange(tile)[1] - yRange(inlays)[0] > 10,
+    "fixture must put the pond's low edge more than one gap below the tile's top, or a missing " +
     "−lo correction is absorbed by the gap instead of overlapping");
-  for (let i = 1; i < placed.length; i++) {
-    assert.ok(placed[i][0] >= placed[i - 1][1],
-      `object ${i} placed at ${placed[i][0]}, under object ${i - 1} reaching ${placed[i - 1][1]}`);
-  }
+  // The cord is seated, not plated: identity transform, and its placed span inside the tile's.
+  assert.equal(items[1][2].trim().split(/\s+/).slice(9, 11).map(Number).join(), "0,0");
+  assert.ok(placed[1][0] >= placed[0][0] && placed[1][1] <= placed[0][1],
+    `cord placed at ${placed[1]}, outside a tile spanning ${placed[0]}`);
+  // The inlays are the only plated part left, and they clear the tile — the cord with it.
+  assert.ok(placed[2][0] >= placed[0][1],
+    `inlays placed at ${placed[2][0]}, under a tile reaching ${placed[0][1]}`);
 });

@@ -131,9 +131,7 @@ export function planTile(settings, { z, maxTiles = 300 } = {}) {
  * @param {{ base: number, exag: number, flatten?: boolean, recessMm?: number, layerMm?: number,
  *   waterInlay?: boolean, waterFilter?: boolean }} settings
  * @param {Uint8Array} [waterMask]
- * @param {{ segments: LatLon[][], widthMm: number, heightMm: number, onTerrain?: boolean }} [trail]
- *   onTerrain places the cord on the printed terrain instead of dropping it to the plate — see
- *   cord.cordSolid. Default (false) is the export's placement.
+ * @param {{ segments: LatLon[][], widthMm: number, heightMm: number }} [trail]
  * @returns {{ solid: Solid, ribbon: Solid | null, inlays: Solid | null, emin: number, emax: number, lineElev: number, landBluePct: number, waterAsLandPct: number, printedWaterMask: Uint8Array | undefined, waterDroppedPct: number }}
  */
 export function bakeTileSolid(mosaic, plan,
@@ -176,13 +174,18 @@ export function bakeTileSolid(mosaic, plan,
   // prints, not with the raw DEM, so a trail over recessed water follows the recess.
   let ribbon = null;
   if (trail && trail.segments.length) {
+    // Checked here rather than left to the volume gate below: with the cord in the tile's own
+    // frame its top and bottom faces cancel only to rounding, so a zero height now yields a
+    // positive noise volume instead of the exact 0 a plate-dropped cord produced.
+    if (!(trail.heightMm > 0)) {
+      throw new Error(`corridor: trail height must be a positive distance, got ${trail.heightMm}`);
+    }
     // The cord's width is independent of the grid: its footprint is a distance field clipped
     // against the terrain's own triangles on a sub-lattice, not a union of whole cells.
-    // Both placements are validated below: they share every triangle and differ only in z, but a
-    // caller that asks for one must not be handed a mesh only the other was ever checked for.
+    // The tile's own z frame, for the preview and the export alike: the cord is written where it
+    // mates, so the export ships a part that sits on the tile with nothing to align.
     ribbon = cordSolid(grid, plan, trailToPrintMm(trail.segments, plan), trail.widthMm,
-      trail.heightMm, { mmPerM, emin, exag }, admissibleCells(gw, gh, clip),
-      trail.onTerrain ? base : undefined);
+      trail.heightMm, { mmPerM, emin, exag }, admissibleCells(gw, gh, clip), base);
     if (ribbon) {
       const rwt = checkWatertight(ribbon);
       if (!rwt.closed) throw new Error(`pipeline: non-watertight ribbon (${rwt.unmatched} unmatched edges)`);
@@ -225,8 +228,9 @@ export function bakeTileSolid(mosaic, plan,
     printedWaterMask, waterDroppedPct };
 }
 
-// One to three solids → a .3mf blob. The tile sits at the plate origin; the cord and the water
-// inlays, when present, are stacked clear of it in +Y.
+// One to three solids → a .3mf blob. The tile sits at the plate origin, the cord in the tile's
+// own frame beside it — seated, not plated — and the water inlays, when present, clear of both
+// in +Y.
 //
 // They share one plate, and color changes are written per print Z for the WHOLE plate
 // (Metadata/Prusa_Slicer_custom_gcode_per_print_z.xml) — 3MF has no per-object gcode. So a cord
@@ -244,31 +248,21 @@ export async function tileTo3mf(name, solid, colorChanges, ribbon, inlays) {
   const writer = new ThreeMFWriter();
   if (colorChanges && colorChanges.length) writer.setColorChanges(colorChanges);
   await writer.addObject(name, solid, 0, 0);
-  // Each object's own bounds rather than tileWidthMm, so the stack stays clear for every shape
-  // without the writer having to know which shape it was handed — and so the inlays clear the
-  // CORD, whose extent no setting describes.
-  /** @param {Solid} s @returns {[number, number]} */
-  const yRange = (s) => {
-    let lo = Infinity, hi = -Infinity;
-    for (let i = 1; i < s.positions.length; i += 3) {
-      if (s.positions[i] < lo) lo = s.positions[i];
-      if (s.positions[i] > hi) hi = s.positions[i];
-    }
-    return [lo, hi];
-  };
-  let cursor = yRange(solid)[1]; // the top edge of what is already placed
-  for (const [suffix, part] of /** @type {[string, Solid | null | undefined][]} */ ([
-    ["trail", ribbon], ["water", inlays],
-  ])) {
-    if (!part) continue;
-    const [lo, hi] = yRange(part);
-    // Offset by −lo, so the part LANDS at `cursor + gap` whatever its own coordinates were: a
-    // part keeps the tile's frame, so it starts wherever its water or its trail sits. Without
-    // that term `cursor` still advances by the part's height while the part itself sits `lo`
-    // higher, and the two disagree by exactly `lo` — enough for the NEXT part to be placed
-    // inside this one whenever its own `lo` is the smaller of the two.
-    await writer.addObject(`${name}_${suffix}`, part, 0, cursor + PLATE_GAP_MM - lo);
-    cursor += PLATE_GAP_MM + (hi - lo);
+  // Untranslated, deliberately: the cord already carries the tile's own frame, so at the origin
+  // it sits on the relief it was moulded to, mating face on mating face. Slicers scatter a plate
+  // with one button; none of them can put a part back where it fits.
+  if (ribbon) await writer.addObject(`${name}_trail`, ribbon, 0, 0);
+  // The inlays cannot follow it in: their z is the water surface they displaced, with no base
+  // term (bakeTileSolid), so in place they would sit inside the tile rather than on it. Cleared
+  // against the tile's OWN bounds rather than tileWidthMm, so the placement holds for every shape
+  // without the writer knowing which it was handed. The −lo term makes the part land at the gap
+  // whatever its own coordinates were: it keeps the tile's frame, so it starts wherever its
+  // water sits, and without that term it lands `lo` higher than the gap it was given.
+  if (inlays) {
+    let hi = -Infinity, lo = Infinity;
+    for (let i = 1; i < solid.positions.length; i += 3) hi = Math.max(hi, solid.positions[i]);
+    for (let i = 1; i < inlays.positions.length; i += 3) lo = Math.min(lo, inlays.positions[i]);
+    await writer.addObject(`${name}_water`, inlays, 0, hi + PLATE_GAP_MM - lo);
   }
   return writer.finish();
 }

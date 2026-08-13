@@ -69,10 +69,7 @@ async function handle({ gen, settings, maxTiles, format, name, color, coverage, 
     // the opposite case, so it rides both paths: it IS displayed, and meshing the same geometry
     // the export ships beats drawing an approximation of it.
     const opts = { ...settings, waterInlay: format === "3mf" && !!settings.waterInlay };
-    // The preview needs the cord ON the terrain — the tile is opaque, and the export's
-    // plate-dropped cord sits base + its own floor below the surface, invisible inside it.
-    // Same mesh either way; see cord.cordSolid.
-    const job = trail ? { ...trail, onTerrain: format === "mesh" } : undefined;
+    const job = trail ?? undefined;
     let cordDropped = false;
     let baked;
     try {

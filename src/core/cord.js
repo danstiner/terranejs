@@ -361,65 +361,26 @@ export function cordTris(grid, plan, polys, widthMm, geom, cellOk) {
 }
 
 /**
- * Per-vertex drop that rests every connected piece of the cord on the plate.
- *
- * Floors are PER CONNECTED PIECE, not per part: a trail split by the tile's footprint or by
- * multiple <trkseg>s can sit at very different elevations, and one shared floor would rest the
- * lowest piece on the plate and leave the rest hanging — still closed and positive-volume, so
- * nothing downstream would object. Pieces meeting at a single vertex merge, which is required
- * rather than incidental: one vertex cannot carry two z values.
- *
- * @param {Uint32Array} tris @param {Float64Array} z @param {number} n vertex count
- * @returns {(i: number) => number}
- */
-function plateDrop(tris, z, n) {
-  const parent = new Int32Array(n);
-  for (let i = 0; i < n; i++) parent[i] = i;
-  /** @type {(i: number) => number} */
-  const find = (i) => {
-    let r = i;
-    while (parent[r] !== r) r = parent[r];
-    while (parent[i] !== r) { const up = parent[i]; parent[i] = r; i = up; }
-    return r;
-  };
-  for (let i = 0; i < tris.length; i += 3) {
-    const a = find(tris[i]), b = find(tris[i + 1]), c = find(tris[i + 2]);
-    if (a !== b) parent[b] = a;
-    if (a !== c) parent[c] = a;
-  }
-  const floor = new Float64Array(n).fill(Infinity);
-  for (let i = 0; i < tris.length; i++) {
-    const v = tris[i], r = find(v);
-    if (z[v] < floor[r]) floor[r] = z[v];
-  }
-  return (i) => z[i] - floor[find(i)];
-}
-
-/**
  * The printable cord: underside molded to the printed relief, top a constant `heightMm` above it.
  *
- * One mesh, two placements. Without `baseMm` each connected piece drops to the plate — the
- * EXPORT's requirement, since the cord prints as its own object beside the tile. With it the
- * underside is `z + baseMm`, which is the printed tile's top surface term for term
- * (mesh.js: `base + (e − emin)·mmPerM·exag`), so the cord rests on the relief it was measured
- * against — the PREVIEW's requirement, where the tile is opaque and a plate-dropped cord is
- * simply buried inside it. The plate drop is skipped entirely there, not undone: a translate
- * cannot undo per-piece floors that differ.
+ * One placement, shared by the preview and the export: the underside is `z + baseMm`, which is
+ * the printed tile's top surface term for term (mesh.js: `base + (e − emin)·mmPerM·exag`), so the
+ * cord rests on the relief it was measured against and needs no alignment in either. The export
+ * used to drop each connected piece to the plate instead; that placement is gone, because no
+ * slicer button can put a moved part back where it was measured, and the preview could not use it
+ * at all — inside an opaque tile a plate-dropped cord is simply buried.
  *
  * @param {Float32Array} grid @param {TilePlan} plan
  * @param {Float64Array[]} polys @param {number} widthMm @param {number} heightMm
  * @param {{ mmPerM: number, emin: number, exag: number }} geom
  * @param {Uint8Array} cellOk
- * @param {number} [baseMm] base-plate thickness; omit to drop each piece to the plate
+ * @param {number} baseMm base-plate thickness, the tile's own z frame
  * @returns {Solid | null}
  */
 export function cordSolid(grid, plan, polys, widthMm, heightMm, geom, cellOk, baseMm) {
   const soup = cordTris(grid, plan, polys, widthMm, geom, cellOk);
   if (!soup) return null;
   const { tris, x, y, z } = soup;
-  const n = x.length;
-  const rest = baseMm === undefined
-    ? plateDrop(tris, z, n)
-    : (/** @type {number} */ i) => z[i] + baseMm;
-  return assembleSolid(tris, n, (i) => [x[i], y[i]], (i) => rest(i) + heightMm, rest, "mirror");
+  const rest = (/** @type {number} */ i) => z[i] + baseMm;
+  return assembleSolid(tris, x.length, (i) => [x[i], y[i]], (i) => rest(i) + heightMm, rest, "mirror");
 }

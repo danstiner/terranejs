@@ -27,7 +27,7 @@ for (let r = 0; r < GH; r++)
       + 12 * Math.sin(c / 9) * Math.cos(r / 7) + 100;
 
 /** @param {Float64Array[]} polys @param {number} [widthMm] */
-const cord = (polys, widthMm = W) => cordSolid(grid, PLAN, polys, widthMm, H, GEOM, ALL);
+const cord = (polys, widthMm = W) => cordSolid(grid, PLAN, polys, widthMm, H, GEOM, ALL, GEOM.base);
 
 /** Triangles with no area. checkWatertight is topology-only — it counts edges and never looks
  *  at a coordinate — so a sliver between two coincident vertices is invisible to it, and to
@@ -89,7 +89,7 @@ function columns(P) {
 // a cord triangle straddling two terrain triangles, both break the constancy asserted here; the
 // absolute plane values are pinned separately in cord.test.mjs.
 /** Per-column gap from the cord's underside up to the tile's printed surface, plus the cord's
- *  own lowest vertex. One reader for both placements — they differ only by these numbers.
+ *  own lowest vertex.
  *  @param {import("../src/core/types.js").Solid} rib */
 function undersideGaps(rib) {
   const tile = buildSolid(grid, GW, GH, SPAN, new Uint8Array((GW - 1) * (GH - 1)).fill(1), GEOM);
@@ -122,28 +122,11 @@ function undersideGaps(rib) {
   return { gaps, lowest };
 }
 
-test("the underside is the terrain surface, offset by one constant", () => {
-  const rib = cord(BAND);
-  assert.ok(rib);
-  const { gaps, lowest } = undersideGaps(rib);
-  const offset = gaps[0].gap;
-  // 1e-5, not 1e-9: both heights are read back out of Float32Array positions, and float32's
-  // spacing at these magnitudes is already ~5e-7. A bilinear underside is off by orders more.
-  for (const { k, gap } of gaps) {
-    assert.ok(Math.abs(gap - offset) < 1e-5, `column ${k}: offset ${gap}, expected ${offset}`);
-  }
-  assert.ok(gaps.length > 200, `only ${gaps.length} columns compared`);
-  // The offset is base + the cord's own floor, and the cord rests on the plate — so the floor is
-  // the terrain height under its lowest point, and the offset cannot be base alone.
-  assert.ok(Math.abs(lowest) < 1e-9, `lowest underside vertex at ${lowest}, expected 0`);
-  assert.ok(offset > GEOM.base, `offset ${offset} carries no floor`);
-});
-
-// The preview's placement, asserted as the same congruence with the constant pinned to ZERO.
-// It shipped broken: the preview drew the export's plate-dropped cord, so every column's gap was
-// base plus the cord's own floor — the whole cord below the surface it mates with, and inside an
-// opaque tile. A non-zero constant here is that bug, whatever produced it.
-test("the terrain-mounted cord's underside IS the printed surface", () => {
+// The only placement there is, and the claim it rests on: the underside is the printed surface
+// exactly, not merely parallel to it. It shipped broken once — the preview drew the export's
+// plate-dropped cord, so every column's gap was base plus the cord's own floor, the whole cord
+// buried inside an opaque tile. A non-zero constant here is that bug, whatever produced it.
+test("the cord's underside IS the printed surface", () => {
   const rib = cordSolid(grid, PLAN, BAND, W, H, GEOM, ALL, GEOM.base);
   assert.ok(rib);
   const { gaps } = undersideGaps(rib);
@@ -151,37 +134,13 @@ test("the terrain-mounted cord's underside IS the printed surface", () => {
   for (const { k, gap } of gaps) assert.ok(Math.abs(gap) < 1e-5, `column ${k}: sits ${gap} mm below the surface`);
 });
 
-test("the cord sits on the plate and has uniform thickness", () => {
+test("the cord has uniform thickness over every column", () => {
   const rib = cord(BAND);
   assert.ok(rib);
-  const cols = columns(rib.positions);
-  let lowest = Infinity;
-  for (const { lo, hi } of cols.values()) {
-    lowest = Math.min(lowest, lo);
+  for (const { lo, hi } of columns(rib.positions).values()) {
     // 1e-5: hi and lo are both float32, so their difference carries that spacing (see above).
     assert.ok(Math.abs(hi - lo - H) < 1e-5, `thickness ${hi - lo}, expected ${H}`);
   }
-  assert.ok(Math.abs(lowest) < 1e-9, `lowest vertex at ${lowest}, expected 0`);
-});
-
-// Two pieces far apart in elevation: a shared floor would leave the higher one hanging in mid
-// air, still closed and positive-volume, so only its z gives it away.
-test("each disconnected piece rests on the plate", () => {
-  const stepped = new Float32Array(GW * GH);
-  for (let r = 0; r < GH; r++) for (let c = 0; c < GW; c++) stepped[r * GW + c] = r < GH / 2 ? 100 : 900;
-  const rib = cordSolid(stepped, PLAN, TWO, W, H, GEOM, ALL);
-  assert.ok(rib);
-  const P = rib.positions;
-  const lows = new Map(); // y band -> lowest z
-  let lowest = Infinity;
-  for (let i = 0; i < P.length / 3; i++) {
-    const y = P[3 * i + 1] > 12 ? "north" : "south";
-    lows.set(y, Math.min(lows.get(y) ?? Infinity, P[3 * i + 2]));
-    lowest = Math.min(lowest, P[3 * i + 2]);
-  }
-  assert.equal(lows.size, 2, "fixture must produce two separated pieces");
-  for (const [where, lo] of lows) assert.ok(Math.abs(lo) < 1e-9, `${where} piece floats at ${lo}`);
-  assert.equal(lowest, 0);
 });
 
 // The degenerate case the crossing-weld exists for. Everything here is an exact multiple of the
@@ -193,7 +152,7 @@ test("each disconnected piece rests on the plate", () => {
 // zero-area sliver. It stays topologically closed, so only zeroAreaTris sees it.
 // Measure-zero in real terrain, ordinary in an axis-aligned fixture — and in a hand-drawn trail.
 test("a cord whose edges land exactly on lattice vertices is still closed", () => {
-  const rib = cordSolid(grid, PLAN, [Float64Array.from([5, 14.5, 20, 14.5])], 2.0, H, GEOM, ALL);
+  const rib = cordSolid(grid, PLAN, [Float64Array.from([5, 14.5, 20, 14.5])], 2.0, H, GEOM, ALL, GEOM.base);
   assert.ok(rib);
   const wt = checkWatertight(rib);
   assert.ok(wt.closed, `${wt.unmatched} unmatched edges`);
@@ -231,7 +190,7 @@ test("the ribbon is watertight at preview pitch", () => {
   ];
   for (const [name, polys] of shapes) {
     const s = cordSolid(g, plan, polys, W, H, { mmPerM: 0.04, emin: 0, exag: 1 },
-      admissibleCells(N, N, null));
+      admissibleCells(N, N, null), 3);
     assert.ok(s, `${name}: no ribbon`);
     const wt = checkWatertight(s);
     assert.ok(wt.closed, `${name}: ${wt.unmatched} unmatched edges`);
@@ -291,7 +250,7 @@ test("bakeTileSolid: a non-positive cord height is rejected, not silently export
   for (const heightMm of [0, -1]) {
     assert.throws(
       () => bakeTileSolid(flatMosaicFor(plan), plan, PIPE_SETTINGS, undefined, { segments, widthMm: 12, heightMm }),
-      /non-positive-volume/,
+      /trail height must be a positive distance/,
       `heightMm=${heightMm} must throw`);
   }
 });
@@ -309,9 +268,9 @@ test("bakeTileSolid: with a wide-enough trail, ribbon is a validated watertight 
   assert.ok(signedVolume(ribbon) > 0);
 });
 
-// The wiring the preview rides on, at the level where it was missing. Flat terrain, so the
-// plate-dropped cord's underside is 0 and the terrain-mounted one's is exactly the base plate.
-test("bakeTileSolid: onTerrain places the cord on the printed surface, not the plate", () => {
+// The wiring the preview rides on, at the level where it was missing — and the export rides the
+// same one now. Flat terrain, so the underside is exactly the base plate and nothing else.
+test("bakeTileSolid: the cord lands in the tile's own z frame", () => {
   const plan = planTile(PIPE_SETTINGS, { z: 10 });
   const { window: win, z } = plan;
   const lat = globalYToLat(win.gy0 + 20, z);
@@ -324,13 +283,10 @@ test("bakeTileSolid: onTerrain places the cord on the printed surface, not the p
     for (let i = 2; i < s.positions.length; i += 3) m = Math.min(m, s.positions[i]);
     return m;
   };
-  const plate = bakeTileSolid(flatMosaicFor(plan), plan, PIPE_SETTINGS, undefined, trail).ribbon;
-  const onTerrain = bakeTileSolid(flatMosaicFor(plan), plan, PIPE_SETTINGS, undefined,
-    { ...trail, onTerrain: true }).ribbon;
-  assert.ok(plate && onTerrain);
-  assert.ok(Math.abs(lowest(plate)) < 1e-6, `plate-dropped cord at ${lowest(plate)}, want 0`);
-  assert.ok(Math.abs(lowest(onTerrain) - PIPE_SETTINGS.base) < 1e-5,
-    `terrain-mounted cord at ${lowest(onTerrain)}, want the ${PIPE_SETTINGS.base} mm base`);
+  const rib = bakeTileSolid(flatMosaicFor(plan), plan, PIPE_SETTINGS, undefined, trail).ribbon;
+  assert.ok(rib);
+  assert.ok(Math.abs(lowest(rib) - PIPE_SETTINGS.base) < 1e-5,
+    `cord at ${lowest(rib)}, want the ${PIPE_SETTINGS.base} mm base`);
 });
 
 // The load-bearing ordering test: applyWaterRecess mutates the grid, and bakeTileSolid must
@@ -368,8 +324,9 @@ test("ribbon is molded to the surface AFTER water recess, with the tile's own em
   }
   let sawWater = 0, sawLand = 0;
   for (const [c, lo] of underside) {
-    if (c >= 16 && c <= 24) { assert.ok(Math.abs(lo) < 1e-3, `water col ${c} underside ${lo}, want 0`); sawWater++; }
-    if (c <= 12 || c >= 28) { assert.ok(Math.abs(lo - settings.recessMm) < 1e-3, `land col ${c} underside ${lo}, want ${settings.recessMm}`); sawLand++; }
+    const want = c >= 16 && c <= 24 ? settings.base : settings.base + settings.recessMm;
+    if (c >= 16 && c <= 24) { assert.ok(Math.abs(lo - want) < 1e-3, `water col ${c} underside ${lo}, want ${want}`); sawWater++; }
+    if (c <= 12 || c >= 28) { assert.ok(Math.abs(lo - want) < 1e-3, `land col ${c} underside ${lo}, want ${want}`); sawLand++; }
   }
   assert.ok(sawWater > 3 && sawLand > 3, `corridor must reach both regions (water ${sawWater}, land ${sawLand})`);
 });
@@ -403,7 +360,7 @@ function modelXml(bytes) {
   return xml;
 }
 
-test("tileTo3mf writes the ribbon as a second object, clear of the tile", async () => {
+test("tileTo3mf writes the ribbon in the tile's own frame, untranslated", async () => {
   const tile = buildSolid(grid, GW, GH, SPAN, new Uint8Array((GW - 1) * (GH - 1)).fill(1), GEOM);
   const rib = cord(BAND);
   assert.ok(rib);
@@ -411,14 +368,17 @@ test("tileTo3mf writes the ribbon as a second object, clear of the tile", async 
   assert.equal((xml.match(/<object /g) ?? []).length, 2);
   const items = [...xml.matchAll(/<item objectid="(\d+)" transform="([^"]+)"/g)];
   assert.equal(items.length, 2);
-  let maxY = -Infinity;
-  for (let i = 1; i < tile.positions.length; i += 3) maxY = Math.max(maxY, tile.positions[i]);
-  const ty = Number(items[1][2].trim().split(/\s+/)[10]);
-  // The PLACED bottom edge, not the translation. A part keeps the tile's own coordinates, so
-  // the cord already sits wherever its trail sits — here rows 28..32, ~28 mm up. Asserting the
-  // translation alone passed only while the writer translated by the tile's full height, and
-  // would keep passing for a part placed anywhere at all.
-  let ribLo = Infinity;
-  for (let i = 1; i < rib.positions.length; i += 3) ribLo = Math.min(ribLo, rib.positions[i]);
-  assert.ok(ribLo + ty > maxY, `ribbon placed at y=${ribLo + ty} overlaps a tile reaching ${maxY}`);
+  const [tx, ty] = items[1][2].trim().split(/\s+/).slice(9, 11).map(Number);
+  assert.equal(tx, 0); assert.equal(ty, 0);
+  // Not just an identity transform — the mesh it identity-places has to be INSIDE the tile, which
+  // is what a plated part would fail. The cord's trail runs rows 28..32, so its y sits well
+  // within the tile's own extent and its underside within the tile's z.
+  let hiY = -Infinity, hiZ = -Infinity;
+  for (let i = 1; i < tile.positions.length; i += 3) hiY = Math.max(hiY, tile.positions[i]);
+  for (let i = 2; i < tile.positions.length; i += 3) hiZ = Math.max(hiZ, tile.positions[i]);
+  let ribHiY = -Infinity, ribLoZ = Infinity;
+  for (let i = 1; i < rib.positions.length; i += 3) ribHiY = Math.max(ribHiY, rib.positions[i]);
+  for (let i = 2; i < rib.positions.length; i += 3) ribLoZ = Math.min(ribLoZ, rib.positions[i]);
+  assert.ok(ribHiY < hiY, `ribbon reaches y=${ribHiY}, outside a tile ending at ${hiY}`);
+  assert.ok(ribLoZ > GEOM.base && ribLoZ < hiZ, `ribbon underside at ${ribLoZ}, outside the tile's relief`);
 });
