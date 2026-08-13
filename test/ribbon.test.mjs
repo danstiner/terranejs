@@ -4,8 +4,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { inflateRawSync } from "node:zlib";
 import { buildSolid } from "../src/core/mesh.js";
-import { cordSolid, admissibleCells } from "../src/core/cord.js";
-import { checkWatertight, signedVolume } from "../src/core/validate.js";
+import { cordSolid, admissibleCells, trenchWidthMm, subK } from "../src/core/cord.js";
+import { checkWatertight, signedVolume, checkNoCoincidentFaces } from "../src/core/validate.js";
 import { planTile, bakeTileSolid, tileTo3mf } from "../src/core/pipeline.js";
 import { globalXToLon, globalYToLat } from "../src/core/tilemath.js";
 
@@ -211,6 +211,237 @@ function flatMosaicFor(plan, elev = 100) {
   return { data: new Float32Array(gw * gh).fill(elev), width: gw, height: gh, originGx: gx0, originGy: gy0, z: plan.z };
 }
 
+/** A straight trail across the middle of a plan's window, in that plan's own coordinates.
+ *  widthMm is deliberately large: these fixtures use tiny windows, and a 1 mm cord would be
+ *  narrower than the test plan's own pitch. `inset` is how many columns short of the window edge
+ *  the trail stops — the default runs it out over the rim, where the channel stops before the cord
+ *  does; a caller measuring the cord against the FLOOR has to clear the feather ramp that leaves.
+ *  @param {ReturnType<typeof planTile>} plan @param {number} [widthMm] @param {number} [inset] */
+function trailAcross(plan, widthMm = 12, inset = 2) {
+  const { window: win, z } = plan;
+  const lat = globalYToLat(win.gy0 + Math.floor(win.gh / 2), z);
+  return {
+    segments: /** @type {import("../src/core/types.js").LatLon[][]} */ ([[
+      [lat, globalXToLon(win.gx0 + inset, z)],
+      [lat, globalXToLon(win.gx0 + win.gw - 1 - inset, z)],
+    ]]),
+    widthMm, heightMm: 1.5,
+  };
+}
+
+/** Print mm back to lat/lon, the inverse of trailToPrintMm's own mapping.
+ *  @param {any} plan @param {number} xMm @param {number} yMm
+ *  @returns {import("../src/core/types.js").LatLon} */
+const printToLL = (plan, xMm, yMm) => [
+  globalYToLat(plan.span.r1 - yMm / plan.dy + plan.window.gy0, plan.z),
+  globalXToLon(xMm / plan.dx + plan.span.c0 + plan.window.gx0, plan.z),
+];
+
+/** A hairpin whose legs sit inside the channel width, so the two grooves merge into one.
+ *  @param {any} plan @param {number} [widthMm] */
+function switchbackTrail(plan, widthMm = 12) {
+  const gap = trenchWidthMm(widthMm) * 0.8; // inside the merge window
+  const y = ((plan.gh - 1) * plan.dy) / 2;
+  const w = (plan.gw - 1) * plan.dx;
+  return { widthMm, heightMm: 0.6, segments: [[
+    printToLL(plan, 0.15 * w, y - gap / 2), printToLL(plan, 0.85 * w, y - gap / 2),
+    printToLL(plan, 0.85 * w, y + gap / 2), printToLL(plan, 0.15 * w, y + gap / 2),
+  ]] };
+}
+
+/** @param {import("../src/core/types.js").Solid} s */
+const zSpan = (s) => {
+  let lo = Infinity, hi = -Infinity;
+  for (let i = 2; i < s.positions.length; i += 3) {
+    lo = Math.min(lo, s.positions[i]); hi = Math.max(hi, s.positions[i]);
+  }
+  return { lo, hi, span: hi - lo };
+};
+
+// The channel is meshed, not carved, so the grid the z-frame is measured from never moves. That is
+// what stops the tile growing with the inset depth and the altitude bands shifting under it.
+test("bakeTileSolid: the channel leaves emin and the tile's height alone", () => {
+  const plan = planTile(PIPE_SETTINGS, { z: 10 });
+  const trail = trailAcross(plan);
+  const bare = bakeTileSolid(flatMosaicFor(plan), plan, PIPE_SETTINGS, undefined, trail);
+  const cut = bakeTileSolid(flatMosaicFor(plan), plan, PIPE_SETTINGS, undefined,
+    { ...trail, trenchDepthMm: 0.6 });
+  assert.equal(cut.emin, bare.emin, "the channel must not move the z frame");
+  assert.ok(Math.abs(zSpan(cut.solid).hi - zSpan(bare.solid).hi) < 1e-6,
+    "the tile must not grow with the inset");
+  assert.ok(zSpan(cut.solid).lo >= -1e-6, "the tile must never dip below the plate");
+});
+
+// The gate the whole design turns on. A non-conforming seam is invisible to checkWatertight and to
+// signedVolume; it shows up here and nowhere else.
+test("bakeTileSolid: the channel leaves a flat, single-loop base", () => {
+  const plan = planTile(PIPE_SETTINGS, { z: 10 });
+  const cut = bakeTileSolid(flatMosaicFor(plan), plan, PIPE_SETTINGS, undefined,
+    { ...trailAcross(plan), trenchDepthMm: 0.6 });
+  assert.equal(cut.solid.mirrored, false, "a mirrored base means a non-conforming seam");
+  assert.equal(cut.solid.loops, 1);
+  assert.equal(checkNoCoincidentFaces(cut.solid).duplicates, 0);
+});
+
+// The two fixtures the seam is most likely to break on. A trail over recessed water drives the
+// feather ramp AND the inlay's mating surface at once; a switchback makes the channel self-merge,
+// which is where the concave corner of the trench region puts two subdivided sides on one parent
+// triangle.
+test("bakeTileSolid: the seam holds over recessed water and through a switchback", () => {
+  const plan = planTile(PIPE_SETTINGS, { z: 10 });
+  const gw = plan.gw;
+  const water = new Uint8Array(gw * plan.gh);
+  for (let r = 0; r < plan.gh; r++)
+    for (let c = (gw / 2) | 0; c < gw; c++) water[r * gw + c] = 1;
+  const wet = bakeTileSolid(flatMosaicFor(plan), plan,
+    { ...PIPE_SETTINGS, flatten: true, recessMm: 0.4, waterInlay: true }, water,
+    { ...trailAcross(plan), trenchDepthMm: 0.6 });
+  assert.equal(wet.solid.mirrored, false, "water: non-conforming seam");
+  assert.equal(wet.solid.loops, 1);
+  assert.equal(checkNoCoincidentFaces(wet.solid).duplicates, 0);
+  assert.ok(wet.inlays, "the inlay must still be produced");
+
+  // A hairpin whose two legs sit closer than the channel is wide, so the two grooves merge.
+  const zig = switchbackTrail(plan);
+  const bent = bakeTileSolid(flatMosaicFor(plan), plan, PIPE_SETTINGS, undefined,
+    { ...zig, trenchDepthMm: 0.6 });
+  assert.equal(bent.solid.mirrored, false, "switchback: non-conforming seam");
+  assert.equal(bent.solid.loops, 1);
+  assert.equal(checkNoCoincidentFaces(bent.solid).duplicates, 0);
+});
+
+test("bakeTileSolid: an inset deeper than the base plate is refused, not clamped", () => {
+  const plan = planTile(PIPE_SETTINGS, { z: 10 });
+  assert.throws(() => bakeTileSolid(flatMosaicFor(plan), plan, PIPE_SETTINGS, undefined,
+    { ...trailAcross(plan), trenchDepthMm: PIPE_SETTINGS.base + 1 }),
+  /^Error: corridor: /, "a silently shallower channel is a fit failure found in the slicer");
+});
+
+// Migrated from the carve's own drop guard, which validated on PRESENCE rather than truthiness:
+// a headless caller passing exag 0 gets NaN, and NaN is falsy, so a truthiness test would wave it
+// through as "no inset" and silently bake a tile with no channel. Absent and 0 both mean off.
+test("bakeTileSolid: a non-finite or non-positive inset depth is refused", () => {
+  const plan = planTile(PIPE_SETTINGS, { z: 10 });
+  const trail = trailAcross(plan);
+  for (const bad of [Infinity, NaN, -1]) {
+    assert.throws(() => bakeTileSolid(flatMosaicFor(plan), plan, PIPE_SETTINGS, undefined,
+      { ...trail, trenchDepthMm: bad }), /^Error: corridor: /, `depth ${bad} must be refused`);
+  }
+  for (const off of /** @type {(number | undefined)[]} */ ([0, undefined])) {
+    const baked = bakeTileSolid(flatMosaicFor(plan), plan, PIPE_SETTINGS, undefined,
+      { ...trail, trenchDepthMm: off });
+    assert.ok(baked.solid, `depth ${off} means no inset, not an error`);
+  }
+});
+
+// Migrated from the carve's coarse-pitch refusal, which has no analogue: the channel's width no
+// longer depends on the pitch, so the only thing left that can refuse a trail is subK's own width
+// guard -- and it still reaches the caller through bakeTileSolid under the `corridor: ` prefix the
+// worker's cord rescue matches on.
+test("bakeTileSolid: a cord the lattice cannot carry is refused through the bake", () => {
+  const plan = planTile(PIPE_SETTINGS, { z: 10 });
+  // Long enough that the triangle budget clamps k below what a 0.4 mm cord needs at a 2.5 mm
+  // pitch: a zigzag that stays entirely on the tile, so cordLattice counts all of it.
+  const w = (plan.gw - 1) * plan.dx, h = (plan.gh - 1) * plan.dy;
+  const legs = 600;
+  /** @type {import("../src/core/types.js").LatLon[]} */
+  const pts = [];
+  for (let i = 0; i <= legs; i++) {
+    pts.push(printToLL(plan, i % 2 ? 0.95 * w : 0.05 * w, (h * i) / legs));
+  }
+  assert.throws(() => bakeTileSolid(flatMosaicFor(plan), plan, PIPE_SETTINGS, undefined,
+    { segments: [pts], widthMm: 0.4, heightMm: 0.6, trenchDepthMm: 0.6 }),
+  /^Error: corridor: /);
+});
+
+test("bakeTileSolid: the cord bottoms out on the trench floor", () => {
+  const plan = planTile(PIPE_SETTINGS, { z: 10 });
+  // Held clear of the rim, by the cord's own half-width plus the ring trenchAdmissibleCells erodes:
+  // out there feather is 0 and the cord correctly rides the terrain instead of a floor, which is a
+  // real 0.6 mm of relief in the cord and would swamp the congruence this measures.
+  const trail = trailAcross(plan, 12, 6);
+  const bare = bakeTileSolid(flatMosaicFor(plan), plan, PIPE_SETTINGS, undefined, trail);
+  const cut = bakeTileSolid(flatMosaicFor(plan), plan, PIPE_SETTINGS, undefined,
+    { ...trail, trenchDepthMm: 0.6 });
+  assert.ok(bare.ribbon && cut.ribbon);
+  // Congruence shows as identical z EXTENT, not identical z: the inset lowers every underside
+  // vertex of the cut cord by the same full depth, which a span cannot see. A cord riding the
+  // channel's ramp instead of its floor would pick up that relief and read taller.
+  assert.ok(Math.abs(zSpan(bare.ribbon).span - zSpan(cut.ribbon).span) < 1e-4,
+    `cord span ${zSpan(cut.ribbon).span}, want ${zSpan(bare.ribbon).span}`);
+});
+
+// The claim the whole feature rests on, measured directly rather than through a proxy: both
+// parts share the tile's z frame, so the cord's underside and the surrounding surface are
+// directly comparable. Flat terrain, so any difference IS the channel.
+// Boundary cells are meshed by clippedTopTris from their clipped polygon, not the two-triangle
+// split the channel sub-divides -- so a rim is where the two constructions have to meet. A trail
+// running off a hex or circle rim is the only thing that drives both at once.
+for (const shape of /** @type {const} */ (["hex", "circle"])) {
+  test(`bakeTileSolid: a trail crossing a ${shape} rim still closes watertight`, () => {
+    const settings = { ...PIPE_SETTINGS, shape };
+    const plan = planTile(settings, { z: 10 });
+    const trail = trailAcross(plan); // spans the full window, so it exits the footprint
+    const cut = bakeTileSolid(flatMosaicFor(plan), plan, settings, undefined,
+      { ...trail, trenchDepthMm: 0.6 });
+    const wt = checkWatertight(cut.solid);
+    assert.ok(wt.closed, `${shape}: ${wt.unmatched} unmatched edges`);
+    assert.ok(signedVolume(cut.solid) > 0, `${shape}: inside-out solid`);
+    // The gates checkWatertight cannot see: a rim cell meshed against a sub-meshed neighbour
+    // leaves every directed edge paired and still fails here.
+    assert.equal(cut.solid.mirrored, false, `${shape}: non-conforming seam`);
+    assert.equal(cut.solid.loops, 1, `${shape}: ${cut.solid.loops} boundary loops`);
+    // The channel stops one cell further in than the cord (trenchAdmissibleCells erodes one ring
+    // past admissibleCells), so the cord's last stretch sits ON the surface rather than in a
+    // groove -- feather is 0 there, so the two surfaces still coincide. Intended, and pinned.
+    assert.ok(cut.ribbon, `${shape}: expected a cord`);
+    const rwt = checkWatertight(cut.ribbon);
+    assert.ok(rwt.closed, `${shape}: cord has ${rwt.unmatched} unmatched edges`);
+  });
+}
+
+test("bakeTileSolid: the seated cord sits one full depth below the surrounding surface", () => {
+  const plan = planTile(PIPE_SETTINGS, { z: 10 });
+  const trail = trailAcross(plan);
+  const cut = bakeTileSolid(flatMosaicFor(plan), plan, PIPE_SETTINGS, undefined,
+    { ...trail, trenchDepthMm: 0.6 });
+  assert.ok(cut.ribbon);
+  const sunk = zSpan(cut.solid).hi - zSpan(cut.ribbon).lo;
+  assert.ok(Math.abs(sunk - 0.6) < 1e-4, `cord sits ${sunk} mm below the surface, want 0.6`);
+});
+
+// The old carve refused a tier whose pitch could not hold the export's channel width, so FAST
+// showed no groove at all. Nothing is skipped now: the width no longer depends on pitch, so every
+// tier meshes the same channel -- measured on the emitted floor, not on the width function, which
+// is a constant expression and would pin nothing.
+//
+// Tiers as explicit zooms rather than maxTiles budgets: an explicit z overrides the budget, so
+// three budgets at one z would bake the same plan three times, and this fixture's real budgets
+// pick z13-z15, whose 321^2 to 1281^2 grids cost seconds a bake for no extra coverage.
+test("bakeTileSolid: every preview tier meshes the same channel", () => {
+  const tiers = [10, 11, 12];
+  const pitches = tiers.map((z) => planTile(PIPE_SETTINGS, { z }).dx);
+  assert.equal(new Set(pitches).size, tiers.length, `tiers must differ: ${pitches}`);
+  const floors = tiers.map((z) => {
+    const plan = planTile(PIPE_SETTINGS, { z });
+    const cut = bakeTileSolid(flatMosaicFor(plan), plan, PIPE_SETTINGS, undefined,
+      { ...trailAcross(plan), trenchDepthMm: 0.6 });
+    assert.equal(cut.solid.mirrored, false, `z${z}: non-conforming seam`);
+    assert.equal(cut.solid.loops, 1);
+    // The channel's own floor: the deepest top-surface vertex under the flat terrain around it.
+    // zSpan alone measures the TILE's height, which is the same with no channel meshed at all.
+    let lo = Infinity, hi = -Infinity;
+    for (let i = 2; i < cut.solid.positions.length; i += 3) {
+      const zi = cut.solid.positions[i];
+      if (zi <= 1e-6) continue; // the base plane
+      lo = Math.min(lo, zi); hi = Math.max(hi, zi);
+    }
+    return hi - lo;
+  });
+  assert.ok(floors[0] > 1e-6, "no channel was meshed at all");
+  for (const f of floors) assert.ok(Math.abs(f - floors[0]) < 1e-6, `tiers differ: ${floors}`);
+});
+
 test("bakeTileSolid: no trail -> ribbon is null", () => {
   const plan = planTile(PIPE_SETTINGS, { z: 10 });
   const { ribbon } = bakeTileSolid(flatMosaicFor(plan), plan, PIPE_SETTINGS);
@@ -240,7 +471,9 @@ test("bakeTileSolid: a cord far narrower than the grid pitch bakes, and is 0.4 m
 });
 
 // checkWatertight can't see this: it only reads `indices`, never z, so a mirrored ribbon with
-// zero or negative height is still topologically closed. signedVolume is what has to catch it.
+// zero or negative height is still topologically closed. Nor can signedVolume any more — in the
+// tile's frame a zero-height cord's faces cancel to 1e-13, not to 0 — so the guard is on the
+// input, and this is the test that would have caught the volume gate going quiet.
 test("bakeTileSolid: a non-positive cord height is rejected, not silently exported degenerate", () => {
   const plan = planTile(PIPE_SETTINGS, { z: 10 });
   const { window: win, z } = plan;
@@ -293,12 +526,11 @@ test("bakeTileSolid: the cord lands in the tile's own z frame", () => {
 // build the ribbon from that mutated grid — not a copy captured earlier, not the raw DEM.
 //
 // Flat 200 m terrain everywhere except a masked "water" band (cols 15..25), sunk by recessMm.
-// Built correctly, the corridor's OWN minimum relief (0, at the sunk band) becomes its z=0
-// baseline, so land columns land `recessMm` ABOVE the water columns — the recess is visible in
-// the cord. Built from the pre-recess grid (or a snapshot taken before the mutation), every
-// column reads the same flat 200 m and normalizes to an indistinguishable z=0: verified by
-// swapping in a raw grid at this call site and rerunning — every column collapsed to 0, land and
-// water alike.
+// Built correctly, the sunk band is the tile's own emin, so water columns rest at exactly `base`
+// and land columns `recessMm` above them — the recess is visible in the cord. Built from the
+// pre-recess grid (or a snapshot taken before the mutation), every column reads the same flat
+// 200 m and lands at `base` alike: verified by swapping in a raw grid at this call site and
+// rerunning — every column collapsed to base, land and water together.
 test("ribbon is molded to the surface AFTER water recess, with the tile's own emin", () => {
   const settings = { ...PIPE_SETTINGS, recessMm: 20 };
   const plan = planTile(settings, { z: 10 });
@@ -359,6 +591,35 @@ function modelXml(bytes) {
   assert.match(xml, /<model unit="millimeter"/, "extraction produced model XML");
   return xml;
 }
+
+// The preview drops the CORD when the cord is what cannot be drawn. It must not drop it -- and
+// mislabel the cause -- when the refusal is about the tile. Both throws carry the `corridor: `
+// prefix, so the flag is what separates them; matching the message cannot.
+test("bakeTileSolid: only cord-owned refusals are flagged droppable", () => {
+  const plan = planTile(PIPE_SETTINGS, { z: 10 });
+  // A base-cut refusal: the tile's problem, so the preview must surface it, not swallow it.
+  let deep = null;
+  try {
+    bakeTileSolid(flatMosaicFor(plan), plan, PIPE_SETTINGS, undefined,
+      { ...trailAcross(plan), trenchDepthMm: PIPE_SETTINGS.base + 1 });
+  } catch (err) { deep = err; }
+  assert.ok(deep instanceof Error, "a too-deep inset must throw");
+  assert.match(deep.message, /^corridor: /);
+  assert.notEqual(/** @type {any} */ (deep).dropCord, true,
+    "a base-cut refusal must reach the banner, not drop the trail");
+
+  // subK's refusal: the cord's problem, so a coarse preview tier drops it and keeps the terrain.
+  // trailLenMm bumped from the brief's 4000 to 60000: at 4000 the triangle budget's kMax (141 at
+  // this pitch) still clears 2*pitch/widthMm, so the width guard never fires. 60000 pushes kMax
+  // below that threshold -- the assertion is about the flag, not this particular length.
+  let fine = null;
+  try {
+    subK(0.4, 8, 8, 60000);
+  } catch (err) { fine = err; }
+  assert.ok(fine instanceof Error, "subK must refuse a cord it cannot lattice");
+  assert.equal(/** @type {any} */ (fine).dropCord, true,
+    "subK's refusal is the cord's own and must stay droppable");
+});
 
 test("tileTo3mf writes the ribbon in the tile's own frame, untranslated", async () => {
   const tile = buildSolid(grid, GW, GH, SPAN, new Uint8Array((GW - 1) * (GH - 1)).fill(1), GEOM);

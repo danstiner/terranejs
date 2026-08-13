@@ -1,8 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buildSolid, assembleSolid } from "../src/core/mesh.js";
-import { signedVolume, checkWatertight } from "../src/core/validate.js";
+import { signedVolume, checkWatertight, checkNoCoincidentFaces } from "../src/core/validate.js";
 import { clipElevs, clipPolygon } from "../src/core/clip.js";
+import { cordLattice, distField, trenchWidthMm } from "../src/core/cord.js";
+import { trenchAdmissibleCells, featherField, trenchTop } from "../src/core/trench.js";
 
 // Flat tile: every grid sample at the same relief; geom maps relief mm 1:1, so
 // the enclosed volume is exactly footprint_area × (base + relief) — analytic,
@@ -552,4 +554,91 @@ test("assembleSolid reports whether it took the mirror fallback", () => {
   const mir = assembleSolid(tris, 4, xy, () => 1, () => 0, "mirror");
   assert.equal(mir.mirrored, true);
   assert.equal(mir.loops, 0);
+});
+
+// The seam is the whole risk. A mismatched vertex count between a sub-meshed cell and its
+// neighbour leaves zero visible gap and a corrupt solid: checkWatertight passes, signedVolume
+// passes, and the base silently mirrors. `mirrored`/`loops` are what actually see it.
+test("buildSolid stitches a flat one-loop base with the channel meshed in", () => {
+  const gw = 30, pitch = 1, W = 1, depth = 0.6;
+  const plan = { gw, gh: gw, dx: pitch, dy: pitch, span: { r0: 0, r1: gw - 1, c0: 0, c1: gw - 1 } };
+  const grid = new Float32Array(gw * gw);
+  const T = trenchWidthMm(W);
+  const polys = [Float64Array.from([2, 14.5, 27, 14.5])];
+  const { chopped, k } = cordLattice(polys, /** @type {any} */ (plan), W);
+  const dist = distField(chopped, /** @type {any} */ (plan), T / 2, k);
+  const trenchOk = trenchAdmissibleCells(gw, gw, null);
+  const feather = featherField(gw, gw, trenchOk);
+  const geom = { dx: pitch, dy: pitch, mmPerM: 1, emin: 0, exag: 1, base: 3 };
+  const trench = trenchTop(grid, /** @type {any} */ (plan), dist, k, T / 2, depth, feather,
+    trenchOk, { mmPerM: 1, emin: 0, exag: 1, base: 3 }, gw * gw);
+  assert.ok(trench);
+  const solid = buildSolid(grid, gw, gw, plan.span,
+    new Uint8Array((gw - 1) * (gw - 1)).fill(1), geom, undefined, trench);
+  // Presence first, or this test passes on a plain tile -- which is exactly what an unwired
+  // buildSolid produces, and it would satisfy every gate below.
+  const top = [];
+  for (let i = 2; i < solid.positions.length; i += 3) {
+    if (solid.positions[i] > 1e-6) top.push(solid.positions[i]); // z = 0 is the base plane
+  }
+  assert.ok(top.some((z) => Math.abs(z - (3 - depth)) < 1e-6),
+    "no vertex sits at base - depth: the channel was not meshed in");
+  assert.ok(Math.min(...top) > 1e-6, "the channel floor must stay above the base plate");
+  assert.equal(solid.mirrored, false, "a non-conforming seam forces the mirror fallback");
+  assert.equal(solid.loops, 1, "one footprint, one boundary loop");
+  const wt = checkWatertight(solid);
+  assert.ok(wt.closed, `${wt.unmatched} unmatched edges`);
+  assert.ok(signedVolume(solid) > 0);
+  assert.equal(checkNoCoincidentFaces(solid).duplicates, 0);
+});
+
+// The ring path's hard case, which nothing else in the suite reaches: k >= 2 AND a parent triangle
+// owning TWO subdivided cell sides -- the concave corner of the trench region, i.e. a switchback.
+// Every ribbon-level fixture uses a 12 mm cord, where subK gives k = 1 and "subdivided" means
+// nothing, so the earclip ladder never executes under a seam gate.
+test("buildSolid stitches a flat base through a switchback at k >= 2", () => {
+  const gw = 40, pitch = 1, W = 1, depth = 0.6;
+  const plan = { gw, gh: gw, dx: pitch, dy: pitch, span: { r0: 0, r1: gw - 1, c0: 0, c1: gw - 1 } };
+  const grid = new Float32Array(gw * gw);
+  const T = trenchWidthMm(W);
+  // A hairpin whose legs sit inside T, so the two grooves merge and the cells between them carry
+  // subdivided edges on opposite sides.
+  const polys = [Float64Array.from([8, 18, 30, 18, 30, 19.1, 8, 19.1])];
+  const { chopped, k } = cordLattice(polys, /** @type {any} */ (plan), W);
+  assert.ok(k >= 2, `fixture must exercise a refined lattice, got k = ${k}`);
+  const dist = distField(chopped, /** @type {any} */ (plan), T / 2, k);
+  const trenchOk = trenchAdmissibleCells(gw, gw, null);
+  const feather = featherField(gw, gw, trenchOk);
+  const trench = trenchTop(grid, /** @type {any} */ (plan), dist, k, T / 2, depth, feather,
+    trenchOk, { mmPerM: 1, emin: 0, exag: 1, base: 3 }, gw * gw);
+  assert.ok(trench);
+  const solid = buildSolid(grid, gw, gw, plan.span,
+    new Uint8Array((gw - 1) * (gw - 1)).fill(1),
+    { dx: pitch, dy: pitch, mmPerM: 1, emin: 0, exag: 1, base: 3 }, undefined, trench);
+  assert.equal(solid.mirrored, false, "a switchback's ring cells left a non-conforming seam");
+  assert.equal(solid.loops, 1);
+  assert.ok(checkWatertight(solid).closed);
+  assert.equal(checkNoCoincidentFaces(solid).duplicates, 0);
+});
+
+// The channel's cells are eroded one ring in from the footprint, so this cannot happen today --
+// but `skip` is honoured on only one of clippedTopTris' two branches, and if the erosion ever
+// stopped holding, a claimed boundary cell would be emitted twice: once clipped, once sub-meshed.
+// Both copies are watertight and positive-volume, so only checkNoCoincidentFaces would see it, and
+// that runs in tests alone.
+test("buildSolid refuses a channel that claims a footprint boundary cell", () => {
+  const gw = 20, gh = 20, cw = gw - 1;
+  const grid = new Float32Array(gw * gh);
+  const clip = clipPolygon(gw, gh, 0, 0, ngon(9.5, 9.5, 8, 32));
+  const gv = gw * gh;
+  const claimed = new Uint8Array(cw * (gh - 1));
+  const bcell = [...clip.bcells][0];
+  assert.notEqual(bcell, undefined, "fixture must have a boundary cell to claim");
+  claimed[bcell] = 1;
+  const empty = new Float64Array(0);
+  assert.throws(() => buildSolid(grid, gw, gh, { r0: 0, r1: gh - 1, c0: 0, c1: gw - 1 }, null,
+    GEOM, clip, {
+      tris: new Uint32Array(0), x: empty, y: empty, z: empty,
+      drop: new Float64Array(gv), claimed, idBase: gv + clip.col.length,
+    }), /claimed boundary cell/);
 });
