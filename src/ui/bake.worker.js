@@ -33,7 +33,7 @@ const post = /** @type {(msg: unknown, transfer?: Transferable[]) => void} */ (
 let catalogPromise = null;
 const catalogOnce = () => (catalogPromise ??= fetchCatalog().catch(() => null));
 
-/** @param {{ gen: number, settings: TileSettings, maxTiles: number, format: "mesh" | "3mf", name?: string, color?: boolean, coverage?: boolean, trail?: {segments: import("../core/types.js").LatLon[][], widthMm: number, heightMm: number} | null }} data */
+/** @param {{ gen: number, settings: TileSettings, maxTiles: number, format: "mesh" | "3mf", name?: string, color?: boolean, coverage?: boolean, trail?: {segments: import("../core/types.js").LatLon[][], widthMm: number, heightMm: number, trenchDepthMm: number} | null }} data */
 async function handle({ gen, settings, maxTiles, format, name, color, coverage, trail }) {
   try {
     const plan = planTile(settings, { maxTiles });

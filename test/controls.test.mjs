@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { cordHint } from "../src/ui/controls.js";
+import { cordHint, trenchHint } from "../src/ui/controls.js";
 
 test("cordHint: whole multiple of the layer height, no printed tail", () => {
   assert.equal(cordHint(0.6, 0.15), "0.60 mm — 4 layers at 0.15 mm");
@@ -30,4 +30,14 @@ test("cordHint: singular vs plural layer count", () => {
 // which the sub-lattice cord removed along with the tile-derived minimum itself.
 test("cordHint: says nothing about width", () => {
   assert.doesNotMatch(cordHint(0.6, 0.15), /width|minimum/);
+});
+
+// Protrusion crosses zero inside the slider's range against a 1 mm cord, so the copy has to
+// change voice rather than print a negative "proud" figure.
+test("trenchHint names the channel WIDTH and which way the trail sits", () => {
+  assert.match(trenchHint(0.6, 1, 1), /1\.20 mm wide channel/);
+  assert.match(trenchHint(0.6, 1, 1), /0\.40 mm proud/);
+  assert.match(trenchHint(1.5, 1, 1), /0\.50 mm below/);
+  assert.match(trenchHint(1, 1, 1), /flush/);
+  assert.equal(trenchHint(0, 1, 1), "");
 });
