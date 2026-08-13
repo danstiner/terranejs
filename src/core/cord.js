@@ -183,56 +183,29 @@ function distToSeg(px, py, x0, y0, x1, y1) {
 }
 
 /**
- * The cord's top surface as a triangle soup over its own vertex list.
+ * Distance to the trail at every sub-lattice vertex within the band, keyed by `R·strideC + C`.
  *
- * Vertices carry relief millimetres (`(e − emin)·mmPerM·exag`) rather than metres, so the caller
- * only has to subtract each piece's floor. `emin` cancels there, exactly as in buildDrape; it is
- * taken so `geom` has one shape across the builders.
+ * Takes ALREADY-CHOPPED polylines: cordTris needs `chopped` to measure trailLen for subK, which
+ * produces the `k` this function needs, so chopping inside would be circular.
  *
- * @param {Float32Array} grid @param {TilePlan} plan
- * @param {Float64Array[]} polys trail in print mm, one per segment
- * @param {number} widthMm
- * @param {{ mmPerM: number, emin: number, exag: number }} geom
- * @param {Uint8Array} cellOk admissible parent cells, (gw-1)×(gh-1)
- * @returns {{ tris: Uint32Array, x: Float64Array, y: Float64Array, z: Float64Array } | null}
+ * Dilating by 2·h past `half` is what makes cordTris' interpolation safe: a vertex inside the
+ * region is within √2·h of every corner of every sub-cell touching it, so those corners all carry
+ * a true distance, never a sentinel. Every consumer must still filter on its own half-width: the
+ * extra entries are vertices OUTSIDE the region, not padding.
+ *
+ * @param {Float64Array[]} chopped @param {TilePlan} plan
+ * @param {number} half @param {number} k
+ * @returns {Map<number, number>}
  */
-export function cordTris(grid, plan, polys, widthMm, geom, cellOk) {
+export function distField(chopped, plan, half, k) {
   const { gw, gh, dx, dy, span } = plan;
   const { c0, r1 } = span;
-  const { mmPerM, emin, exag } = geom;
-  const halfW = widthMm / 2;
-
-  // Chopped first, because the budget below measures only the part of the trail that can land
-  // ON the tile. Framing a tile around one stretch of a long import is normal — framing.js warns
-  // about the clipped remainder rather than refusing it — and counting kilometres that are never
-  // printed would coarsen the lattice, or refuse a width, over geometry the tile never carries.
-  const maxLen = 4 * widthMm;
-  const chopped = polys.map((p) => chop(p, maxLen));
-  const xLo = -c0 * dx - halfW, xHi = (gw - 1 - c0) * dx + halfW;
-  const yLo = (r1 - (gh - 1)) * dy - halfW, yHi = r1 * dy + halfW;
-  let trailLen = 0;
-  for (const st of chopped) {
-    for (let i = 2; i < st.length; i += 2) {
-      // Midpoint test: a chopped piece is at most 4 widths long, so the error at each tile
-      // crossing is far under what a triangle budget cares about.
-      const mx = (st[i] + st[i - 2]) / 2, my = (st[i + 1] + st[i - 1]) / 2;
-      if (mx < xLo || mx > xHi || my < yLo || my > yHi) continue;
-      trailLen += Math.hypot(st[i] - st[i - 2], st[i + 1] - st[i - 1]);
-    }
-  }
-  const { k, hx, hy } = subK(widthMm, dx, dy, trailLen);
-
-  // Sub-lattice indices: C along +x, R along +row (so −y, matching buildSolid's flip).
   const maxC = (gw - 1) * k, maxR = (gh - 1) * k, strideC = maxC + 1;
   const xOf = (/** @type {number} */ C) => (C / k - c0) * dx;
   const yOf = (/** @type {number} */ R) => (r1 - R / k) * dy;
-
-  // Distance to the trail at every lattice vertex within the band. Dilating by 2·h past halfW is
-  // what makes interpolation safe: a vertex inside the region is within √2·h of every corner of
-  // every sub-cell touching it, so those corners all carry a true distance, never a sentinel.
   /** @type {Map<number, number>} */
   const dist = new Map();
-  const band = halfW + 2 * Math.max(hx, hy);
+  const band = half + 2 * Math.max(dx / k, dy / k);
   for (const st of chopped) {
     // A one-point trail is a disc, not nothing, so it still gets one (degenerate) segment —
     // distToSeg falls back to point distance when the segment has no length.
@@ -256,26 +229,68 @@ export function cordTris(grid, plan, polys, widthMm, geom, cellOk) {
       }
     }
   }
-  if (dist.size === 0) return null;
+  return dist;
+}
 
-  /** @type {number[]} */ const X = [];
-  /** @type {number[]} */ const Y = [];
-  /** @type {number[]} */ const Z = [];
+/**
+ * The lattice the cord and the channel share: chopped polylines, and the k that carries them.
+ *
+ * Hoisted out of cordTris because two builders now mesh against the same isoline, and a shared
+ * seam only welds if both compute crossings on the same lattice. Choosing k twice from the same
+ * inputs would work today and break the first time either caller's inputs drift.
+ *
+ * Chopped first, because the budget below measures only the part of the trail that can land ON the
+ * tile. Framing a tile around one stretch of a long import is normal — framing.js warns about the
+ * clipped remainder rather than refusing it — and counting kilometres that are never printed would
+ * coarsen the lattice, or refuse a width, over geometry the tile never carries.
+ *
+ * @param {Float64Array[]} polys @param {TilePlan} plan @param {number} widthMm
+ * @returns {{ chopped: Float64Array[], k: number }}
+ */
+export function cordLattice(polys, plan, widthMm) {
+  const { gw, gh, dx, dy, span } = plan;
+  const { c0, r1 } = span;
+  const halfW = widthMm / 2;
+  const chopped = polys.map((p) => chop(p, 4 * widthMm));
+  const xLo = -c0 * dx - halfW, xHi = (gw - 1 - c0) * dx + halfW;
+  const yLo = (r1 - (gh - 1)) * dy - halfW, yHi = r1 * dy + halfW;
+  let trailLen = 0;
+  for (const st of chopped) {
+    for (let i = 2; i < st.length; i += 2) {
+      // Midpoint test: a chopped piece is at most 4 widths long, so the error at each tile
+      // crossing is far under what a triangle budget cares about.
+      const mx = (st[i] + st[i - 2]) / 2, my = (st[i + 1] + st[i - 1]) / 2;
+      if (mx < xLo || mx > xHi || my < yLo || my > yHi) continue;
+      trailLen += Math.hypot(st[i] - st[i - 2], st[i + 1] - st[i - 1]);
+    }
+  }
+  return { chopped, k: subK(widthMm, dx, dy, trailLen).k };
+}
+
+/**
+ * Sutherland-Hodgman clipping of the terrain's own sub-triangles against a distance isoline,
+ * with the crossing weld that makes two builders' shared edges conform.
+ *
+ * Shared by the cord and the channel. They clip the same field at different half-widths and keep
+ * different halves of the result, but a crossing computed on one side of a shared edge must be the
+ * SAME VERTEX as the one computed on the other — not merely the same position to within a float.
+ * The ordered-key cache is what guarantees it, and it only guarantees it while there is one cache.
+ *
+ * `pushLattice` and `pushCross` mint vertices; the caller owns the vertex table and decides what z
+ * a vertex carries, which is how the channel applies a displacement the cord does not.
+ *
+ * @param {Map<number, number>} dist @param {number} half @param {number} k @param {number} strideC
+ * @param {(key: number, col: number, row: number) => number} pushLattice
+ * @param {(col: number, row: number) => number} pushCross
+ */
+export function subClip(dist, half, k, strideC, pushLattice, pushCross) {
   /** @type {Map<number, number>} */ const latId = new Map();
   /** @type {Map<number, number>} */ const cutId = new Map();
-  const relK = mmPerM * exag;
-  /** Local vertex at fractional grid coords. */
-  const push = (/** @type {number} */ col, /** @type {number} */ row) => {
-    X.push((col - c0) * dx);
-    Y.push((r1 - row) * dy);
-    Z.push((subElev(grid, gw, gh, col, row) - emin) * relK);
-    return X.length - 1;
-  };
   const lattice = (/** @type {number} */ key) => {
     let id = latId.get(key);
     if (id === undefined) {
       const R = (key / strideC) | 0;
-      id = push((key - R * strideC) / k, R / k);
+      id = pushLattice(key, (key - R * strideC) / k, R / k);
       latId.set(key, id);
     }
     return id;
@@ -294,8 +309,8 @@ export function cordTris(grid, plan, polys, widthMm, geom, cellOk) {
     const pair = lo * 3 + (d === strideC ? 1 : d === 1 ? 0 : 2);
     let id = cutId.get(pair);
     if (id !== undefined) return id;
-    const fa = /** @type {number} */ (dist.get(lo)) - halfW;
-    const fb = /** @type {number} */ (dist.get(hi)) - halfW;
+    const fa = /** @type {number} */ (dist.get(lo)) - half;
+    const fb = /** @type {number} */ (dist.get(hi)) - half;
     const t = fa / (fa - fb);
     // A crossing landing on a lattice vertex IS that vertex; welding it there is what keeps the
     // clip degrading to the correct closure instead of leaving a sliver between two coincident
@@ -307,17 +322,16 @@ export function cordTris(grid, plan, polys, widthMm, geom, cellOk) {
     if (!(t < 1 - T_EPS)) return lattice(hi);
     const Ra = (lo / strideC) | 0, Ca = lo - Ra * strideC;
     const Rb = (hi / strideC) | 0, Cb = hi - Rb * strideC;
-    id = push((Ca + (Cb - Ca) * t) / k, (Ra + (Rb - Ra) * t) / k);
+    id = pushCross((Ca + (Cb - Ca) * t) / k, (Ra + (Rb - Ra) * t) / k);
     cutId.set(pair, id);
     return id;
   };
-
-  /** @type {number[]} */ const tris = [];
   /** @type {number[]} */ const poly = [];
-  // Sutherland–Hodgman against f < 0, one path for every case. Triangles have no ambiguous
-  // saddle, so this needs no disambiguation — which marching squares would.
   const key = [0, 0, 0], ins = [false, false, false];
-  const clipTri = (/** @type {number} */ k0, /** @type {number} */ k1, /** @type {number} */ k2,
+  // One path for every case. Triangles have no ambiguous saddle, so this needs no disambiguation
+  // — which marching squares would. Pass the flags NEGATED to keep the other half instead.
+  const clipTri = (/** @type {number[]} */ out,
+    /** @type {number} */ k0, /** @type {number} */ k1, /** @type {number} */ k2,
     /** @type {boolean} */ i0, /** @type {boolean} */ i1, /** @type {boolean} */ i2) => {
     poly.length = 0;
     key[0] = k0; key[1] = k1; key[2] = k2;
@@ -334,8 +348,80 @@ export function cordTris(grid, plan, polys, widthMm, geom, cellOk) {
       poly[n++] = v;
     }
     if (n > 1 && poly[0] === poly[n - 1]) n--;
-    for (let i = 1; i + 1 < n; i++) tris.push(poly[0], poly[i], poly[i + 1]);
+    for (let i = 1; i + 1 < n; i++) out.push(poly[0], poly[i], poly[i + 1]);
   };
+  return { lattice, crossing, clipTri };
+}
+
+/**
+ * A lattice and the distance field stamped on it, shared between the two builders that mesh
+ * against the same isoline.
+ *
+ * The union is the contract: `k`, `chopped` and `dist` travel together or not at all. A key in
+ * `dist` is packed with the stride `k` implies, so a field decoded with a `k` the callee derived
+ * for itself names a different (R, C) — the cord meshes somewhere else entirely, and being closed
+ * and positive-volume it passes every gate downstream. Half a share is the "two builders, one
+ * lattice" failure this whole arrangement exists to prevent, so it is made unrepresentable.
+ *
+ * `half` is the width the field was stamped at, which may be WIDER than the cord's: the extra
+ * entries are vertices outside the cord, not padding, and the cord still filters on its own halfW.
+ *
+ * @typedef {{ half: number, k?: undefined, chopped?: undefined, dist?: undefined }
+ *   | { half: number, k: number, chopped: Float64Array[],
+ *   dist: Map<number, number> }} CordShared
+ */
+
+/**
+ * The cord's top surface as a triangle soup over its own vertex list.
+ *
+ * Vertices carry relief millimetres (`(e − emin)·mmPerM·exag`) rather than metres, so the caller
+ * only has to subtract each piece's floor. `emin` cancels there, exactly as in buildDrape; it is
+ * taken so `geom` has one shape across the builders.
+ *
+ * @param {Float32Array} grid @param {TilePlan} plan
+ * @param {Float64Array[]} polys trail in print mm, one per segment
+ * @param {number} widthMm
+ * @param {{ mmPerM: number, emin: number, exag: number }} geom
+ * @param {Uint8Array} cellOk admissible parent cells, (gw-1)×(gh-1)
+ * @param {CordShared} [shared]
+ * @returns {{ tris: Uint32Array, x: Float64Array, y: Float64Array, z: Float64Array } | null}
+ */
+export function cordTris(grid, plan, polys, widthMm, geom, cellOk, shared) {
+  const { gw, gh, dx, dy, span } = plan;
+  const { c0, r1 } = span;
+  const { mmPerM, emin, exag } = geom;
+  const halfW = widthMm / 2;
+
+  // The type forbids a half-share; this catches a caller the type checker never saw, because the
+  // failure it prevents is silent (see CordShared) rather than a crash.
+  const share = shared ? [shared.k, shared.chopped, shared.dist].filter((v) => v !== undefined).length : 0;
+  if (share !== 0 && share !== 3) {
+    throw new Error("cord: a shared lattice must supply k, chopped and dist together");
+  }
+  const { chopped, k } = shared?.k !== undefined
+    ? { chopped: shared.chopped, k: shared.k }
+    : cordLattice(polys, plan, widthMm);
+
+  // Sub-lattice indices: C along +x, R along +row (so −y, matching buildSolid's flip).
+  const maxC = (gw - 1) * k, maxR = (gh - 1) * k, strideC = maxC + 1;
+
+  const dist = shared?.dist ?? distField(chopped, plan, shared?.half ?? halfW, k);
+  if (dist.size === 0) return null;
+
+  /** @type {number[]} */ const X = [];
+  /** @type {number[]} */ const Y = [];
+  /** @type {number[]} */ const Z = [];
+  const relK = mmPerM * exag;
+  /** Local vertex at fractional grid coords. */
+  const push = (/** @type {number} */ col, /** @type {number} */ row) => {
+    X.push((col - c0) * dx);
+    Y.push((r1 - row) * dy);
+    Z.push((subElev(grid, gw, gh, col, row) - emin) * relK);
+    return X.length - 1;
+  };
+  const { clipTri } = subClip(dist, halfW, k, strideC, (_key, col, row) => push(col, row), push);
+
+  /** @type {number[]} */ const tris = [];
 
   // Every stamped vertex names the ONE sub-cell it is the north-west corner of, so each cell is
   // reached exactly once with no dedupe pass. A cell with any interior corner is always reached:
@@ -350,8 +436,8 @@ export function cordTris(grid, plan, polys, widthMm, geom, cellOk) {
     const iC = (dist.get(Cc) ?? Infinity) < halfW, iD = (dist.get(D) ?? Infinity) < halfW;
     if (!(iA || iB || iC || iD)) continue;
     if (!cellOk[((R / k) | 0) * cw + ((C / k) | 0)]) continue;
-    clipTri(A, Cc, B, iA, iC, iB); // same winding and the same anti-diagonal as gridTopTris, so
-    clipTri(B, Cc, D, iB, iC, iD); // the sub-triangles nest exactly inside the parent's two
+    clipTri(tris, A, Cc, B, iA, iC, iB); // same winding and the same anti-diagonal as gridTopTris, so
+    clipTri(tris, B, Cc, D, iB, iC, iD); // the sub-triangles nest exactly inside the parent's two
   }
   if (tris.length === 0) return null;
   return {
@@ -375,10 +461,11 @@ export function cordTris(grid, plan, polys, widthMm, geom, cellOk) {
  * @param {{ mmPerM: number, emin: number, exag: number }} geom
  * @param {Uint8Array} cellOk
  * @param {number} baseMm base-plate thickness, the tile's own z frame
+ * @param {CordShared} [shared] forwarded verbatim to `cordTris`
  * @returns {Solid | null}
  */
-export function cordSolid(grid, plan, polys, widthMm, heightMm, geom, cellOk, baseMm) {
-  const soup = cordTris(grid, plan, polys, widthMm, geom, cellOk);
+export function cordSolid(grid, plan, polys, widthMm, heightMm, geom, cellOk, baseMm, shared) {
+  const soup = cordTris(grid, plan, polys, widthMm, geom, cellOk, shared);
   if (!soup) return null;
   const { tris, x, y, z } = soup;
   const rest = (/** @type {number} */ i) => z[i] + baseMm;
