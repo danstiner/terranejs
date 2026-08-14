@@ -381,16 +381,20 @@ inset at all, and so are the z-frame, the printed height, and the
 elevations the color bands fall at. A carve moved all of those, by the
 depth.
 
-The channel stops short of the rim and of water. It keeps one cell
-further in than the cord does, because a cell carrying it has subdivided
-edges and its neighbours must be retriangulated to match — which a rim
-cell, whose top is a clipped polygon rather than two triangles, cannot
-be. It also never lowers a water-masked vertex, per vertex rather than
-per cell, or the drop-in inlay moulded to that shore would no longer
-seat. At both borders the depth ramps to zero over the last cell rather
-than ending in a step, and the cord's underside follows the same ramp,
-so a trail running off the tile or across a lake stays seated to where
-it stops.
+The channel stops short of the rim and of recessed water. It keeps one
+cell further in than the cord does, because a cell carrying it has
+subdivided edges and its neighbours must be retriangulated to match —
+which a rim cell, whose top is a clipped polygon rather than two
+triangles, cannot be. It also never lowers a vertex the water controls
+**moved**, per vertex rather than per cell, or the drop-in inlay moulded
+to that shore would no longer seat. Water the controls left where it was
+is not a border at all: with them at rest the mask marks terrain that
+happens to be wet, and a trail fording a river shows a trail. The
+channel and the inlay read the same mask, so they cannot disagree about
+which water moved. At both borders the depth ramps to zero over the last
+cell rather than ending in a step, and the cord's underside follows the
+same ramp, so a trail running off the tile or across a recessed lake
+stays seated to where it stops.
 
 Two things refuse an inset outright, both reported on the trail warning.
 The lattice is chosen from the cord's width against a triangle budget
@@ -403,7 +407,10 @@ taken over the channel's own boundary, which lies half a channel width
 off the trail and so dips below anything sampled along the trail itself
 wherever the ground falls away from it. It refuses rather than quietly
 cutting a shallower channel, because a channel that is not the depth
-asked for is a fit failure discovered in the slicer, or in the print.
+asked for is a fit failure discovered in the slicer, or in the print. A
+ford is where that check bites hardest: water the controls left alone is
+normally the tile's own minimum, so crossing it cuts the thinnest ground
+there is.
 
 ### Water inlays
 
