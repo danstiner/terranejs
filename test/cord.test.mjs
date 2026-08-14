@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { trailToPrintMm, chop, subK, subElev, admissibleCells, cordTris, SUB_ACROSS,
-  distField, cordLattice } from "../src/core/cord.js";
+  distField, cordLattice, trenchWidthMm } from "../src/core/cord.js";
 import { planTile } from "../src/core/pipeline.js";
 import { globalXToLon, globalYToLat } from "../src/core/tilemath.js";
 
@@ -538,4 +538,14 @@ test("a partly shared lattice is refused rather than decoded against the wrong k
   }
   // The whole share is still accepted, so the guard is not simply refusing everything.
   assert.ok(cordTris(grid, plan, poly, W, GEOM, allCells(30), { half: wide, k, chopped, dist }));
+});
+
+// One clearance per side and nothing else. There is no pitch term -- the boundary is meshed on the
+// isoline, so the grid's all-four-corners erosion never eats the floor -- and FIT_MM is not folded
+// in with a max, which would let the larger requirement silently absorb the other.
+test("trench width is the cord plus one clearance per side, at any pitch", () => {
+  for (const W of [0.4, 1, 1.6, 12]) {
+    assert.ok(Math.abs(trenchWidthMm(W) - (W + 0.2)) < 1e-9,
+      `${W} mm cord: channel ${trenchWidthMm(W)}, want ${W + 0.2}`);
+  }
 });
