@@ -161,6 +161,11 @@ export function bakeTileSolid(mosaic, plan,
   const { mask: printedWaterMask, droppedPct: waterDroppedPct } = waterFilter
     ? filterUnprintableWater(waterMask, gw, gh, dx)
     : { mask: waterMask, droppedPct: 0 };
+  // The set whose elevation this bake actually changed, which is a narrower claim than "the water
+  // this tile printed" — with neither control engaged the water is terrain that happens to be wet.
+  // Two consumers, so they cannot disagree about which water moved: the inlay fills exactly what
+  // moved, and the channel refuses exactly what the inlay claims.
+  const movedWaterMask = flatten || recessMm > 0 ? printedWaterMask : undefined;
   const { lineElev, landBluePct, waterAsLandPct } = applyWaterRecess(grid, printedWaterMask, {
     flatten, recessMm, layerMm, K: mmPerM * exag, footprint,
   });
@@ -198,12 +203,18 @@ export function bakeTileSolid(mosaic, plan,
     }
     if (trail.trenchDepthMm) {
       trenchOk = trenchAdmissibleCells(gw, gh, clip);
-      // Unconditional on waterInlay: that toggle is export-only, so keying tile geometry to it
-      // would make the previewed tile a different object from the exported one. The PRINTED mask,
-      // for the reason filterUnprintableWater exists: water too narrow to print is ordinary land
-      // in the tile now, and feathering the channel out over it would leave the trail dotted
-      // across ground that has no water on it.
-      shared.feather = featherField(gw, gh, trenchOk, printedWaterMask);
+      // The MOVED mask, not the printed one. The channel is refused over water because lowering a
+      // vertex the recess put at a known depth would unseat the part moulded to it — a claim about
+      // water this bake displaced, not about water in general. Left at true elevation it is terrain
+      // the trail may cross, which is what a trail fording a river does. Water is normally the
+      // tile's own emin, so a ford cuts the thinnest ground on the tile and can reach trench.js's
+      // base-cut refusal on a thin base — loud and remediable, which is the wanted direction.
+      // Undefined when nothing moved. Unconditional on waterInlay: that toggle is export-only, so keying tile geometry to
+      // it would make the previewed tile a different object from the exported one. And the printed
+      // mask feeds it, for the reason filterUnprintableWater exists: water too narrow to print is
+      // ordinary land in the tile now, and refusing the channel over it would leave the trail
+      // dotted across ground that has no water on it.
+      shared.feather = featherField(gw, gh, trenchOk, movedWaterMask);
       shared.depthMm = trail.trenchDepthMm;
     }
   }
@@ -275,7 +286,7 @@ export function bakeTileSolid(mosaic, plan,
   // which is why both controls feed it — flatten's drop counts as much as the recess, and with
   // neither on nothing was displaced and there is nothing to fill.
   let inlays = null;
-  if (preWater && (flatten || recessMm > 0)) {
+  if (preWater && movedWaterMask) {
     // All four corners water AND inside the footprint. The erosion that rule implies is wanted
     // here, unlike in the corridor, which compensates for it. The tile's surface crosses a shore
     // over ONE cell, as a ramp from the land vertex down to the water vertex, and since the top
@@ -285,7 +296,7 @@ export function bakeTileSolid(mosaic, plan,
     // to drop in. Conceding the ramp cells buys a vertical wall the slicer can print and a
     // groove at most one cell wide (dx, a 0.083 mm median at export pitch) to seat the part through.
     const { cells, count } = cellsFromVertexMask(
-      /** @type {Uint8Array} */ (printedWaterMask), gw, gh, footprint);
+      /** @type {Uint8Array} */ (movedWaterMask), gw, gh, footprint);
     if (count) {
       inlays = buildDrape(grid, gw, gh, span, cells, { dx, dy, mmPerM, emin, exag }, preWater);
       const iwt = checkWatertight(/** @type {Solid} */ (inlays));

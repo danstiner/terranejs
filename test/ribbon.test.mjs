@@ -310,6 +310,59 @@ test("bakeTileSolid: the seam holds over recessed water and through a switchback
   assert.equal(checkNoCoincidentFaces(bent.solid).duplicates, 0);
 });
 
+// The channel is refused over water so that lowering a vertex the recess placed cannot unseat the
+// inlay moulded to it. That is a claim about water this bake MOVED — with the water controls at
+// rest the mask marks terrain that happens to be wet, and a trail fording a river should still show
+// a trail. Measured as removed volume rather than asserted on the mask, because the mask is the
+// thing under test: the channel's own depth is the only evidence it reached the far bank.
+test("bakeTileSolid: the channel crosses water the bake left where it was", () => {
+  const plan = planTile(PIPE_SETTINGS, { z: 10 });
+  const trail = trailAcross(plan);
+  // A river straight across the trail, six columns wide so it survives filterUnprintableWater.
+  const water = new Uint8Array(plan.gw * plan.gh);
+  const c0 = ((plan.gw / 2) | 0) - 3;
+  for (let r = 0; r < plan.gh; r++)
+    for (let c = c0; c < c0 + 6; c++) water[r * plan.gw + c] = 1;
+  /** How much volume the inset removed under one set of settings.
+   * @param {any} s @param {Uint8Array} [mask] */
+  const cut = (s, mask) =>
+    signedVolume(bakeTileSolid(flatMosaicFor(plan), plan, s, mask, { ...trail, trenchDepthMm: 0 }).solid)
+    - signedVolume(bakeTileSolid(flatMosaicFor(plan), plan, s, mask, { ...trail, trenchDepthMm: 0.6 }).solid);
+
+  const dry = cut(PIPE_SETTINGS);
+  assert.ok(dry > 0, "the fixture must cut something to compare against");
+  assert.ok(Math.abs(cut(PIPE_SETTINGS, water) - dry) < 1e-6,
+    "water the bake never moved must cost the channel nothing");
+  // The same river once the recess owns it: now the refusal is real, and it has to bite.
+  const sunk = cut({ ...PIPE_SETTINGS, recessMm: 2 }, water);
+  assert.ok(sunk < dry * 0.95, `recessed water must stop the channel (cut ${sunk} vs ${dry})`);
+});
+
+// Crossing water the bake left alone means the channel now cuts at the tile's THINNEST ground:
+// water is normally the tile's own emin, and the terrain there is exactly `base` thick. So the
+// base-cut refusal becomes reachable on a fixture where recessing the same river hides it — the
+// channel stops at the bank and never reaches the thin ground. Loud and remediable rather than a
+// silent membrane, and a trail crossing the lowest LAND could always reach it, but it is a real
+// consequence of fording rather than stopping, so it is pinned rather than left to be discovered.
+test("bakeTileSolid: fording a river cuts at the tile's thinnest ground", () => {
+  const settings = { ...PIPE_SETTINGS, base: 1.5 };
+  const plan = planTile(settings, { z: 10 });
+  const { gx0, gy0, gw, gh } = plan.window;
+  // A 100 m river through a 200 m plateau, six columns wide so it survives filterUnprintableWater.
+  const data = new Float32Array(gw * gh).fill(200);
+  const water = new Uint8Array(gw * gh);
+  const c0 = ((gw / 2) | 0) - 3;
+  for (let r = 0; r < gh; r++)
+    for (let c = c0; c < c0 + 6; c++) { data[r * gw + c] = 100; water[r * gw + c] = 1; }
+  const mosaic = { data, width: gw, height: gh, originGx: gx0, originGy: gy0, z: plan.z };
+  const trail = { ...trailAcross(plan), trenchDepthMm: settings.base + 0.5 };
+
+  assert.throws(() => bakeTileSolid(mosaic, plan, settings, water, trail),
+    /cuts through the base/, "an inset deeper than the base plate must be refused, not thinned");
+  // The same river recessed: the channel stops at the bank, so the thin ground is never cut.
+  assert.ok(bakeTileSolid(mosaic, plan, { ...settings, recessMm: 2 }, water, trail).solid);
+});
+
 test("bakeTileSolid: an inset deeper than the base plate is refused, not clamped", () => {
   const plan = planTile(PIPE_SETTINGS, { z: 10 });
   assert.throws(() => bakeTileSolid(flatMosaicFor(plan), plan, PIPE_SETTINGS, undefined,
