@@ -44,7 +44,7 @@ function ptInTri(p, a, b, c) {
  * @param {[number, number][]} ring
  * @returns {number[][]}
  */
-function earclip(ring) {
+export function earclip(ring) {
   const n = ring.length;
   if (n < 3) return [];
   const idx = [...Array(n).keys()];

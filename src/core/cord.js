@@ -131,6 +131,32 @@ export function subK(widthMm, dx, dy, trailLenMm) {
   return { k, hx: dx / k, hy: dy / k };
 }
 
+/** Clearance per side between the cord and the channel it seats in. NOT for support scarring —
+ *  that is closed by printing the cord upside down, so its mating face is a top surface. It pays
+ *  for the effect orientation cannot fix: FDM slots print undersize and bosses oversize as
+ *  material flows into concave corners, so a nominal fit binds. Nothing here pays for the grid —
+ *  the channel's boundary is meshed on the isoline, so its floor is exactly T wide along the whole
+ *  trail rather than wobbling by a cell as vertices fall against it. */
+const FIT_MM = 0.1;
+
+/**
+ * Channel width for a cord of `cordWidthMm`: the cord plus one clearance per side.
+ *
+ * No pitch term. The channel's boundary is meshed on the isoline rather than snapped to grid
+ * vertices, so the grid's own erosion — a cell only reaches full depth when all four corners are
+ * inside — never eats into the flat floor. Carving the channel into the elevation grid would have
+ * forced a 2·√2·dx term, which at the z15 source cap is by far the larger half of a 2.57 mm channel
+ * for a 1 mm cord.
+ *
+ * FIT_MM is not folded in with a max: independent requirements sum, or the one that happens to be
+ * larger silently absorbs the other.
+ *
+ * @param {number} cordWidthMm @returns {number}
+ */
+export function trenchWidthMm(cordWidthMm) {
+  return cordWidthMm + 2 * FIT_MM;
+}
+
 /**
  * Elevation at fractional grid coordinates, on the terrain's OWN triangulation.
  *
