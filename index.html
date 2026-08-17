@@ -65,32 +65,31 @@
         <input id="base" type="range" min="1" max="10" step="0.5" value="6">
 
         <!-- Water is a decision, not a detail: it changes what the tile looks like more than any
-             other control here, and its warning names the checkbox two lines below it. Advanced
+             other control here, and its warning names the mode select below it. Advanced
              keeps the settings a print needs once — bed size, layer height, slicer output. -->
         <div class="group">
           <h3>Water</h3>
           <p id="waterWarn" hidden></p>
 
-          <!-- Help lives behind a ? rather than under every control: the section is two settings
-               and was four paragraphs. data-help carries the text; controls.wireHelp shows it in
-               one page-level popover. The row exists to sit the ? beside the label, nothing more. -->
+          <!-- Help lives behind a ? rather than under every control: the section is a mode and a
+               checkbox and was four paragraphs. data-help carries the text; controls.wireHelp
+               shows it in one page-level popover. The row exists to sit the ? beside the label,
+               nothing more. -->
           <div class="labelrow">
-            <label for="recess">Recess depth: <span id="recessVal">0.0 mm</span></label>
-            <button type="button" class="help" aria-label="About recess depth"
-              data-help="Sinks every water body this far below the waterline, so the shore has a step you can see and feel. Print millimetres, independent of map scale.">?</button>
+            <label for="waterMode">Water mode</label>
+            <button type="button" class="help" aria-label="About water modes"
+              data-help="Leave it: only terrain at or below sea level prints blue. One level: every water body drops to a single plane held below all land, so all water prints blue and no land does — a lake far above sea level can drop a long way. Recess all water: grooves every body to the insert depth without moving the color line, so each one gets a blue part to drop in.">?</button>
           </div>
-          <input id="recess" type="range" min="0" max="5" step="0.5" value="0">
+          <select id="waterMode">
+            <option value="none">Leave water at true elevation</option>
+            <option value="flat">Flatten all water to one level</option>
+            <option value="all">Recess all water</option>
+          </select>
 
-          <div class="labelrow">
-            <label class="check"><input id="flatten" type="checkbox"> Flatten all water to one level</label>
-            <button type="button" class="help" aria-label="About flattening water"
-              data-help="Off, only terrain at or below sea level prints blue. On, every water body drops to a single plane held below all land, so all water prints blue and no land does — a lake far above sea level can drop a long way.">?</button>
-          </div>
-
-          <!-- Last in the section because it is a consequence of the two controls above, not a
-               third peer: it exports the volume they displaced, so with both off it has nothing
-               to make. #inlayHint says so rather than the checkbox disabling itself — a disabled
-               box that is already checked reads as "off" while the state says on. -->
+          <!-- Last in the section because it is a consequence of the mode above, not a second
+               peer: it exports the volume that mode displaced, so with the mode at rest it has
+               nothing to make. #inlayHint says so rather than the checkbox disabling itself — a
+               disabled box that is already checked reads as "off" while the state says on. -->
           <div class="labelrow">
             <label class="check"><input id="waterInlay" type="checkbox"> Also export water inlays</label>
             <button type="button" class="help" aria-label="About water inlays"
@@ -147,8 +146,10 @@
              carry. Every control above them is shareable, so a link opens the tile the sharer
              saw — put a new one up there and it must go in the hash too. Trail's exception is
              structural (a URL fragment cannot carry GPX bytes); Advanced's is editorial, and
-             applies only to the two checkboxes below — #tileW and #layerMm sit here for
-             prominence, not privacy, and are both in the hash. -->
+             applies only to the two checkboxes below — #tileW, #recess and #layerMm sit here for
+             prominence, not privacy, and are all in the hash. #recess is here because it is a
+             property of how you PRINT, like layer height: set once, not part of the geographic
+             decision the Water section makes. -->
         <details class="group">
           <summary>Advanced</summary>
           <div class="labelrow">
@@ -157,6 +158,13 @@
               data-help="Print size of the tile across its largest dimension — set it to fit your printer's bed. A hexagon prints shorter than it is wide; the readout above gives both.">?</button>
           </div>
           <input id="tileW" type="number" min="50" max="1000" step="5" value="200" class="num">
+
+          <div class="labelrow">
+            <label for="recess">Insert groove depth (mm)</label>
+            <button type="button" class="help" aria-label="About the insert groove depth"
+              data-help="How deep the groove is that a blue insert drops into, for the modes that recess water. A deeper groove is a thicker part. Print millimetres — it does not change with map scale or tile size.">?</button>
+          </div>
+          <input id="recess" type="number" min="0.5" max="5" step="0.5" value="1" class="num">
 
           <!-- These two describe the MACHINE, not the tile, so a reader's printer answers for
                them rather than the sharer's. app.js reads both off the DOM at bake time. -->

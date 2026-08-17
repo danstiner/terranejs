@@ -646,10 +646,11 @@ function labelPieces(gw, gh, span, mask) {
 // in cord.js instead of coming through here.)
 //
 // `top` is a second elevation grid, in `grid`'s own units, giving the upper surface directly:
-// the inlay's ORIGINAL water elevations, before flatten and recess moved them. Thickness is
-// therefore per-vertex, and is exactly the displacement applyWaterRecess applied. It is never
-// negative: flatten's plane is `min(lowest water, …)` and the recess only sinks further, so a
-// water vertex's stored height is always ≤ its original.
+// the inlay's ORIGINAL water elevations, before the mode moved them. Thickness is therefore
+// per-vertex, and is exactly the displacement applyWaterRecess applied. It is never negative:
+// `flat`'s plane sits at `min(lowest water, …)`, at or below every water vertex's original
+// height, and the sinking modes only subtract a positive depth — either way a water vertex's
+// stored height is always ≤ its original.
 //
 // `base` is deliberately absent: the base plate belongs to the terrain object, and subtracting
 // each piece's own minimum relief lands its lowest point on z = 0 by construction rather than

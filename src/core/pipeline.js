@@ -19,22 +19,24 @@ import { fetchMosaic } from "./terrain.js";
 /** @typedef {import("./types.js").Cell} Cell */
 /** @typedef {import("./types.js").LatLon} LatLon */
 /** @typedef {import("./types.js").Shape} Shape */
+/** @typedef {import("./types.js").WaterMode} WaterMode */
 /** @typedef {import("./types.js").Window} Window */
 /** @typedef {import("./types.js").Span} Span */
 /** @typedef {import("./types.js").Mosaic} Mosaic */
 /** @typedef {import("./types.js").Solid} Solid */
 /**
  * @typedef {{ center: LatLon, scale: number, tileWidthMm: number, base: number, exag: number,
- *   flatten?: boolean, recessMm?: number, layerMm?: number, shape?: Shape,
+ *   waterMode?: WaterMode, recessMm?: number, layerMm?: number, shape?: Shape,
  *   waterInlay?: boolean, waterFilter?: boolean }} TileSettings
  *   center = [lat,lon] of the tile; scale = 1:N; tileWidthMm = print size of the tile
- *   edge; base = base-plate thickness (mm); exag = vertical exaggeration; flatten = pull
- *   all water to one waterline below the land (default false); recessMm = extra water
- *   sink in print mm (default 0); layerMm = slicer layer height (default 0.15);
- *   shape = tile footprint (default "square"); tileWidthMm is the bounding-square side
- *   in every shape; waterInlay = also export the displaced water as drop-in parts
- *   (default false); waterFilter = skip water too narrow to print a part for
- *   (default true — see water.filterUnprintableWater).
+ *   edge; base = base-plate thickness (mm); exag = vertical exaggeration;
+ *   waterMode = how water is treated: "none" leaves it at true elevation, "flat" pulls it all
+ *   onto one waterline below the land, "all" sinks it all by recessMm (default "none");
+ *   recessMm = water sink in print mm, ignored by "none" (default 0); layerMm = slicer
+ *   layer height (default 0.15); shape = tile footprint (default "square"); tileWidthMm is
+ *   the bounding-square side in every shape; waterInlay = also export the displaced water
+ *   as drop-in parts (default false); waterFilter = skip water too narrow to print a part
+ *   for (default true — see water.filterUnprintableWater).
  */
 /**
  * @typedef {{ z: number, bbox: BBox, window: Window, span: Span, gw: number, gh: number, dx: number, dy: number, mmPerM: number, shape: Shape, ring: Array<[number,number]> | null }} TilePlan
@@ -130,7 +132,7 @@ export function planTile(settings, { z, maxTiles = 300 } = {}) {
  * headless bakeTile path).
  * @param {Mosaic} mosaic
  * @param {TilePlan} plan
- * @param {{ base: number, exag: number, flatten?: boolean, recessMm?: number, layerMm?: number,
+ * @param {{ base: number, exag: number, waterMode?: WaterMode, recessMm?: number, layerMm?: number,
  *   waterInlay?: boolean, waterFilter?: boolean }} settings
  * @param {Uint8Array} [waterMask]
  * @param {{ segments: LatLon[][], widthMm: number, heightMm: number,
@@ -138,7 +140,7 @@ export function planTile(settings, { z, maxTiles = 300 } = {}) {
  * @returns {{ solid: Solid, ribbon: Solid | null, inlays: Solid | null, emin: number, emax: number, lineElev: number, landBluePct: number, waterAsLandPct: number, printedWaterMask: Uint8Array | undefined, waterDroppedPct: number }}
  */
 export function bakeTileSolid(mosaic, plan,
-  { base, exag, flatten = false, recessMm = 0, layerMm = 0.15, waterInlay = false, waterFilter = true },
+  { base, exag, waterMode = "none", recessMm = 0, layerMm = 0.15, waterInlay = false, waterFilter = true },
   waterMask, trail) {
   const { window, span, gw, gh, dx, dy, mmPerM, ring } = plan;
   const grid = cropGrid(mosaic, window);
@@ -162,12 +164,17 @@ export function bakeTileSolid(mosaic, plan,
     ? filterUnprintableWater(waterMask, gw, gh, dx)
     : { mask: waterMask, droppedPct: 0 };
   // The set whose elevation this bake actually changed, which is a narrower claim than "the water
-  // this tile printed" — with neither control engaged the water is terrain that happens to be wet.
+  // this tile printed" — with the mode at rest the water is terrain that happens to be wet.
   // Two consumers, so they cannot disagree about which water moved: the inlay fills exactly what
   // moved, and the channel refuses exactly what the inlay claims.
-  const movedWaterMask = flatten || recessMm > 0 ? printedWaterMask : undefined;
+  // NOT `waterMode !== "none"`, tempting as that is now the depth cannot be zero from the UI. The
+  // 0.5 floor is a UI and hash bound; a headless caller may pass 0, and claiming that tile moved
+  // water would refuse the trail channel over a river nothing touched. app.js may make exactly
+  // that reduction — it owns the floor — and this is the half that cannot.
+  const movedWaterMask = waterMode === "flat" || (waterMode !== "none" && recessMm > 0)
+    ? printedWaterMask : undefined;
   const { lineElev, landBluePct, waterAsLandPct } = applyWaterRecess(grid, printedWaterMask, {
-    flatten, recessMm, layerMm, K: mmPerM * exag, footprint,
+    waterMode, recessMm, layerMm, K: mmPerM * exag, footprint,
   });
   // Projected once, because the channel and the cord must be measured against the same polyline,
   // and meshed against the same lattice: two builders picking their own k would compute crossings
@@ -283,8 +290,9 @@ export function bakeTileSolid(mosaic, plan,
 
   // Drop-in parts filling the hollow the water controls left: underside on the printed water
   // surface, top on the water's ORIGINAL elevation. Exactly the volume applyWaterRecess removed,
-  // which is why both controls feed it — flatten's drop counts as much as the recess, and with
-  // neither on nothing was displaced and there is nothing to fill.
+  // which is why the mode decides — flatten's drop to the plane and a sinking mode's groove are
+  // alternative ways to displace water, never combined, and with the mode at rest nothing is
+  // displaced and there is nothing to fill.
   let inlays = null;
   if (preWater && movedWaterMask) {
     // All four corners water AND inside the footprint. The erosion that rule implies is wanted
@@ -301,9 +309,9 @@ export function bakeTileSolid(mosaic, plan,
       inlays = buildDrape(grid, gw, gh, span, cells, { dx, dy, mmPerM, emin, exag }, preWater);
       const iwt = checkWatertight(/** @type {Solid} */ (inlays));
       if (!iwt.closed) throw new Error(`pipeline: non-watertight water inlay (${iwt.unmatched} unmatched edges)`);
-      // Zero volume is reachable without being a bug: flatten with recessMm = 0 on a tile whose
-      // water is already the lowest thing in it moves nothing, so every vertex's top sits on its
-      // own underside. That is an empty part, not an inverted one — drop it rather than throw.
+      // Zero volume is reachable without being a bug: `flat` on a tile whose water is already the
+      // lowest thing in it moves every vertex onto the plane it is already on, so every top sits on
+      // its own underside. That is an empty part, not an inverted one — drop it rather than throw.
       if (signedVolume(/** @type {Solid} */ (inlays)) <= 0) inlays = null;
     }
   }

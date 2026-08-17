@@ -294,7 +294,7 @@ test("bakeTileSolid: the seam holds over recessed water and through a switchback
   for (let r = 0; r < plan.gh; r++)
     for (let c = (gw / 2) | 0; c < gw; c++) water[r * gw + c] = 1;
   const wet = bakeTileSolid(flatMosaicFor(plan), plan,
-    { ...PIPE_SETTINGS, flatten: true, recessMm: 0.4, waterInlay: true }, water,
+    { ...PIPE_SETTINGS, waterMode: "flat", recessMm: 0.4, waterInlay: true }, water,
     { ...trailAcross(plan), trenchDepthMm: 0.6 });
   assert.equal(wet.solid.mirrored, false, "water: non-conforming seam");
   assert.equal(wet.solid.loops, 1);
@@ -334,8 +334,30 @@ test("bakeTileSolid: the channel crosses water the bake left where it was", () =
   assert.ok(Math.abs(cut(PIPE_SETTINGS, water) - dry) < 1e-6,
     "water the bake never moved must cost the channel nothing");
   // The same river once the recess owns it: now the refusal is real, and it has to bite.
-  const sunk = cut({ ...PIPE_SETTINGS, recessMm: 2 }, water);
+  const sunk = cut({ ...PIPE_SETTINGS, waterMode: "all", recessMm: 2 }, water);
   assert.ok(sunk < dry * 0.95, `recessed water must stop the channel (cut ${sunk} vs ${dry})`);
+});
+
+// The UI floors the depth at 0.5, core does not — headless callers exist. So `movedWaterMask`
+// stays spelled as the full predicate rather than reducing to `waterMode !== "none"`: a mode with
+// a zero depth moves nothing, and claiming otherwise would refuse the trail channel over a river
+// the bake never touched, which is exactly the bug #58 fixed.
+test("bakeTileSolid: a grooving mode with a zero depth still moves nothing", () => {
+  const plan = planTile(PIPE_SETTINGS, { z: 10 });
+  const trail = trailAcross(plan);
+  const water = new Uint8Array(plan.gw * plan.gh);
+  const c0 = ((plan.gw / 2) | 0) - 3;
+  for (let r = 0; r < plan.gh; r++)
+    for (let c = c0; c < c0 + 6; c++) water[r * plan.gw + c] = 1;
+  /** @param {any} s @param {Uint8Array} [mask] */
+  const cut = (s, mask) =>
+    signedVolume(bakeTileSolid(flatMosaicFor(plan), plan, s, mask, { ...trail, trenchDepthMm: 0 }).solid)
+    - signedVolume(bakeTileSolid(flatMosaicFor(plan), plan, s, mask, { ...trail, trenchDepthMm: 0.6 }).solid);
+
+  const dry = cut(PIPE_SETTINGS);
+  const zeroDepth = { ...PIPE_SETTINGS, waterMode: /** @type {const} */ ("all"), recessMm: 0 };
+  assert.ok(Math.abs(cut(zeroDepth, water) - dry) < 1e-6,
+    "a zero depth displaces nothing, so the channel must cross the river unchanged");
 });
 
 // Crossing water the bake left alone means the channel now cuts at the tile's THINNEST ground:
@@ -360,7 +382,8 @@ test("bakeTileSolid: fording a river cuts at the tile's thinnest ground", () => 
   assert.throws(() => bakeTileSolid(mosaic, plan, settings, water, trail),
     /cuts through the base/, "an inset deeper than the base plate must be refused, not thinned");
   // The same river recessed: the channel stops at the bank, so the thin ground is never cut.
-  assert.ok(bakeTileSolid(mosaic, plan, { ...settings, recessMm: 2 }, water, trail).solid);
+  const sunk = { ...settings, waterMode: /** @type {const} */ ("all"), recessMm: 2 };
+  assert.ok(bakeTileSolid(mosaic, plan, sunk, water, trail).solid);
 });
 
 test("bakeTileSolid: an inset deeper than the base plate is refused, not clamped", () => {
@@ -585,7 +608,7 @@ test("bakeTileSolid: the cord lands in the tile's own z frame", () => {
 // 200 m and lands at `base` alike: verified by swapping in a raw grid at this call site and
 // rerunning — every column collapsed to base, land and water together.
 test("ribbon is molded to the surface AFTER water recess, with the tile's own emin", () => {
-  const settings = { ...PIPE_SETTINGS, recessMm: 20 };
+  const settings = { ...PIPE_SETTINGS, waterMode: /** @type {const} */ ("all"), recessMm: 20 };
   const plan = planTile(settings, { z: 10 });
   const { window: win, gw, gh, dx, z } = plan;
   const mosaic = { data: new Float32Array(gw * gh).fill(200), width: gw, height: gh,

@@ -8,8 +8,8 @@ import { bandOf, baseBand, colorChanges, bandThresholds, waterLineThresholds } f
 /** @param {number[]} elev @param {number[]} water @returns {[Float32Array, Uint8Array]} */
 const tile = (elev, water) => [Float32Array.from(elev), Uint8Array.from(water)];
 const K = 0.02, LAYER = 0.15;
-/** @param {Partial<{flatten: boolean, recessMm: number, layerMm: number, K: number}>} [o] */
-const opts = (o = {}) => ({ flatten: false, recessMm: 0, layerMm: LAYER, K, ...o });
+/** @param {Partial<{waterMode: "none" | "flat" | "all", recessMm: number, layerMm: number, K: number}>} [o] */
+const opts = (o = {}) => ({ waterMode: /** @type {const} */ ("none"), recessMm: 0, layerMm: LAYER, K, ...o });
 
 // Kept from the old water.test.mjs — decodeWatermask lives in terrain.js but is tested nowhere
 // else; the plane-model rewrite must not drop its coverage.
@@ -58,19 +58,19 @@ test("applyWaterRecess: default — polder land below 0 m counts blue (warning p
   assert.equal(r.landBluePct, 50, "counted so the warning can fire");
 });
 
-test("applyWaterRecess: slider only — all water sinks X/K, line unmoved, relative elevations kept", () => {
+test("applyWaterRecess: all — all water sinks X/K, line unmoved, relative elevations kept", () => {
   const [grid, mask] = tile([0, 200, 300], [1, 1, 0]); // ocean + high lake
-  const r = applyWaterRecess(grid, mask, opts({ recessMm: 2 })); // 2 mm = 100 m at K
+  const r = applyWaterRecess(grid, mask, opts({ waterMode: "all", recessMm: 2 })); // 2 mm = 100 m at K
   assert.equal(grid[0], -100); assert.equal(grid[1], 100); // both sank 100 m, 200 m apart still
   assert.equal(r.lineElev, 0, "line stays at the sea-level anchor");
   assert.ok(bandOf(100, [r.lineElev]) > 0, "sunk high lake still reads as terrain");
 });
 
-test("applyWaterRecess: flatten — polder plane 2 lifts below the land, land green, water blue", () => {
+test("applyWaterRecess: flat — polder plane 2 lifts below the land, land green, water blue", () => {
   // lift EXACT (0.5/0.5 = 1 m) so the boundary is float-exact. The line sits AT the plane
   // (the export pause carries the +1-layer offset — see colors.test's flatten-margin pin,
   // which demonstrates why the plane needs 2 lifts, not 1).
-  const o = opts({ flatten: true, layerMm: 0.5, K: 0.5 }); // lift = 1 m exactly
+  const o = opts({ waterMode: "flat", layerMm: 0.5, K: 0.5 }); // lift = 1 m exactly
   const [grid, mask] = tile([-2, -2, -6, 20], [1, 1, 0, 0]);
   const r = applyWaterRecess(grid, mask, o);
   assert.ok(bandOf(-6, [r.lineElev]) > 0, "lowest land clears the line");
@@ -81,26 +81,40 @@ test("applyWaterRecess: flatten — polder plane 2 lifts below the land, land gr
   assert.equal(r.landBluePct, 0);
 });
 
-test("applyWaterRecess: flatten — water lowest → plane at waterMin, unbounded pull-down", () => {
+test("applyWaterRecess: flat — water lowest → plane at waterMin, unbounded pull-down", () => {
   const [grid, mask] = tile([0, 200, 300], [1, 1, 0]); // 200 m reservoir over an ocean
-  const r = applyWaterRecess(grid, mask, opts({ flatten: true }));
+  const r = applyWaterRecess(grid, mask, opts({ waterMode: "flat" }));
   assert.equal(grid[0], 0, "plane = waterMin (land far above)");
   assert.equal(grid[1], 0, "reservoir dropped 200 m to the plane — no gate");
   assert.equal(r.lineElev, 0, "line at the plane");
   assert.equal(r.landBluePct, 0);
 });
 
-test("applyWaterRecess: flatten + slider — water sinks below the plane, line unmoved", () => {
-  const o = opts({ flatten: true, recessMm: 1, layerMm: 0.5, K: 0.5 }); // sink = 2 m, lift = 1 m
+// `flat` and the sink are exclusive now. The mode's job is "all water blue by colour band"; a
+// step at every shoreline was a different intent wearing the same slider, and it is gone. Same
+// fixture as the composition test this replaces, so the two read against each other.
+test("applyWaterRecess: flat ignores the depth — water lands ON the plane, not below it", () => {
+  const o = opts({ waterMode: "flat", recessMm: 1, layerMm: 0.5, K: 0.5 }); // 1 mm would be 2 m at K
   const [grid, mask] = tile([-2, -2, -6, 20], [1, 1, 0, 0]);
   const r = applyWaterRecess(grid, mask, o);
-  assert.equal(grid[0], -10, "plane −8, sunk a further 2 m");
-  assert.equal(r.lineElev, -8, "line still AT the PLANE, not the sunk water");
+  assert.equal(grid[0], -8, "plane = landMin − 2·lift, with no further sink");
+  assert.equal(grid[1], -8, "all water on the one plane");
+  assert.equal(r.lineElev, -8, "line AT the plane");
 });
 
-test("applyWaterRecess: flatten, all-water tile → plane at waterMin, still blue", () => {
+// The mirror guard: collapsing `flat` must not collapse the grooving modes. Same depth, same K
+// as the flat case above, so the 2 m the plane refused is exactly the 2 m `all` applies.
+test("applyWaterRecess: all still sinks by recessMm/K once flat no longer composes", () => {
+  const o = opts({ waterMode: "all", recessMm: 1, layerMm: 0.5, K: 0.5 }); // sink = 2 m
+  const [grid, mask] = tile([-2, -2, -6, 20], [1, 1, 0, 0]);
+  const r = applyWaterRecess(grid, mask, o);
+  assert.equal(grid[0], -4, "true elevation −2, sunk 2 m");
+  assert.equal(r.lineElev, 0, "line stays at the sea-level anchor — the sink never moves it");
+});
+
+test("applyWaterRecess: flat, all-water tile → plane at waterMin, still blue", () => {
   const [grid, mask] = tile([3, 4], [1, 1]);
-  const r = applyWaterRecess(grid, mask, opts({ flatten: true }));
+  const r = applyWaterRecess(grid, mask, opts({ waterMode: "flat" }));
   assert.equal(grid[0], 3); assert.equal(grid[1], 3);
   assert.equal(bandOf(3, [r.lineElev]), 0, "water blue");
   assert.equal(r.landBluePct, 0, "zero-land denominator guarded");
@@ -110,8 +124,8 @@ test("applyWaterRecess: layerMm sets the flatten plane's land clearance (2 layer
   const K = 0.5;
   const [g1, m1] = tile([-2, -6, 20], [1, 0, 0]);
   const [g2, m2] = tile([-2, -6, 20], [1, 0, 0]);
-  const r1 = applyWaterRecess(g1, m1, { flatten: true, recessMm: 0, layerMm: 0.5, K }); // lift 1 m
-  const r2 = applyWaterRecess(g2, m2, { flatten: true, recessMm: 0, layerMm: 1, K });   // lift 2 m
+  const r1 = applyWaterRecess(g1, m1, { waterMode: "flat", recessMm: 0, layerMm: 0.5, K }); // lift 1 m
+  const r2 = applyWaterRecess(g2, m2, { waterMode: "flat", recessMm: 0, layerMm: 1, K });   // lift 2 m
   assert.equal(r1.lineElev, -8, "plane = landMin − 2·1");
   assert.equal(r2.lineElev, -10, "doubled layer → doubled clearance");
 });
@@ -124,7 +138,7 @@ test("applyWaterRecess: water outside the footprint never sets the line", () => 
   const water = Uint8Array.from([1, 0, 0, 0]);       // the only water cell...
   const footprint = Uint8Array.from([0, 1, 1, 1]);   // ...is outside the footprint
   const r = applyWaterRecess(grid, water, {
-    flatten: false, recessMm: 0, layerMm: 0.15, K: 0.01, footprint,
+    waterMode: "none", recessMm: 0, layerMm: 0.15, K: 0.01, footprint,
   });
   assert.equal(r.lineElev, -Infinity, "no water inside the footprint → no line at all");
   assert.equal(r.landBluePct, 0);
@@ -138,17 +152,17 @@ test("applyWaterRecess: water outside the footprint still moves onto the plane",
   const grid = Float32Array.from([0, -2, -6, 20]); // [0] is out-of-footprint water at 0 m
   const water = Uint8Array.from([1, 1, 0, 0]);
   const footprint = Uint8Array.from([0, 1, 1, 1]);
-  const r = applyWaterRecess(grid, water, { flatten: true, recessMm: 0, layerMm: 0.5, K: 0.5, footprint });
+  const r = applyWaterRecess(grid, water, { waterMode: "flat", recessMm: 0, layerMm: 0.5, K: 0.5, footprint });
   assert.equal(r.lineElev, -8, "line still anchored by IN-footprint water and land only");
   assert.equal(grid[1], -8, "in-footprint water on the plane");
   assert.equal(grid[0], -8, "and the outside cell too, so a rim crossing between them lands on it");
 });
 
-test("applyWaterRecess: the slider moves outside water as well, for the same reason", () => {
+test("applyWaterRecess: `all` sinks outside water as well, for the same reason", () => {
   const grid = Float32Array.from([0, 0, 100, 200]);
   const water = Uint8Array.from([1, 1, 0, 0]);
   const footprint = Uint8Array.from([0, 1, 1, 1]);
-  applyWaterRecess(grid, water, { flatten: false, recessMm: 2, layerMm: 0.15, K: 0.02, footprint });
+  applyWaterRecess(grid, water, { waterMode: "all", recessMm: 2, layerMm: 0.15, K: 0.02, footprint });
   assert.equal(grid[1], -100, "in-footprint water sank 2 mm / K");
   assert.equal(grid[0], -100, "outside water sank with it");
 });
@@ -158,7 +172,7 @@ test("applyWaterRecess: moving outside water does not let it into the measuremen
   const grid = Float32Array.from([500, 0, -6, 20]); // a 500 m out-of-footprint lake
   const water = Uint8Array.from([1, 1, 0, 0]);
   const footprint = Uint8Array.from([0, 1, 1, 1]);
-  const r = applyWaterRecess(grid, water, { flatten: false, recessMm: 0, layerMm: 0.5, K: 0.5, footprint });
+  const r = applyWaterRecess(grid, water, { waterMode: "none", recessMm: 0, layerMm: 0.5, K: 0.5, footprint });
   assert.equal(r.lineElev, 0, "the 500 m lake neither raised nor anchored the line");
   assert.equal(r.waterAsLandPct, 0, "nor counted as water showing as land — it is not in the print");
   assert.equal(r.landBluePct, 50, "denominator is in-footprint land only (the −6 m cell of two)");
@@ -169,7 +183,7 @@ test("applyWaterRecess: land outside the footprint is not counted as blue", () =
   const water = Uint8Array.from([0, 0, 0, 1]);       // one in-footprint water cell at 0 m
   const footprint = Uint8Array.from([0, 1, 1, 1]);
   const r = applyWaterRecess(grid, water, {
-    flatten: false, recessMm: 0, layerMm: 0.15, K: 0.01, footprint,
+    waterMode: "none", recessMm: 0, layerMm: 0.15, K: 0.01, footprint,
   });
   assert.equal(r.lineElev, 0, "in-footprint water anchors the default 0 m line");
   assert.equal(r.landBluePct, 0, "land outside the print cannot print blue");
@@ -178,14 +192,14 @@ test("applyWaterRecess: land outside the footprint is not counted as blue", () =
 // flatten's plane clearance comes from landMin in the STATISTICS loop. If that loop forgot
 // the footprint guard, a hex's discarded low corner would set landMin and drag the whole
 // plane — and every in-print land pixel's clearance — down with it.
-test("applyWaterRecess: flatten plane anchors to in-footprint land only", () => {
+test("applyWaterRecess: flat plane anchors to in-footprint land only", () => {
   const [grid, water] = tile([-1000, 0, 10, 20], [0, 1, 0, 0]); // -1000 sits outside the footprint
   const footprint = Uint8Array.from([0, 1, 1, 1]);
-  const r = applyWaterRecess(grid, water, { flatten: true, recessMm: 0, layerMm: LAYER, K, footprint });
+  const r = applyWaterRecess(grid, water, { waterMode: "flat", recessMm: 0, layerMm: LAYER, K, footprint });
   assert.equal(r.lineElev, -5, "plane = min(waterMin=0, inFootprintLandMin=10 − 2·lift=15) = −5");
 
   const [gridNoFootprint, water2] = tile([-1000, 0, 10, 20], [0, 1, 0, 0]);
-  const rNoFootprint = applyWaterRecess(gridNoFootprint, water2, { flatten: true, recessMm: 0, layerMm: LAYER, K });
+  const rNoFootprint = applyWaterRecess(gridNoFootprint, water2, { waterMode: "flat", recessMm: 0, layerMm: LAYER, K });
   assert.equal(rNoFootprint.lineElev, -1015, "without the guard the discarded −1000 corner sets landMin");
   assert.ok(rNoFootprint.lineElev < r.lineElev, "the footprint guard measurably raises the plane");
 });
@@ -193,7 +207,7 @@ test("applyWaterRecess: flatten plane anchors to in-footprint land only", () => 
 test("applyWaterRecess: no footprint argument keeps today's whole-window behaviour", () => {
   const grid = Float32Array.from([-10, 100, 100, 100]);
   const water = Uint8Array.from([1, 0, 0, 0]);
-  const r = applyWaterRecess(grid, water, { flatten: false, recessMm: 0, layerMm: 0.15, K: 0.01 });
+  const r = applyWaterRecess(grid, water, { waterMode: "none", recessMm: 0, layerMm: 0.15, K: 0.01 });
   assert.equal(r.lineElev, 0, "square path unchanged: the water anchors the 0 m line");
 });
 
@@ -212,9 +226,9 @@ test("waterAsLandPct: default — ordinary coast, all water below the line, read
   assert.equal(r.waterAsLandPct, 0, "water AT the line is blue (strict >), matching bandOf");
 });
 
-test("waterAsLandPct: flatten on → structurally 0, even for water starting far above the line", () => {
+test("waterAsLandPct: flat → structurally 0, even for water starting far above the line", () => {
   const [grid, mask] = tile([3812, 3812, 4000, 4200], [1, 1, 0, 0]); // Titicaca-style
-  const r = applyWaterRecess(grid, mask, opts({ flatten: true }));
+  const r = applyWaterRecess(grid, mask, opts({ waterMode: "flat" }));
   assert.equal(r.waterAsLandPct, 0, "the plane IS the line, so no masked cell can sit above it");
 });
 
@@ -222,7 +236,7 @@ test("waterAsLandPct: flatten on → structurally 0, even for water starting far
 // representable; these values are deliberately NOT float-exact (unlike the flatten tests above,
 // which pick lift = 1 m and would pass either way) and the raw plane here rounds UP when stored.
 test("flatten on with a float32-inexact plane: the line IS the stored plane", () => {
-  const o = opts({ flatten: true, layerMm: 0.05, K: 0.15 }); // lift = 1/3 m, not representable
+  const o = opts({ waterMode: "flat", layerMm: 0.05, K: 0.15 }); // lift = 1/3 m, not representable
   const raw = -7.31640625 - 2 * (0.05 / 0.15); // landMin − 2·lift, before any narrowing
   assert.ok(Math.fround(raw) > raw, "precondition: this plane is one the store rounds UP");
   const [grid, mask] = tile([-2, -2, -7.31640625, 20], [1, 1, 0, 0]);
@@ -245,7 +259,7 @@ test("the flattened plane never lands above emin, so water keeps its own band", 
         const raw = landMin - 2 * (layerMm / K);
         if (Math.fround(raw) !== raw) inexact++;
         const [grid, mask] = tile([landMin - 0.5, landMin - 0.5, landMin, landMin + 100], [1, 1, 0, 0]);
-        const r = applyWaterRecess(grid, mask, opts({ flatten: true, layerMm, K }));
+        const r = applyWaterRecess(grid, mask, opts({ waterMode: "flat", layerMm, K }));
         const emin = Math.min(...grid); // what gridRange hands the colour model
         // Built exactly as the worker builds it, clamp and all — an unclamped array would put an
         // ecological threshold below a high-altitude waterline and fail for the wrong reason.
@@ -268,14 +282,14 @@ test("waterAsLandPct: a large recess sinks water below the line and clears the w
   const [grid, mask] = tile([200, 200, 300, 400], [1, 1, 0, 0]); // high lake, flatten OFF
   const before = applyWaterRecess(Float32Array.from([200, 200, 300, 400]), mask, opts());
   assert.equal(before.waterAsLandPct, 50, "without a recess the lake shows as land");
-  const r = applyWaterRecess(grid, mask, opts({ recessMm: 5 })); // 5 mm = 250 m at K
+  const r = applyWaterRecess(grid, mask, opts({ waterMode: "all", recessMm: 5 })); // 5 mm = 250 m at K
   assert.equal(r.waterAsLandPct, 0, "sunk below the 0 m line — §4's documented blue-pits escape hatch");
 });
 
 test("waterAsLandPct: water outside the footprint is in neither numerator nor denominator", () => {
   const [grid, mask] = tile([1890, -5, 100, 200], [1, 1, 0, 0]);
   const footprint = Uint8Array.from([0, 1, 1, 1]); // discard the high lake
-  const r = applyWaterRecess(grid, mask, { flatten: false, recessMm: 0, layerMm: LAYER, K, footprint });
+  const r = applyWaterRecess(grid, mask, { waterMode: "none", recessMm: 0, layerMm: LAYER, K, footprint });
   assert.equal(r.waterAsLandPct, 0, "the only above-line water is a discarded corner");
 });
 
@@ -283,7 +297,7 @@ test("waterAsLandPct: water outside the footprint is in neither numerator nor de
 // sample of the grid at a fractional (col, row) that straddles the footprint edge, so when only
 // the inside half was moved the crossing landed between the moved water and the raw water —
 // ALWAYS on the raw side, never with the water. Squares never showed it: no clip, no crossings.
-// Both controls move water, so both need pinning here, not just the checkbox.
+// Both `flat` and `all` move water, so both need pinning here, not just `flat`.
 /** A 9×9 all-water grid with one land cell, and a square ring inset so its boundary cuts water
  * on all four sides. @returns {[Float32Array, Uint8Array, import("../src/core/types.js").Clip]} */
 function waterTileWithRim() {
@@ -300,7 +314,7 @@ function waterTileWithRim() {
 test("clipped rim: flatten — an all-water crossing lands ON the waterline, not above it", () => {
   const [grid, mask, clip] = waterTileWithRim();
   const r = applyWaterRecess(grid, mask, {
-    flatten: true, recessMm: 0, layerMm: 0.5, K: 0.5, footprint: clip.inside,
+    waterMode: "flat", recessMm: 0, layerMm: 0.5, K: 0.5, footprint: clip.inside,
   });
   assert.equal(r.lineElev, -8, "plane = landMin − 2·lift");
   clipElevs(clip, grid);
@@ -311,11 +325,11 @@ test("clipped rim: flatten — an all-water crossing lands ON the waterline, not
   assert.equal(clipRange(grid, clip).min, r.lineElev, "and the rim never dips below it either");
 });
 
-test("clipped rim: the slider sinks the rim with the water, not just the interior", () => {
+test("clipped rim: `all` sinks the rim with the water, not just the interior", () => {
   const [grid, mask, clip] = waterTileWithRim();
   const K = 0.5, recessMm = 2, sink = recessMm / K; // 4 m
-  const r = applyWaterRecess(grid, mask, { flatten: false, recessMm, layerMm: 0.5, K, footprint: clip.inside });
-  assert.equal(r.lineElev, 0, "flatten off: line at sea level, unmoved by the slider");
+  const r = applyWaterRecess(grid, mask, { waterMode: "all", recessMm, layerMm: 0.5, K, footprint: clip.inside });
+  assert.equal(r.lineElev, 0, "`all` never moves the line: it stays at sea level while only the water sinks");
   clipElevs(clip, grid);
   assert.ok(clip.elev.length > 0, "the ring must actually produce crossings");
   for (const e of clip.elev) {
@@ -420,4 +434,14 @@ test("filterUnprintableWater: no mask, empty mask and all-water are no-ops", () 
   const a = filterUnprintableWater(all, 8, 8, 0.4);
   assert.equal(a.droppedPct, 0);
   assert.deepEqual([...(/** @type {Uint8Array} */ (a.mask))], [...all]);
+});
+
+// The entry guard: a negative depth would RAISE water above the line it anchors, inverting the
+// ≤-original invariant the drape and the waterAsLand count both lean on. Zero stays legal for
+// headless callers below the UI's floor; negative (and NaN, which the >= catches) throw rather
+// than silently inverting parts downstream.
+test("applyWaterRecess: a negative depth throws instead of raising water", () => {
+  const [grid, mask] = tile([-2, -2, -6, 20], [1, 1, 0, 0]);
+  assert.throws(() => applyWaterRecess(grid, mask, opts({ waterMode: "all", recessMm: -2 })), /recessMm/);
+  assert.throws(() => applyWaterRecess(grid, mask, opts({ waterMode: "all", recessMm: NaN })), /recessMm/);
 });

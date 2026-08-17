@@ -153,7 +153,7 @@ async function handle({ gen, settings, maxTiles, format, name, color, coverage, 
       const probeFrame = {
         emin, base: settings.base, mmPerM: plan.mmPerM, exag: settings.exag,
         orig: probeGrid, mask: waterMask, detail, gw: plan.gw, gh: plan.gh, dx: plan.dx, dy: plan.dy,
-        recessed: (settings.flatten ?? false) || (settings.recessMm ?? 0) > 0,
+        recessed: settings.waterMode === "flat" || ((settings.waterMode ?? "none") !== "none" && (settings.recessMm ?? 0) > 0),
       };
       // The cord rides the tile's own message rather than a later one like coverage: they are one
       // picture, and arriving apart would show a frame of terrain with the trail missing from it.

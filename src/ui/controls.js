@@ -28,11 +28,10 @@ export function syncControls(s) {
   set("recess", s.recessMm);
   set("layerMm", s.layerMm);
   /** @type {HTMLSelectElement} */ (el("shape")).value = s.shape;
-  /** @type {HTMLInputElement} */ (el("flatten")).checked = s.flatten;
+  /** @type {HTMLSelectElement} */ (el("waterMode")).value = s.waterMode;
   /** @type {HTMLInputElement} */ (el("waterInlay")).checked = s.waterInlay;
   el("exagVal").textContent = s.exag.toFixed(1);
   el("baseVal").textContent = s.base.toFixed(1);
-  el("recessVal").textContent = `${s.recessMm.toFixed(1)} mm`;
 }
 
 /**
@@ -73,16 +72,17 @@ export function wireControls(store) {
     // Guard like the numeric inputs: the store must never hold a value the hash rejects.
     if (v === "square" || v === "hex" || v === "circle") store.set({ shape: v });
   });
-  el("flatten").addEventListener("change", (e) => {
-    store.set({ flatten: /** @type {HTMLInputElement} */ (e.target).checked });
+  el("waterMode").addEventListener("change", (e) => {
+    const v = /** @type {HTMLSelectElement} */ (e.target).value;
+    // Guard like #shape: the store must never hold a value the hash rejects.
+    if (v === "none" || v === "flat" || v === "all") store.set({ waterMode: v });
   });
   el("waterInlay").addEventListener("change", (e) => {
     store.set({ waterInlay: /** @type {HTMLInputElement} */ (e.target).checked });
   });
   el("recess").addEventListener("input", (e) => {
     const v = num(e);
-    store.set({ recessMm: v });
-    el("recessVal").textContent = `${v.toFixed(1)} mm`;
+    if (Number.isFinite(v) && v >= 0.5 && v <= 5) store.set({ recessMm: v });
   });
   el("layerMm").addEventListener("input", (e) => {
     const v = num(e);
