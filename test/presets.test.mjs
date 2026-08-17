@@ -24,7 +24,7 @@ test("every preset yields a valid in-bounds plan", () => {
 
 // The Water group is curated to exercise the water model (data-pipeline.md §4a), so it must
 // keep at least one tile whose water sits BELOW sea level and one whose water sits well above
-// it — the two cases where the default 0 m colour line and the flatten checkbox disagree.
+// it — the two cases where the default 0 m colour line and the `flat` mode's plane disagree.
 test("Water presets span below-sea and high-altitude water", () => {
   const water = PRESETS.filter((p) => p.group === "Water");
   assert.ok(water.length > 0, "Water group is populated");

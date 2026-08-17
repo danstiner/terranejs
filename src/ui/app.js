@@ -46,7 +46,7 @@ const restored = decodeState(location.hash);
 const store = createStore(/** @type {AppState} */ ({
   ...(restored ?? {
     center: DEFAULT_PRESET.center, scale: DEFAULT_PRESET.scale, tileWidthMm: 200, base: 6, exag: 1,
-    flatten: false, recessMm: 0, layerMm: 0.15, // sea-level tint by default; checkbox flattens
+    waterMode: /** @type {const} */ ("none"), recessMm: 1, layerMm: 0.15, // sea-level tint by default
     shape: "square",
     waterInlay: false,
   }),
@@ -172,7 +172,7 @@ function updateWaterWarning(data) {
   // One decimal: rounding a firing 1.4% to "1%" would quote the threshold at which it stays silent.
   if (data.waterAsLandPct > WATER_AS_LAND_WARN_PCT) clauses.push(`water covering ${data.waterAsLandPct.toFixed(1)}% of the tile will show as land`);
   const sentences = [];
-  if (clauses.length) sentences.push(`${clauses.join(" and ")} — tick "Flatten all water to one level" to separate land from water.`);
+  if (clauses.length) sentences.push(`${clauses.join(" and ")} — choose "Flatten all water to one level" to separate land from water.`);
   // Its own sentence, not a third clause: the remedy above cannot reach it. A dropped body is out
   // of the mask, so flattening does nothing to it; only a tighter scale prints it wide enough.
   if (data.waterDroppedPct > WATER_DROPPED_WARN_PCT) {
@@ -476,16 +476,20 @@ store.subscribe((s) => {
   // the same number at every tier and cannot disagree with the one that cuts.
   $("trenchHint").textContent = s.center
     ? trenchHint(s.cord.trenchDepthMm, s.cord.widthMm, s.cord.heightMm) : "";
-  // The inlays are the volume the two water controls displaced, so with neither on there is no
+  // The inlays are the volume the water mode displaced, so with the mode at rest there is no
   // volume and the export silently gains nothing. Say so at the checkbox rather than let the
   // user find a .3mf with one object in it.
   //
   // This covers the settings only. A tile with no water at all also exports nothing and says
   // nothing here — whether the tile HAS water is a bake result, and the preview never bakes
-  // inlays. The recess slider visibly doing nothing is the feedback there.
-  const idle = s.waterInlay && !s.flatten && s.recessMm === 0;
+  // inlays.
+  // The UI may reduce this where core may not: no control can produce a depth below 0.5, so a
+  // mode past `none` always displaces something. pipeline.js keeps the full predicate because
+  // headless callers are not bound by that floor.
+  const displaces = s.waterMode !== "none";
+  const idle = s.waterInlay && !displaces;
   $("inlayHint").hidden = !idle;
-  if (idle) $("inlayHint").textContent = "No water is displaced yet — set a recess depth or flatten, or the export adds nothing.";
+  if (idle) $("inlayHint").textContent = "No water is displaced yet — pick a water mode, or the export adds nothing.";
   const km = (s.tileWidthMm * s.scale) / 1e6; // print mm × 1:N scale → real km the tile spans
   // tileWidthMm is the bounding-square side, so only the hex prints shorter than it is wide.
   const tile = s.shape === "hex"

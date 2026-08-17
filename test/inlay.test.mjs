@@ -139,29 +139,40 @@ function seaLakeTile(plan) {
     for (let c = 0; c < gw; c++) {
       const i = r * gw + c;
       const water = c < w || c >= e;
-      data[i] = water ? (c < w ? SEA : LAKE) : LAND;
+      // One land column sunk well below SEA − 2 lifts: without it landMin − 2·lift stays above
+      // SEA and flatten's plane collapses to exactly SEA (min(waterMin, landMin−2·lift) =
+      // waterMin), so the sea half never moves under EITHER the correct code or the bug it
+      // guards against, and only the lake half would catch a regression.
+      data[i] = water ? (c < w ? SEA : LAKE) : (c === w ? SEA - 50 : LAND);
       mask[i] = water ? 1 : 0;
     }
   }
   return { mosaic: { data, width: gw, height: gh, originGx: gx0, originGy: gy0, z: plan.z }, mask };
 }
 
-/** @param {Partial<{flatten: boolean, recessMm: number, waterInlay: boolean}>} [o] */
-const opts = (o = {}) => ({ ...BASE, flatten: false, recessMm: 0, layerMm: 0.15, waterInlay: true, ...o });
+/** @param {Partial<{waterMode: "none"|"flat"|"all", recessMm: number, waterInlay: boolean}>} [o] */
+const opts = (o = {}) => ({ ...BASE, waterMode: /** @type {const} */ ("all"), recessMm: 0, layerMm: 0.15, waterInlay: true, ...o });
 
 test("the inlay's top is the water's ORIGINAL elevation, not the tile's waterline", () => {
   const plan = planTile(BASE, { z: 10 });
   const { mosaic, mask } = seaLakeTile(plan);
-  // Flatten pulls the lake 400 m down onto the sea's plane and the recess sinks both 2 mm
-  // further. If the top followed that waterline, both pieces would be 2 mm thick; the original
-  // surface makes the lake's piece carry the whole 400 m drop as well.
-  const s = opts({ flatten: true, recessMm: 2 });
+  // Flatten pulls both bodies onto one plane anchored below the sunk land column; the recess
+  // never applies here, flat and the sink being exclusive by construction (applyWaterRecess). If
+  // the top followed that plane, every piece would be flush; the original surface makes each
+  // piece carry exactly its own body's drop instead.
+  const s = opts({ waterMode: "flat" });
   const { inlays } = bakeTileSolid(mosaic, plan, s, mask);
   assert.ok(inlays);
   const K = plan.mmPerM * s.exag;
-  const seaThick = s.recessMm;                        // sea is already the anchor: recess only
-  const lakeThick = (LAKE - SEA) * K + s.recessMm;    // plus the flatten drop
+  // Ground truth computed independently of applyWaterRecess, same style as the offset test
+  // below: the sunk land column (SEA − 50) pulls the anchor below SEA, so the sea half now has
+  // to move too and both halves discriminate top-follows-original from top-follows-plane.
+  const lift = s.layerMm / K;
+  const anchor = Math.min(SEA, SEA - 50 - 2 * lift);
+  const seaThick = (SEA - anchor) * K;
+  const lakeThick = (LAKE - anchor) * K;
   assert.ok(lakeThick > seaThick + 1, "fixture must separate the two thicknesses");
+  assert.ok(seaThick > 1, "fixture must make the sea half discriminate too");
 
   let sawSea = 0, sawLake = 0;
   const midX = (plan.gw - 1) * plan.dx / 2;
@@ -239,7 +250,9 @@ test("the shoreline keeps a printable wall: no column tapers to a knife edge", (
 test("nothing displaced, nothing exported", () => {
   const plan = planTile(BASE, { z: 10 });
   const { mosaic, mask } = seaLakeTile(plan);
-  // Both controls off: the grid is untouched, so there is no hollow and no volume to fill.
+  // The mode at rest: the grid is untouched, so there is no hollow and no volume to fill.
+  assert.equal(bakeTileSolid(mosaic, plan, opts({ waterMode: "none" }), mask).inlays, null);
+  // A grooving mode at zero depth — legal below the UI's floor — also moves nothing.
   assert.equal(bakeTileSolid(mosaic, plan, opts(), mask).inlays, null);
   // Asked for but with no water mask at all — the headless path.
   assert.equal(bakeTileSolid(mosaic, plan, opts({ recessMm: 3 })).inlays, null);
@@ -264,7 +277,7 @@ test("a flatten that moves nothing yields no inlay, rather than a degenerate one
     }
   }
   const mosaic = { data, width: gw, height: gh, originGx: gx0, originGy: gy0, z: plan.z };
-  const { inlays } = bakeTileSolid(mosaic, plan, opts({ flatten: true, recessMm: 0 }), mask);
+  const { inlays } = bakeTileSolid(mosaic, plan, opts({ waterMode: "flat", recessMm: 0 }), mask);
   assert.equal(inlays, null);
 });
 

@@ -1,24 +1,28 @@
 // Water handling for headless bakes. Pure, DOM-free. Colour is per-print-Z (one M600 change
 // recolours the whole cross-section below a height), so water only reads blue at or below the
 // water/land colour line; geometric separation is what lets same-height water and land differ.
-// Two orthogonal controls: `flatten` pulls every masked cell down to one plane held two print
-// layers below all land (a tile-anchored waterline); unchecked, the line sits AT 0 m — classic
-// sea-level tint, geometry untouched. `recessMm` sinks all water further and never moves the
-// line. The line is the TRUE waterline at any map scale; only the exported M600 pause is lifted
-// one layer above it (colors.colorChanges pauseLiftMm) so the water's top layer prints blue.
+// ONE control decides what happens to the water. "flat" pulls every masked cell down to one plane
+// held two print layers below all land (a tile-anchored waterline); "none" leaves the line AT 0 m —
+// classic sea-level tint, geometry untouched; the sinking modes groove the water by `recessMm`
+// without moving the line. They are exclusive by construction: a plane is never sunk further, which
+// is what stops the depth meaning two different things. The line is the TRUE waterline at any map
+// scale; only the exported M600 pause is lifted one layer above it (colors.colorChanges
+// pauseLiftMm) so the water's top layer prints blue.
 // See docs/specs/data-pipeline.md §4 (Water) and
 // docs/superpowers/specs/2026-08-01-water-plane-simplification-design.md.
 
 import { cellsFromVertexMask } from "./mesh.js";
 
-/** Warning threshold: % of land printing blue before the UI nudges toward the flatten checkbox.
+/** @typedef {import("./types.js").WaterMode} WaterMode */
+
+/** Warning threshold: % of land printing blue before the UI nudges toward the flatten mode.
  * Strict (5) because the remedy is one click and blue land here means land genuinely at/below
  * the waterline (polders, deltas) — the line sits at the true waterline, so ordinary coasts
  * carry no inherent blue fringe. */
 export const LAND_BLUE_WARN_PCT = 5;
 
 /** Warning threshold: % of the TILE that is masked water showing above the color line before the
- * UI nudges toward the same checkbox. Share of tile, not of water, and low because of it: the
+ * UI nudges toward the same mode. Share of tile, not of water, and low because of it: the
  * bug that motivated this (noisy near-0 bathymetry speckling a bay) is only 3.1% of that tile's
  * water but 1.5% of the tile, while a Rainier-style tile whose 0.3% water is alpine tarns is
  * 100% of its water — share-of-water would shout at the default view and stay silent on the
@@ -38,20 +42,28 @@ export const MIN_WATER_BODY_WIDTH_MM = 0.8;
 export const WATER_DROPPED_WARN_PCT = 20;
 
 /**
- * Anchor the water colour line and optionally flatten/sink the water for one bake, in place.
+ * Anchor the water colour line and, per the mode, flatten OR sink the water for one bake, in place.
  * No mask (or no water cells) → no mutation, lineElev −Infinity — NOT 0, which would blue
  * genuinely below-sea-level land (Death Valley) on a tile with no water at all.
  * @param {Float32Array} grid  elevation grid cropped to the bake window; MUTATED in place
  * @param {Uint8Array | undefined} mask  1 = water, 0 = land, index-aligned with grid
- * @param {{ flatten: boolean, recessMm: number, layerMm: number, K: number, footprint?: Uint8Array }} opts
- *   flatten = pull all water to one plane below the land; recessMm = extra sink (mm, print
- *   space); layerMm = slicer layer height (the colour-lift unit); K = mmPerM·exag;
+ * @param {{ waterMode: WaterMode, recessMm: number, layerMm: number, K: number, footprint?: Uint8Array }} opts
+ *   waterMode = what to do with the masked water: "none" leaves it at true elevation, "flat" pulls
+ *   it all onto one plane below the land, "all" sinks it by recessMm. The mode is the axis — flat
+ *   and the sink are exclusive, so a flattened plane is never sunk further; recessMm = groove depth
+ *   (mm, print space), read only by the sinking modes, and 0 is legal here even though the UI floors
+ *   it at 0.5; layerMm = slicer layer height (the colour-lift unit); K = mmPerM·exag;
  *   footprint = optional vertex mask; samples outside it are not MEASURED (hex/circle discard
  *   their window's corners, and water there must not anchor the line) but masked water outside
  *   it is still moved with the rest — the rim interpolates across that edge, see the loop.
  * @returns {{ lineElev: number, landBluePct: number, waterAsLandPct: number }}
  */
-export function applyWaterRecess(grid, mask, { flatten, recessMm, layerMm, K, footprint }) {
+export function applyWaterRecess(grid, mask, { waterMode, recessMm, layerMm, K, footprint }) {
+  // The one caller error the geometry cannot absorb: a negative depth RAISES water above the line
+  // it anchors, inverting the ≤-original invariant the drape and the waterAsLand count both lean
+  // on. Zero stays legal — the UI floors at 0.5, core does not — but negative (or NaN) is refused
+  // loudly here rather than silently inverting parts downstream.
+  if (!(recessMm >= 0)) throw new Error(`applyWaterRecess: recessMm must be ≥ 0, got ${recessMm}`);
   if (!mask) return { lineElev: -Infinity, landBluePct: 0, waterAsLandPct: 0 };
   let waterMin = Infinity, landMin = Infinity, landCount = 0;
   for (let i = 0; i < grid.length; i++) {
@@ -63,8 +75,8 @@ export function applyWaterRecess(grid, mask, { flatten, recessMm, layerMm, K, fo
   const lift = layerMm / K; // one print layer, in metres
   // Anchor: flatten targets a plane 2 lifts below the lowest land — the exported pause sits one
   // layer above the line, so the first lift is consumed by that offset and the second is the
-  // land's real clearance (see the flatten-margin pin in colors.test). Unchecked anchors at 0 m:
-  // classic sea-level tint, land-blind by design (landBluePct warns instead).
+  // land's real clearance (see the flatten-margin pin in colors.test). Any other mode anchors at
+  // 0 m: classic sea-level tint, land-blind by design (landBluePct warns instead).
   // fround, and not as a nicety: the line has to be a value the GRID can hold. `grid` is a
   // Float32Array and every consumer compares its samples against this line — baseBand and
   // colorChanges against emin, landBluePct and the preview shader against each sample. A raw
@@ -75,11 +87,14 @@ export function applyWaterRecess(grid, mask, { flatten, recessMm, layerMm, K, fo
   // Puget Sound tile: line −227.41165625, stored −227.41165161, a 4.6e-6 m gap and every drop
   // of water gone. Snapping here makes emin === lineElev exactly, which is the equality both
   // functions are already written around (see their comments on the ocean-floor tile).
-  const anchor = Math.fround(flatten
+  const flat = waterMode === "flat";
+  const anchor = Math.fround(flat
     ? (landCount > 0 ? Math.min(waterMin, landMin - 2 * lift) : waterMin)
     : 0);
   const lineElev = anchor; // the true waterline; only the export pause is lifted a layer above it
-  const sink = recessMm / K;
+  // Exclusive, structurally: one mode either moves water onto a plane or sinks it, never both.
+  // `none` is a zero sink rather than a branch, so the loop below keeps one shape.
+  const sink = flat || waterMode === "none" ? 0 : recessMm / K;
   let landBlue = 0, waterAsLand = 0, cells = 0;
   for (let i = 0; i < grid.length; i++) {
     const inPrint = !footprint || footprint[i] !== 0;
@@ -91,11 +106,12 @@ export function applyWaterRecess(grid, mask, { flatten, recessMm, layerMm, K, fo
       // Only crossings read these cells (clipRange and buildSolid take the inside mask plus
       // crossings), so nothing else moves.
       // Compare the STORED sample, now that lineElev is itself float32: fround is monotonic and
-      // recessMm clamps to [0,5], so fround(anchor − sink) ≤ fround(anchor) = lineElev holds
-      // exactly and a flattened tile can't fire the warning against its own plane. (Comparing
+      // sink is never negative (the entry guard refuses a negative depth; the UI and hash floor
+      // it besides), so fround(anchor − sink) ≤ fround(anchor) = lineElev
+      // holds exactly and a flattened tile can't fire the warning against its own plane. (Comparing
       // the float64 value instead was the fix while the line was float64; with a snapped line it
       // is the bug, in mirror image — the raw anchor sits above a line the store rounded down.)
-      grid[i] = (flatten ? anchor : grid[i]) - sink;
+      grid[i] = flat ? anchor : grid[i] - sink;
       if (inPrint && grid[i] > lineElev) waterAsLand++;
     } else if (inPrint && grid[i] <= lineElev) landBlue++; // export predicate: bandOf keeps the boundary blue
     if (inPrint) cells++;

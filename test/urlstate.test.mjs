@@ -5,7 +5,9 @@ import { encodeState, decodeState, STATE_VERSION } from "../src/core/urlstate.js
 const FULL = {
   center: /** @type {[number, number]} */ ([46.8523, -121.7603]),
   scale: 150000, tileWidthMm: 200, base: 6, exag: 1,
-  flatten: false, recessMm: 0, layerMm: 0.15, shape: /** @type {const} */ ("square"),
+  // 1, not 0: the depth is floored at 0.5 now, so a zero here would clamp on decode and every
+  // deepEqual round-trip below would fail against its own input.
+  waterMode: /** @type {const} */ ("none"), recessMm: 1, layerMm: 0.15, shape: /** @type {const} */ ("square"),
   waterInlay: false,
 };
 
@@ -18,7 +20,7 @@ test("round-trip survives the leading # the browser reports", () => {
 });
 
 test("round-trip preserves non-default water settings", () => {
-  const s = { ...FULL, flatten: true, recessMm: 3, layerMm: 0.2, exag: 2.5, base: 8.5, tileWidthMm: 250 };
+  const s = { ...FULL, waterMode: /** @type {const} */ ("flat"), recessMm: 3, layerMm: 0.2, exag: 2.5, base: 8.5, tileWidthMm: 250 };
   assert.deepEqual(decodeState(encodeState(s)), s);
 });
 
@@ -33,8 +35,8 @@ test("encodeState carries the version so old links stay identifiable", () => {
 
 test("decodeState returns null for garbage rather than throwing", () => {
   // Every one of these must fall back to the default region, never crash the boot path.
-  for (const bad of ["", "#", "not a hash", "v=1", "v=1&lat=46", "%%%",
-    "v=1&lat=NaN&lon=0&scale=1&width=200&base=6&exag=1&flatten=F&recess=0&layer=0.15"]) {
+  for (const bad of ["", "#", "not a hash", "v=2", "v=2&lat=46", "%%%",
+    "v=2&lat=NaN&lon=0&scale=1&width=200&base=6&exag=1&mode=none&recess=0&layer=0.15"]) {
     assert.equal(decodeState(bad), null, `garbage rejected: ${JSON.stringify(bad)}`);
   }
 });
@@ -53,13 +55,23 @@ test("decodeState rejects out-of-range geography", () => {
   assert.equal(decodeState(bend("scale", "-5")), null, "negative scale");
 });
 
-test("flatten encodes as T/F, and a mangled flag is rejected not read as false", () => {
-  assert.ok(encodeState({ ...FULL, flatten: true }).includes("flatten=T"));
-  assert.ok(encodeState({ ...FULL, flatten: false }).includes("flatten=F"));
-  const bend = (/** @type {string} */ v) => encodeState(FULL).replace(/flatten=[^&]*/, `flatten=${v}`);
-  assert.equal(decodeState(bend("1")), null, "the old 0/1 form is not silently accepted");
-  assert.equal(decodeState(bend("")), null, "empty flag rejected");
-  assert.equal(decodeState(bend("maybe")), null, "garbage flag rejected, not coerced to false");
+test("waterMode round-trips every mode, and an unknown mode is rejected not defaulted", () => {
+  for (const waterMode of /** @type {const} */ (["none", "flat", "all"])) {
+    const s = { ...FULL, waterMode };
+    assert.deepEqual(decodeState(encodeState(s)), s, `${waterMode} survives`);
+    assert.ok(encodeState(s).includes(`mode=${waterMode}`), `${waterMode} is spelled in the hash`);
+  }
+  assert.ok(!encodeState(FULL).includes("flatten"), "the retired flag is gone from the payload");
+  const bend = (/** @type {string} */ v) => encodeState(FULL).replace(/mode=[^&]*/, `mode=${v}`);
+  assert.equal(decodeState(bend("")), null, "empty mode rejected");
+  assert.equal(decodeState(bend("T")), null, "the old flag form is not silently accepted");
+  assert.equal(decodeState(bend("lakes")), null, "a mode this version cannot bake is rejected");
+  assert.equal(decodeState(encodeState(FULL).replace(/&mode=[^&]*/, "")), null, "absent mode rejected");
+});
+
+test("a v=1 link decodes to null, so the app opens its default region", () => {
+  const v1 = "v=1&lat=0&lon=0&scale=61150&width=200&base=6&exag=1&flatten=F&recess=0&layer=0.15&shape=square&inlay=F";
+  assert.equal(decodeState(v1), null);
 });
 
 // Every UI-reachable value must survive its own link: the inputs' declared bounds and the
@@ -67,7 +79,7 @@ test("flatten encodes as T/F, and a mangled flag is rejected not read as false",
 test("the widest UI-reachable print settings round-trip unclamped", () => {
   const extreme = { ...FULL, tileWidthMm: 1000, base: 10, exag: 4, recessMm: 5, layerMm: 0.6 };
   assert.deepEqual(decodeState(encodeState(extreme)), extreme, "upper bounds survive");
-  const tight = { ...FULL, tileWidthMm: 50, base: 1, exag: 0.5, recessMm: 0, layerMm: 0.05 };
+  const tight = { ...FULL, tileWidthMm: 50, base: 1, exag: 0.5, recessMm: 0.5, layerMm: 0.05 };
   assert.deepEqual(decodeState(encodeState(tight)), tight, "lower bounds survive");
   // The scale input reads mm-per-km and the store holds 1:N, so its bounds invert. Both ends
   // must encode as plain integers: exponent form ("1e+36") loses its "+" to hash decoding, and
@@ -84,9 +96,23 @@ test("decodeState clamps print preferences instead of rejecting the link", () =>
   const bend = (/** @type {string} */ k, /** @type {string} */ v) =>
     encodeState(FULL).replace(new RegExp(`${k}=[^&]*`), `${k}=${v}`);
   assert.equal(decodeState(bend("exag", "99"))?.exag, 4, "exaggeration clamped to the slider max");
-  assert.equal(decodeState(bend("recess", "-2"))?.recessMm, 0, "recess clamped to zero");
+  assert.equal(decodeState(bend("recess", "-2"))?.recessMm, 0.5, "recess clamped to the floor");
   assert.equal(decodeState(bend("layer", "9"))?.layerMm, 0.6, "layer height clamped");
   assert.equal(decodeState(bend("width", "5000"))?.tileWidthMm, 1000, "tile width clamped to the bed max");
+});
+
+// Clamped UP, and that is the interesting direction. A shared `mode=all&recess=0` link rendered
+// with no grooves, because a zero depth silently cancelled the mode the sharer picked — the bug
+// the floor exists to remove. Clamping renders the MODE they chose, which is not the same as the
+// TILE they saw; mode-wins is the call, because the alternative preserves a rendering that only
+// existed while a control was broken. Print preferences clamp rather than reject (see LIMITS).
+test("decodeState: a zero recess from an older link clamps up to the floor", () => {
+  const hash = encodeState({ ...FULL, waterMode: /** @type {const} */ ("all") })
+    .replace("recess=1", "recess=0");
+  const s = decodeState(hash);
+  assert.ok(s, "the payload is still valid — an out-of-range print preference clamps, never rejects");
+  assert.equal(s.recessMm, 0.5, "0 is below the floor and lifts to it");
+  assert.equal(s.waterMode, "all", "the mode is untouched by the clamp");
 });
 
 test("encodeState omits a null centre (nothing to share yet)", () => {
@@ -110,16 +136,15 @@ test("every shape round-trips", () => {
   }
 });
 
-// Links were shared before shapes existed. Those payloads have no `shape` key, and back
-// then square was the only tile there was — so absent decodes as square exactly, and the
-// version does NOT get bumped (a bump would invalidate the very links this protects).
+// Shapes predate the current payload version too: this hand-built v2 payload has no `shape`
+// key, and back when shapes shipped square was the only tile there was — so absent decodes
+// as square exactly, independent of the water-mode version bump this file also tests.
 test("a pre-shape link still opens, as a square", () => {
-  const legacy = "v=1&lat=46.8523&lon=-121.7603&scale=150000&width=200&base=6&exag=1" +
-    "&flatten=F&recess=0&layer=0.15";
+  const legacy = "v=2&lat=46.8523&lon=-121.7603&scale=150000&width=200&base=6&exag=1" +
+    "&mode=all&recess=0&layer=0.15";
   const s = decodeState(legacy);
   assert.ok(s, "legacy link is not rejected");
   assert.equal(s?.shape, "square");
-  assert.equal(STATE_VERSION, 1, "adding a field must not bump the version");
 });
 
 test("the water-inlay flag round-trips", () => {
@@ -128,19 +153,18 @@ test("the water-inlay flag round-trips", () => {
 
 // Same contract as `shape` above, for the same reason: every link shared before water inlays
 // existed carries no `inlay` key, and back then the tile was the only object in the .3mf — so
-// absent decodes as off exactly, and the version does not move.
+// absent decodes as off exactly.
 test("a pre-inlay link still opens, with inlays off", () => {
-  const legacy = "v=1&lat=46.8523&lon=-121.7603&scale=150000&width=200&base=6&exag=1" +
-    "&flatten=F&recess=0&layer=0.15&shape=hex";
+  const legacy = "v=2&lat=46.8523&lon=-121.7603&scale=150000&width=200&base=6&exag=1" +
+    "&mode=all&recess=0&layer=0.15&shape=hex";
   const s = decodeState(legacy);
   assert.ok(s, "legacy link is not rejected");
   assert.equal(s?.waterInlay, false);
   assert.equal(s?.shape, "hex", "the rest of the payload still decodes");
-  assert.equal(STATE_VERSION, 1, "adding a field must not bump the version");
 });
 
 // Absent is a legacy link; present-but-mangled is corruption, and corruption is not "off" —
-// the same strictness flatten's T/F gets, and the reason both are letters rather than 1/0.
+// the same strictness the water mode gets, and the reason the flag is a letter rather than 1/0.
 test("a mangled inlay flag is rejected, not read as off", () => {
   const bend = (/** @type {string} */ v) => encodeState(FULL).replace(/inlay=[^&]*/, `inlay=${v}`);
   for (const bad of ["1", "true", "", "t"]) assert.equal(decodeState(bend(bad)), null, `rejected: ${bad}`);

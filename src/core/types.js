@@ -9,6 +9,11 @@
  *   A point as [latitude, longitude] in degrees.
  * @typedef {"square" | "hex" | "circle"} Shape
  *   Tile footprint shape.
+ * @typedef {"none" | "flat" | "all"} WaterMode
+ *   How the water mode treats the mask. `none` leaves water at true elevation; `flat` pulls all
+ *   of it onto one plane below the land; `all` sinks all of it by the recess depth. The mode is the
+ *   one setting a user picks — whether the geometry flattens or sinks comes from it, which is why
+ *   `none` ignores a nonzero recess outright rather than needing the depth cleared to match.
  * @typedef {{ gx0: number, gy0: number, gw: number, gh: number }} Window
  *   Inclusive global-pixel window: origin (gx0,gy0), width gw, height gh.
  * @typedef {{ data: Float32Array, width: number, height: number, originGx: number, originGy: number, z: number }} Mosaic

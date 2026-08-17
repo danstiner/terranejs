@@ -199,7 +199,7 @@ test("bakeTileSolid: water recess anchors below the land, stays watertight", () 
   const K = plan.mmPerM * SETTINGS.exag;
 
   const lift = 0.15 / K;
-  const flat = bakeTileSolid(mosaic, plan, { ...SETTINGS, flatten: true }, mask);
+  const flat = bakeTileSolid(mosaic, plan, { ...SETTINGS, waterMode: "flat" }, mask);
   assert.ok(checkWatertight(flat.solid).closed, "flatten solid watertight");
   assert.ok(signedVolume(flat.solid) > 0, "flatten solid positive volume");
   // water 500 m, land ≥ 560 m → plane = min(500, 560 − 2·lift)
@@ -234,7 +234,7 @@ test("bakeTileSolid: circle + flatten reads post-recess elevations at the rim (o
   const mask = new Uint8Array(plan.gw * plan.gh);
   for (let r = 0; r < plan.gh; r++)
     for (let c = 0; c < plan.gw >> 1; c++) mask[r * plan.gw + c] = 1;
-  const { solid } = bakeTileSolid(mosaic, plan, { ...SETTINGS, flatten: true }, mask);
+  const { solid } = bakeTileSolid(mosaic, plan, { ...SETTINGS, waterMode: "flat" }, mask);
   assert.ok(checkWatertight(solid).closed, "watertight");
   // Golden value from the correct order (clipElevs after applyWaterRecess). Re-derived when the
   // flatten started moving out-of-footprint water too: the rim no longer climbs back toward raw
@@ -339,7 +339,7 @@ test("bakeTileSolid: a sub-cell pond is dropped, so recess and inlay see the sam
   for (let r = 5; r <= 15; r++) for (let c = 5; c <= 15; c++) lakeOnly[r * plan.gw + c] = 1;
   const withPond = Uint8Array.from(lakeOnly);
   withPond[30 * plan.gw + 30] = 1; // one vertex: no all-four-corners cell can ever cover it
-  const opts = { ...SETTINGS, recessMm: 2, waterInlay: true };
+  const opts = { ...SETTINGS, waterMode: /** @type {const} */ ("all"), recessMm: 2, waterInlay: true };
   const a = bakeTileSolid(mosaicFor(plan), plan, opts, withPond);
   const b = bakeTileSolid(mosaicFor(plan), plan, opts, lakeOnly);
   assert.equal(a.printedWaterMask?.[30 * plan.gw + 30], 0, "the sub-cell pond survived the filter");
@@ -356,7 +356,7 @@ test("bakeTileSolid: a dropped body anchors the flatten plane from the land side
   for (let r = 5; r <= 15; r++) for (let c = 5; c <= 15; c++) lakeOnly[r * plan.gw + c] = 1;
   const withPond = Uint8Array.from(lakeOnly);
   withPond[0] = 1; // the tile's LOWEST sample: kept, it would anchor the plane as water
-  const opts = { ...SETTINGS, flatten: true };
+  const opts = { ...SETTINGS, waterMode: /** @type {const} */ ("flat") };
   const a = bakeTileSolid(mosaicFor(plan), plan, opts, withPond);
   const b = bakeTileSolid(mosaicFor(plan), plan, opts, lakeOnly);
   assert.equal(a.lineElev, b.lineElev, "the filter did not make the two masks equivalent");
@@ -373,7 +373,7 @@ test("bakeTileSolid: a tile whose water is all sub-cell loses its water line ent
   const plan = planTile(SETTINGS, { z: 10 });
   const mask = new Uint8Array(plan.gw * plan.gh);
   for (let c = 2; c < 20; c++) mask[10 * plan.gw + c] = 1; // one vertex tall: never any cell
-  const r = bakeTileSolid(mosaicFor(plan), plan, { ...SETTINGS, recessMm: 2 }, mask);
+  const r = bakeTileSolid(mosaicFor(plan), plan, { ...SETTINGS, waterMode: "all", recessMm: 2 }, mask);
   assert.equal(r.waterDroppedPct, 100);
   assert.equal(r.lineElev, -Infinity, "the blue band must leave the tile, not sit at 0 m");
   assert.equal(r.landBluePct, 0);
@@ -391,7 +391,7 @@ test("bakeTileSolid: the inlay reads the filtered mask too, not just the recess"
   // One cell tall (two vertex rows), so unlike a sub-cell pond it HAS cells: a raw-mask inlay
   // would build parts for it, a filtered-mask one must not.
   for (let r = 100; r <= 101; r++) for (let c = 20; c <= 120; c++) withRiver[r * plan.gw + c] = 1;
-  const opts = { ...SETTINGS, recessMm: 2, waterInlay: true };
+  const opts = { ...SETTINGS, waterMode: /** @type {const} */ ("all"), recessMm: 2, waterInlay: true };
   const a = bakeTileSolid(mosaicFor(plan), plan, opts, withRiver);
   const b = bakeTileSolid(mosaicFor(plan), plan, opts, lakeOnly);
   assert.ok(Math.abs(a.waterDroppedPct - (100 * 202) / 643) < 1e-9,
@@ -406,7 +406,7 @@ test("bakeTileSolid: waterFilter off keeps sub-cell water, and hands back the ca
   const plan = planTile(SETTINGS, { z: 10 });
   const mask = new Uint8Array(plan.gw * plan.gh);
   for (let c = 2; c < 20; c++) mask[10 * plan.gw + c] = 1; // one vertex tall: never any cell
-  const opts = { ...SETTINGS, recessMm: 2, waterFilter: false };
+  const opts = { ...SETTINGS, waterMode: /** @type {const} */ ("all"), recessMm: 2, waterFilter: false };
   const r = bakeTileSolid(mosaicFor(plan), plan, opts, mask);
   assert.equal(r.waterDroppedPct, 0);
   // The SAME object, not a copy: the worker's land/printed/dropped annotation walks both arrays
@@ -414,4 +414,30 @@ test("bakeTileSolid: waterFilter off keeps sub-cell water, and hands back the ca
   assert.equal(r.printedWaterMask, mask);
   // With the filter on this same fixture loses its water line entirely (test above); off, it keeps it.
   assert.equal(r.lineElev, 0);
+});
+
+test("bakeTileSolid: waterMode none ignores a recess depth the hash still carries", () => {
+  const plan = planTile(SETTINGS, { z: 10 });
+  const mask = new Uint8Array(plan.gw * plan.gh);
+  for (let r = 5; r <= 15; r++) for (let c = 5; c <= 15; c++) mask[r * plan.gw + c] = 1;
+  // The depth lives in Advanced and stays visible under every mode, so a stale 2 mm reaches the
+  // bake. The mode, not the widget, is what decides it does nothing.
+  const off = bakeTileSolid(mosaicFor(plan), plan, { ...SETTINGS, waterMode: "none", recessMm: 2 }, mask);
+  const zero = bakeTileSolid(mosaicFor(plan), plan, { ...SETTINGS, waterMode: "all", recessMm: 0 }, mask);
+  assert.equal(signedVolume(off.solid), signedVolume(zero.solid), "`none` moved water");
+  assert.equal(off.lineElev, zero.lineElev);
+});
+
+test("bakeTileSolid: waterMode all reproduces the recess it replaced", () => {
+  const plan = planTile(SETTINGS, { z: 10 });
+  const mask = new Uint8Array(plan.gw * plan.gh);
+  for (let r = 5; r <= 15; r++) for (let c = 5; c <= 15; c++) mask[r * plan.gw + c] = 1;
+  const a = bakeTileSolid(mosaicFor(plan), plan, { ...SETTINGS, waterMode: "all", recessMm: 2 }, mask);
+  const b = bakeTileSolid(mosaicFor(plan), plan, { ...SETTINGS, waterMode: "none" }, mask);
+  // Not whole-solid signedVolume: at this fixture's K, 2 mm of print sinks water ~60 m, past the
+  // tile's OTHER (land) minimum — emin drops, the base plate thickens under the whole tile to
+  // match, and that added base outweighs what the recess removed locally. emin isolates the
+  // water's own displacement from that base-plate side effect.
+  assert.ok(a.emin < b.emin, "a 2 mm recess sinks water below the tile's untouched minimum");
+  assert.equal(a.lineElev, b.lineElev, "the recess never moves the colour line");
 });
