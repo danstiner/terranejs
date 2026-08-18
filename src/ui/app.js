@@ -345,8 +345,7 @@ worker.onmessage = ({ data }) => {
   renderLegend(data.bands);
   if (previewPhase === "fast") {
     previewPhase = "pending"; // relief is up; the sharp pass waits for the settle timer
-    // Not detailSummary: those numbers are the crisp mesh's, and the coarse one is on screen.
-    setProgress("Quick preview…");
+    setProgress("Waiting for detailed preview…");
   } else {
     // Crisp pass only. The one-tile fast bake resolves the shoreline too coarsely to judge a
     // 1%-of-tile threshold, and letting it drive the banner makes it flash and vanish a second
