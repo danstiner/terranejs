@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { PRESETS, DEFAULT_PRESET } from "../src/ui/presets.js";
 import { planTile } from "../src/core/pipeline.js";
 import { MAX_MERCATOR_LAT } from "../src/core/tilemath.js";
+import { encodeState, decodeState } from "../src/core/urlstate.js";
 
 // Every seed preset must yield an in-bounds, valid plan at the default print
 // width — catches a fat-fingered coordinate or scale at test time, not in the
@@ -30,6 +31,32 @@ test("Water presets span below-sea and high-altitude water", () => {
   assert.ok(water.length > 0, "Water group is populated");
   assert.ok(water.some((p) => p.name === "Dead Sea"), "a below-sea-level water body");
   assert.ok(water.some((p) => p.name === "Lake Titicaca"), "a water body above the treeline");
+});
+
+// Round-tripped rather than matched against a mode list: an unknown mode blanks the whole link
+// and `flat` decodes to `none`, so both surface here as a changed value.
+test("a preset's waterMode, when it has one, survives the hash unchanged", () => {
+  let declared = 0;
+  for (const p of PRESETS) {
+    const waterMode = p.waterMode;   // local: narrows the optional past the guard
+    if (!waterMode) continue;
+    declared++;
+    const state = {
+      center: p.center, scale: p.scale, tileWidthMm: 200, base: 6, exag: 1,
+      waterMode, recessMm: 1, layerMm: 0.15, shape: /** @type {const} */ ("square"),
+    };
+    assert.equal(decodeState(encodeState(state))?.waterMode, waterMode,
+      `${p.name}: ${waterMode} does not round-trip`);
+  }
+  assert.ok(declared > 0, "at least one preset forces a mode");
+});
+
+// Both sit above the land around them, so the line lands under them — see presets.js.
+test("lakes above their surrounding land force the insert mode", () => {
+  for (const name of ["Lake Titicaca", "Crater Lake"]) {
+    const p = PRESETS.find((q) => q.name === name);
+    assert.equal(p?.waterMode, "lakes", `${name} must open with inserts on`);
+  }
 });
 
 // Names are the <option> values and the picker's identity — must be unique.
