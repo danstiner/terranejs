@@ -41,18 +41,18 @@ import { roseMarks } from "./compass.js";
  * @typedef {{ features: import("../core/coverage.js").PlacedFeature[],
  *   catalog: import("../core/coverage.js").Catalog | null, lat: number, z: number }
  *   | { error: string }} Coverage
- *   lat/z come from the plan: the ranking key is Mercator metres and the feather width is 150 of
+ *   lat/z come from the plan: the ranking key is Mercator meters and the feather width is 150 of
  *   them, neither of which the probe can derive from the grid alone.
  *   arrives on its own message after the mesh, so the probe reads null until it lands.
  */
 
-// Hover-probe elevation. Terrarium quantises to 1/256 m, and three decimals is the fewest that
-// keeps all 256 sub-metre levels distinct — two collapses them to 101 and renders the smallest
+// Hover-probe elevation. Terrarium quantizes to 1/256 m, and three decimals is the fewest that
+// keeps all 256 sub-meter levels distinct — two collapses them to 101 and renders the smallest
 // nonzero reading as "-0.00". Only under 1 m: above that it is noise against a DEM accurate to
-// metres, and the reason for the precision is the SIGN near the 0 m colour line, where a bay
+// meters, and the reason for the precision is the SIGN near the 0 m color line, where a bay
 // speckling at ±0.1 m is straddling it.
 /** @param {number} m @returns {string} */
-const metres = (m) => `${m.toFixed(Math.abs(m) < 1 ? 3 : 1)} m`;
+const meters = (m) => `${m.toFixed(Math.abs(m) < 1 ? 3 : 1)} m`;
 
 // Home view: due south, 34.75 degrees above the plate. In tile space +x is east and +y is north
 // (buildSolid maps row -> (r1 - row) * dy), so a camera on -y puts north straight up-screen —
@@ -231,7 +231,7 @@ export function initPreview(container) {
   container.appendChild(renderer.domElement);
 
   // Hover elevation probe (user aid): raycast the surface under the cursor and invert its
-  // print-Z back to metres. Water cells instead read their ORIGINAL elevation from the
+  // print-Z back to meters. Water cells instead read their ORIGINAL elevation from the
   // pre-recess grid the worker ships (plus a "recessed" marker when the geometry moved) —
   // the printed surface no longer encodes it once water is flattened or sunk.
   if (!container.style.position) container.style.position = "relative";
@@ -380,7 +380,7 @@ export function initPreview(container) {
       raycaster.setFromCamera(pointer, camera);
       const hit = raycaster.intersectObjects(group.children, false)[0];
       // Only the TOP surface answers. The base and skirt share the tile's XY footprint exactly,
-      // so a wall hit still maps to a valid cell — it would be tagged with a neighbouring cell's
+      // so a wall hit still maps to a valid cell — it would be tagged with a neighboring cell's
       // verdict and an elevation read off its own mid-height, both wrong with total confidence.
       // Face normals are world-aligned here: the group only translates, never rotates or scales.
       if (hit && (hit.face?.normal.z ?? 0) > 0.01) {
@@ -394,17 +394,17 @@ export function initPreview(container) {
         const r = frame.gh - 1 - Math.round(ly / frame.dy);
         const i = r >= 0 && r < frame.gh && c >= 0 && c < frame.gw ? r * frame.gw + c : -1;
         if (i >= 0 && (frame.mask[i] === 1 || frame.mask[i] === 3)) {
-          probe.textContent = `${metres(frame.orig[i])} · water${frame.mask[i] === 3 ? " (recessed)" : ""}`;
+          probe.textContent = `${meters(frame.orig[i])} · water${frame.mask[i] === 3 ? " (recessed)" : ""}`;
         } else if (i >= 0 && frame.mask[i] === 2) {
           // The raster calls this water and the print does not. Reading `orig` is not a fallback
           // here: the filter left the sample where it was, so this IS the printed elevation.
-          probe.textContent = `${metres(frame.orig[i])} · water (too narrow to print)`;
+          probe.textContent = `${meters(frame.orig[i])} · water (too narrow to print)`;
         } else {
           const elev = frame.emin + (lz - frame.base) / (frame.mmPerM * frame.exag);
           // Tag land explicitly: with only "· water" marked, a bare reading was ambiguous
           // between "the mask says land" and "you missed the suffix" — which is exactly the
           // question being asked when a bay reads as terrain.
-          probe.textContent = `${metres(elev)} · land`; // interpolated across the hit triangle, not rounded
+          probe.textContent = `${meters(elev)} · land`; // interpolated across the hit triangle, not rounded
         }
         // No cell means no honest provenance claim: elevation still comes off the hit point, but a
         // source needs an (i % gw) that indexes a real cell. Silence beats a confident wrong answer.
@@ -487,7 +487,7 @@ export function initPreview(container) {
       const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color: col, roughness: 0.95, metalness: 0 }));
       // Non-pickable. The probe answers for the terrain CELL under the cursor, and the cord's top
       // sits heightMm above it — a hit there would report an elevation over-read by
-      // heightMm/(mmPerM·exag) metres, with a source label, and no sign anything was wrong.
+      // heightMm/(mmPerM·exag) meters, with a source label, and no sign anything was wrong.
       m.raycast = () => {};
       group.add(m);
     }
@@ -517,8 +517,8 @@ export function initPreview(container) {
     // an orbit that belonged to a different region.
     if (box.isEmpty()) { boxR = 0; framedR = 0; rose.hidden = true; return; }
 
-    // Recentre on EVERY bake, unlike the camera below: it is what keeps a preserved viewpoint
-    // stable when the bounding box moves, since relief height shifts the centre's z whenever
+    // Recenter on EVERY bake, unlike the camera below: it is what keeps a preserved viewpoint
+    // stable when the bounding box moves, since relief height shifts the center's z whenever
     // exag, base or scale change.
     const center = box.getCenter(new THREE.Vector3());
     group.position.set(-center.x, -center.y, -center.z);
@@ -539,7 +539,7 @@ export function initPreview(container) {
     // fresh camera and the orbit target both sit at the origin, so updateRose's
     // sinPhi = vz/hypot(vx,vy,vz) is 0/0 until something moves the camera off it. And the markup's
     // <text> carry no x/y, so deferring to the next animation frame stacks all four letters at the
-    // centre of a full circle. Nothing between here and boxR depends on the order: the clip planes
+    // center of a full circle. Nothing between here and boxR depends on the order: the clip planes
     // read fitDistance(), a function of boxR, not of where the camera is.
     rose.hidden = false;
     updateRose();

@@ -50,7 +50,7 @@ test("an upper-surface grid drives thickness per vertex, not one constant", () =
   assert.ok(checkWatertight(part).closed);
   assert.ok(signedVolume(part) > 0);
 
-  // Thickness at column c must be (10 + c) metres of elevation, scaled — and it must actually
+  // Thickness at column c must be (10 + c) meters of elevation, scaled — and it must actually
   // VARY, or a scalar-thickness implementation would pass this too.
   const seen = new Set();
   for (const [k, { lo, hi }] of columns(part.positions)) {
@@ -168,7 +168,7 @@ test("the inlay's underside is the printed water surface, offset by one constant
   // built against the tile's emin or against the pre-recess grid; both would still be
   // column-constant. See the same argument in ribbon.test.mjs.
   const K = plan.mmPerM * s.exag;
-  const emin = SEA - s.recessMm / K;                            // the recessed sea floor, in metres
+  const emin = SEA - s.recessMm / K;                            // the recessed sea floor, in meters
   const midX = (plan.gw - 1) * plan.dx / 2;
   const expect = (/** @type {number} */ x) =>
     s.base + ((x < midX ? SEA : LAKE) - s.recessMm / K - emin) * K;
@@ -230,7 +230,7 @@ test("nothing displaced, nothing exported", () => {
 
 // `flat` displaces water — movedWaterMask must still say so, the trail channel's refusal depends
 // on it — but it no longer BUILDS anything: its parts filled from the plane back to the original
-// surface, for a sea a very large block, duplicating what the colour band already paints. The
+// surface, for a sea a very large block, duplicating what the color band already paints. The
 // water here is the HIGH third of the tile, so the plane genuinely moves it: exactly the fixture
 // where the old code made a part.
 test("flat displaces water but never builds a part for it", () => {
@@ -248,7 +248,7 @@ test("flat displaces water but never builds a part for it", () => {
   const mosaic = { data, width: gw, height: gh, originGx: gx0, originGy: gy0, z: plan.z };
   const r = bakeTileSolid(mosaic, plan, opts({ waterMode: "flat" }), mask);
   assert.ok(r.movedWaterMask, "the plane moved the water, and the channel must still know");
-  assert.equal(r.inlays, null, "no part — the colour band already paints a flattened sea blue");
+  assert.equal(r.inlays, null, "no part — the color band already paints a flattened sea blue");
 });
 
 /** The model part out of the .3mf zip. Same extraction as ribbon.test.mjs, including its guard:
@@ -391,7 +391,7 @@ test("seated: the inlay's top is the water's ORIGINAL elevation, not the printed
   // must show, not (SEA − recessMm/K) or (LAKE − recessMm/K), which is what a bug reading `grid`
   // for the top instead of `preWater` would produce.
   const K = plan.mmPerM * s.exag;
-  const emin = SEA - s.recessMm / K;                            // the recessed sea floor, in metres
+  const emin = SEA - s.recessMm / K;                            // the recessed sea floor, in meters
   const midX = (plan.gw - 1) * plan.dx / 2;
   const expect = (/** @type {number} */ x) => s.base + ((x < midX ? SEA : LAKE) - emin) * K;
 

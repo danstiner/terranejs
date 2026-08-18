@@ -9,7 +9,7 @@ import { clipPolygon } from "../src/core/clip.js";
 
 // A convex hexagon in a 24x24 grid, in global px with a window origin -- the same global->local
 // path the real caller uses (test/clip.test.mjs:7-11 does this too). footprintPx is deliberately
-// NOT used: it takes a [q, r] pair and returns coordinates centred on a real tile's global
+// NOT used: it takes a [q, r] pair and returns coordinates centered on a real tile's global
 // position, nowhere near a bare 24x24 window.
 const GX0 = 1000, GY0 = 2000;
 const HEX = /** @type {Array<[number, number]>} */ (Array.from({ length: 6 }, (_, i) => {
@@ -78,7 +78,7 @@ test("a single masked water vertex is feather-dead even mid-interior", () => {
   water[3 * gw + 3] = 1;
   const f = featherField(gw, gh, trenchOk, water);
   assert.equal(f[3 * gw + 3], 0, "the masked vertex must be feather-dead");
-  assert.equal(f[3 * gw + 4], 1, "its neighbour must not be");
+  assert.equal(f[3 * gw + 4], 1, "its neighbor must not be");
 });
 
 const GEOM = { mmPerM: 1, emin: 0, exag: 1, base: 3 };
@@ -130,7 +130,7 @@ for (const [gw, pitch] of /** @type {[number, number][]} */ ([[30, 1], [60, 0.77
     // of sub-cells at either pitch), so out.z carries them; if a fixture ever puts the isoline
     // through a grid corner, its displacement lands in out.drop instead and this scan would miss it.
     assert.ok(Math.abs((hi - lo) - T) < 1e-9, `flat floor spans ${hi - lo} mm, want ${T}`);
-    assert.ok(Math.abs((hi + lo) / 2 - yMid) < 1e-9, "floor must be centred on the trail");
+    assert.ok(Math.abs((hi + lo) / 2 - yMid) < 1e-9, "floor must be centered on the trail");
     // And the clearance the width exists to buy, which the measurement above cannot state on its
     // own: the floor has to clear the cord by FIT_MM a side at any pitch.
     assert.ok(hi - lo >= 1 + 0.2 - 1e-9, `floor ${hi - lo} mm leaves no clearance over a 1 mm cord`);
@@ -221,11 +221,11 @@ test("the guard refuses a channel that would cut through the base plate", () => 
 
 // The seam is the one property this task exists to establish, and nothing above pins it: the
 // "non-degenerate and correctly wound" test inspects each triangle in isolation and would pass
-// on a mesh riddled with T-junctions between out.tris and its untouched neighbours. Assemble the
+// on a mesh riddled with T-junctions between out.tris and its untouched neighbors. Assemble the
 // FULL top -- out.tris plus the two plain triangles gridTopTris would cut for every cell
 // trenchTop left unclaimed -- and check it the way a manifold is checked: exact area coverage
 // (no gaps, no overlaps) and every directed edge matched by its reverse (no T-junctions), except
-// the tile's own rim, which by construction has no neighbour on the other side.
+// the tile's own rim, which by construction has no neighbor on the other side.
 //
 // Built from `out.claimed`, not re-derived from `dist`: a stub `trenchTop` that returned an
 // all-zero `claimed` would double-emit every trench cell here (both trenchTop's own triangles AND
@@ -340,7 +340,7 @@ test("a channel over feather-dead ground is emitted flat, not skipped", () => {
 //
 // It cannot instead be a fixture that makes the guard THROW: Pass C's ring (side(), above emitRing)
 // is built by two independently 1-D-parameterised walks (row-only, column-only) plus one fixed
-// diagonal point, so any crossing's possible snap targets are its own immediate neighbours in the
+// diagonal point, so any crossing's possible snap targets are its own immediate neighbors in the
 // SAME walk -- never a point placed by the other walk, and never a non-adjacent point in its own.
 // A duplicate can only land adjacent to its twin (harmless; emitRing already dedups that) or at the
 // ring's own start/end (the intended closing point, also handled). No dist field, however
@@ -349,7 +349,7 @@ test("a channel over feather-dead ground is emitted flat, not skipped", () => {
 // an untested assumption -- so there is no throwing fixture to replace the deleted one with.
 //
 // What the deleted tolerance actually got wrong is reachable, though: it computed area2 as an
-// uncentred shoelace over tile-scale coordinates for a sub-cell-scale ring, and the resulting
+// uncentered shoelace over tile-scale coordinates for a sub-cell-scale ring, and the resulting
 // cancellation threw a FALSE refusal on real geometry, purely as a function of distance from the
 // tile's own origin (see trench.js). That is what this test pins.
 test("a channel far from the tile origin on a large-span plan meshes, not throws", () => {

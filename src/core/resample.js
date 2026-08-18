@@ -46,7 +46,7 @@ export function resampleBilinear(mosaic, [s, w, n, e], gridW, gridH) {
     const fx = sx[c];
     const ix = Math.floor(fx);
     cx0[c] = clamp(ix, width - 1);
-    cx1[c] = clamp(ix + 1, width - 1); // clamp the raw neighbour, not cx0, so edges replicate
+    cx1[c] = clamp(ix + 1, width - 1); // clamp the raw neighbor, not cx0, so edges replicate
     cwx[c] = fx - ix;
   }
 
@@ -55,7 +55,7 @@ export function resampleBilinear(mosaic, [s, w, n, e], gridW, gridH) {
     const fy = sy[r];
     const iy = Math.floor(fy);
     const y0 = clamp(iy, height - 1);
-    const y1 = clamp(iy + 1, height - 1); // clamp the raw neighbour, not y0, so edges replicate
+    const y1 = clamp(iy + 1, height - 1); // clamp the raw neighbor, not y0, so edges replicate
     const wy = fy - iy;
     const row0 = y0 * width, row1 = y1 * width;
     for (let c = 0; c < gridW; c++) {

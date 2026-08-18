@@ -34,11 +34,11 @@ export const MM_PER_KM_MAX = 1000;
 // is exact rather than a guess. That case can no longer actually arrive: STATE_VERSION is 2,
 // bumped since for the unrelated water-mode rename, so a v1 link (the only kind missing `shape`)
 // is already refused at the version gate above. Left in as harmless insurance for the next
-// optional field, not because any live link still needs it. Present-but-unrecognised still
+// optional field, not because any live link still needs it. Present-but-unrecognized still
 // rejects, matching the strict WATER_MODES handling below.
 const SHAPES = /** @type {Shape[]} */ (["square", "hex", "circle"]);
 
-// Strict, like SHAPES: an unrecognised mode rejects the payload rather than falling back. Unlike
+// Strict, like SHAPES: an unrecognized mode rejects the payload rather than falling back. Unlike
 // `shape`, an ABSENT mode also rejects — there is no pre-feature default to decode to,
 // because v1 spelled this as a boolean and v1 payloads are refused by the version check above.
 const WATER_MODES = /** @type {WaterMode[]} */ (["none", "flat", "lakes", "all"]);

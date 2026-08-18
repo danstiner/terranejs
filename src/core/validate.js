@@ -26,7 +26,7 @@ export function signedVolume({ positions: P, indices: I }) {
 // large tile's directed-edge count).
 // Edge-parity only: a vertex-pinch (two shells meeting at one vertex) or a fully doubled
 // surface still balances. Convex footprints cannot produce a pinch — every mask row is one
-// contiguous run centred on the footprint's vertical axis, so adjacent rows always share a
+// contiguous run centered on the footprint's vertical axis, so adjacent rows always share a
 // column (swept across span and sub-pixel phase in test/pipeline.test.mjs). The square, hex
 // and circle footprints are all convex, so this stays sufficient. A non-convex or
 // multi-island footprint would reopen the gap: add a per-vertex one-ring check then.
@@ -65,7 +65,7 @@ export function toTriangleSoup({ positions: P, indices: I }) {
 }
 
 // Two triangles at the same three positions. TESTS ONLY — see the plan's deviation note: this
-// keys a Set by quantised position, and V8 caps Map/Set at 2^24 entries, which an export-scale
+// keys a Set by quantized position, and V8 caps Map/Set at 2^24 entries, which an export-scale
 // tile can pass. It is also strictly weaker than it looks: it catches a cell claimed by two
 // builders (identical positions, identical winding), and nothing else. A T-junction leaves the
 // two curtains overlapping but never identical — one side hangs k narrow quads over sub-vertices,

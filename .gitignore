@@ -6,3 +6,4 @@
 
 # Superpowers skill state; a bit too detailed to bother tracking in source control
 /docs/superpowers/
+__pycache__/

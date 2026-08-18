@@ -55,7 +55,7 @@
           <div class="labelrow">
             <label for="scale">Scale</label>
             <button type="button" class="help" aria-label="About scale"
-              data-help="How many print millimetres one kilometre of ground becomes. A bigger number gives a smaller area at more detail — the readout above shows what it works out to.">?</button>
+              data-help="How many print millimeters one kilometer of ground becomes. A bigger number gives a smaller area at more detail — the readout above shows what it works out to.">?</button>
           </div>
           <div class="row">
             <span><input id="scale" type="number" min="0.01" max="1000" step="any" value="4" class="num">&nbsp;mm&nbsp;=&nbsp;1&nbsp;km</span>
@@ -75,45 +75,49 @@
           <h2 id="waterHead">Water</h2>
           <p id="waterWarn" hidden></p>
 
-          <!-- Real radios, visually hidden but focusable: native arrow-key group behaviour and
+          <!-- Real radios, visually hidden but focusable: native arrow-key group behavior and
                :checked drive the selection, so there is no JS state machine to disagree with the
                store. The art is static and aria-hidden — the 3D preview is the live picture; a
                card only has to say which outcome you are asking it for. Slate blue = water the
-               tile prints in place, aqua = a separate part, matching the preview's own colours.
-               Each separate part gets an aqua down arrow: colour alone didn't say "dropped in
+               tile prints in place, aqua = a separate part, matching the preview's own colors.
+               The slate runs the FULL cross-section below the waterline, mountains included — a
+               filament change colors whole layers, and the icons draw what actually prints.
+               Lake & sea inserts draws NO slab: with every body inserted the band under the
+               line never shows, so that print carries no color-change pause.
+               Each separate part gets an aqua down arrow: color alone didn't say "dropped in
                after printing". -->
-          <div class="cards" role="radiogroup" aria-labelledby="waterHead">
-            <label class="card" data-help="Water keeps its true elevation, and the print changes colour at sea level — so the sea prints blue and everything above it prints as land. A lake up in the mountains is above that line, so it prints as terrain; the tile warns you when much of it does.">
+          <div class="cards" role="radiogroup" aria-labeledby="waterHead">
+            <label class="card" data-help="Water keeps its true elevation, and the print changes color at the tile's own waterline: sea level — or, when every scrap of land sits clear above the tile's lowest lake, that lake's surface, so it prints blue. The line never sits above land: if land dips below sea level, the line drops under it and the sea itself shows as land. Water above the line prints as terrain either way, and the tile warns you when much of it does.">
               <input type="radio" name="waterCard" id="water-none" value="none" checked>
-              <svg viewBox="0 0 72 40" aria-hidden="true">
-                <path class="land" d="M0 36 V30 H12 L20 22 28 10 34 16 36 20 H44 L46 16 52 12 72 26 V36 Z"/>
-                <path class="water" d="M0 24 H18 L12 30 H0 Z"/>
+              <svg viewBox="0 0 72 38" aria-hidden="true">
+                <path class="land" d="M0 34 V30 H12 L20 22 28 10 34 16 H46 L52 12 72 26 V34 Z"/>
+                <path class="water" d="M0 24 H69.1 L72 26 V34 H0 Z"/>
               </svg>
               <span>Natural</span>
-              <small>Lakes above sea level print as land</small>
+              <small>Color change between the lowest water and land</small>
             </label>
-            <label class="card" data-help="Water above sea level — lakes, reservoirs, tarns — is sunk into a groove, and the .3mf gains a matching part shaped to drop into it. Print those in blue and the terrain is whole again. The sea is left exactly where it is, because it already prints blue. Insert depth is under Advanced.">
+            <label class="card" data-help="Water above sea level — lakes, reservoirs, tarns — is sunk into a groove, and the .3mf gains a matching part shaped to drop into it. Print those in blue and the terrain is whole again. The sea is left exactly where it is, because it already prints blue — except on a below-sea-level polder tile, where blue would flood the land, so the sea becomes a part too. Insert depth is under Advanced.">
               <input type="radio" name="waterCard" id="water-lakes" value="lakes">
-              <svg viewBox="0 0 72 40" aria-hidden="true">
-                <path class="land" d="M0 36 V30 H12 L20 22 28 10 34 16 36 20 H44 L46 16 52 12 72 26 V36 Z"/>
-                <path class="water" d="M0 24 H18 L12 30 H0 Z"/>
+              <svg viewBox="0 0 72 38" aria-hidden="true">
+                <path class="land" d="M0 34 V30 H12 L20 22 28 10 34 16 36 20 H44 L46 16 52 12 72 26 V34 Z"/>
+                <path class="water" d="M0 24 H69.1 L72 26 V34 H0 Z"/>
                 <path class="part" d="M34 16 L36 20 H44 L46 16 Z"/>
                 <path class="part" d="M39 4 H41 V9 H43.2 L40 13.5 36.8 9 H39 Z"/>
               </svg>
               <span>Lake inserts</span>
-              <small>Lakes become drop-in parts; the sea is already blue</small>
+              <small>Print drop-in parts for higher-elevation water</small>
             </label>
-            <label class="card" data-help="Every body of water is sunk into a groove with a part to match, the sea included. Each part's top is a flat plane you can iron for a gloss the terrain cannot take, or print all of them in one blue material and drop them in. Insert depth is under Advanced.">
+            <label class="card" data-help="Every body of water is sunk into a groove with a part to match, the sea included. Each part's top is a flat plane you can iron for a gloss the terrain cannot take, or print all of them in one blue material and drop them in. The tile itself prints with no color-change pause — every drop of blue is a part. Insert depth is under Advanced.">
               <input type="radio" name="waterCard" id="water-all" value="all">
-              <svg viewBox="0 0 72 40" aria-hidden="true">
-                <path class="land" d="M0 36 V30 H12 L20 22 28 10 34 16 36 20 H44 L46 16 52 12 72 26 V36 Z"/>
+              <svg viewBox="0 0 72 38" aria-hidden="true">
+                <path class="land" d="M0 34 V30 H12 L20 22 28 10 34 16 36 20 H44 L46 16 52 12 72 26 V34 Z"/>
                 <path class="part" d="M0 24 H18 L12 30 H0 Z"/>
                 <path class="part" d="M34 16 L36 20 H44 L46 16 Z"/>
                 <path class="part" d="M8 12 H10 V17 H12.2 L9 21.5 5.8 17 H8 Z"/>
                 <path class="part" d="M39 4 H41 V9 H43.2 L40 13.5 36.8 9 H39 Z"/>
               </svg>
               <span>Lake &amp; sea inserts</span>
-              <small>The sea becomes a drop-in part too</small>
+              <small>Print all water as drop-in parts</small>
             </label>
           </div>
         </section>
@@ -182,7 +186,7 @@
           <div class="labelrow">
             <label for="recess">Insert depth (mm)</label>
             <button type="button" class="help" aria-label="About the insert depth"
-              data-help="How deep the groove is that a blue insert drops into, and so how thick the insert is. Print millimetres — it does not change with map scale or tile size.">?</button>
+              data-help="How deep the groove is that a blue insert drops into, and so how thick the insert is. Print millimeters — it does not change with map scale or tile size.">?</button>
           </div>
           <input id="recess" type="number" min="0.5" max="5" step="0.5" value="1" class="num">
 
@@ -193,13 +197,13 @@
           <div class="labelrow">
             <label class="check"><input id="waterFilter" type="checkbox" checked> Skip water too small to print</label>
             <button type="button" class="help" aria-label="About skipping small water"
-              data-help="Leaves water narrower than 0.8 mm of print at terrain level — two passes of a 0.4 mm nozzle, and nothing thinner survives being pressed into a groove. Print millimetres, not ground metres, so a wide tile keeps no rivers: 0.8 mm is 120 m of ground at 1:150000.">?</button>
+              data-help="Leaves water narrower than 0.8 mm of print at terrain level — two passes of a 0.4 mm nozzle, and nothing thinner survives being pressed into a groove. Print millimeters, not ground meters, so a wide tile keeps no rivers: 0.8 mm is 120 m of ground at 1:150000.">?</button>
           </div>
 
           <div class="labelrow">
             <label for="layerMm">Layer height (mm)</label>
             <button type="button" class="help" aria-label="About layer height"
-              data-help="Match your slicer. Colour changes clear the surface below them by one layer, so this sets how precisely a band boundary lands in the print.">?</button>
+              data-help="Match your slicer. Color changes clear the surface below them by one layer, so this sets how precisely a band boundary lands in the print.">?</button>
           </div>
           <input id="layerMm" type="number" min="0.05" max="0.6" step="0.05" value="0.15" class="num">
           <p class="hint" id="bandHint">Embed filament change pauses at the following Z-heights:</p>

@@ -64,7 +64,7 @@ test("waterMode round-trips none/lakes/all, and an unknown mode is rejected not 
   const bend = (/** @type {string} */ v) => encodeState(FULL).replace(/mode=[^&]*/, `mode=${v}`);
   assert.equal(decodeState(bend("")), null, "empty mode rejected");
   assert.equal(decodeState(bend("T")), null, "the old flag form is not silently accepted");
-  assert.equal(decodeState(bend("lakez")), null, "an unrecognised mode is rejected, not defaulted");
+  assert.equal(decodeState(bend("lakez")), null, "an unrecognized mode is rejected, not defaulted");
   assert.equal(decodeState(encodeState(FULL).replace(/&mode=[^&]*/, "")), null, "absent mode rejected");
 });
 
@@ -109,7 +109,7 @@ test("decodeState clamps print preferences instead of rejecting the link", () =>
 });
 
 // Clamped UP, and that is the interesting direction. A shared `mode=all&recess=0` link rendered
-// with no grooves, because a zero depth silently cancelled the mode the sharer picked — the bug
+// with no grooves, because a zero depth silently canceled the mode the sharer picked — the bug
 // the floor exists to remove. Clamping renders the MODE they chose, which is not the same as the
 // TILE they saw; mode-wins is the call, because the alternative preserves a rendering that only
 // existed while a control was broken. Print preferences clamp rather than reject (see LIMITS).
@@ -122,7 +122,7 @@ test("decodeState: a zero recess from an older link clamps up to the floor", () 
   assert.equal(s.waterMode, "all", "the mode is untouched by the clamp");
 });
 
-test("encodeState omits a null centre (nothing to share yet)", () => {
+test("encodeState omits a null center (nothing to share yet)", () => {
   assert.equal(encodeState({ ...FULL, center: null }), "");
 });
 
@@ -130,7 +130,7 @@ test("encoded payload stays short enough to paste anywhere", () => {
   assert.ok(encodeState(FULL).length < 120, `hash is ${encodeState(FULL).length} chars`);
 });
 
-test("coordinates keep ~metre precision, not float noise", () => {
+test("coordinates keep ~meter precision, not float noise", () => {
   const s = { ...FULL, center: /** @type {[number, number]} */ ([46.85231234567, -121.76034567]) };
   const [lat, lon] = /** @type {NonNullable<ReturnType<typeof decodeState>>} */ (decodeState(encodeState(s))).center ?? [0, 0];
   assert.ok(Math.abs(lat - s.center[0]) < 1e-4 && Math.abs(lon - s.center[1]) < 1e-4, "within ~10 m");
@@ -176,7 +176,7 @@ test("both grooving modes round-trip", () => {
   }
 });
 
-test("an unrecognised shape is rejected, not coerced", () => {
+test("an unrecognized shape is rejected, not coerced", () => {
   const bend = (/** @type {string} */ v) => encodeState(FULL).replace(/shape=[^&]*/, `shape=${v}`);
   assert.equal(decodeState(bend("triangle")), null);
   assert.equal(decodeState(bend("")), null);

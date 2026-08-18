@@ -1,14 +1,14 @@
 // Curated region presets for the map picker: a named place, its dropdown group,
-// the tile centre, and a map scale that frames the feature at the print width.
+// the tile center, and a map scale that frames the feature at the print width.
 // Data only — no DOM imports — so test/presets.test.mjs can import it under node.
-// A preset is a curated centre+scale SUBSET of the app state; it deliberately
+// A preset is a curated center+scale SUBSET of the app state; it deliberately
 // omits tileWidthMm (a printer-bed constraint) and base/exag (user print prefs).
 // Full-state export/import would be a separate feature.
 /** @typedef {import("../core/types.js").LatLon} LatLon */
 /**
  * @typedef {{ name: string, group: "Terrane" | "Park" | "Water", center: LatLon, scale: number }} Preset
  *   name = dropdown label + option value; group = optgroup; center = [lat,lon]
- *   tile centre and map focus; scale = 1:N map scale framing the feature.
+ *   tile center and map focus; scale = 1:N map scale framing the feature.
  */
 
 /** @type {Preset[]} */
@@ -51,10 +51,10 @@ export const PRESETS = [
   { name: "Great Smoky Mountains", group: "Park", center: [35.65, -83.5], scale: 250000 },
   { name: "Haleakalā", group: "Park", center: [20.71, -156.17], scale: 150000 },
   // Water — tiles chosen because they stress the water model (data-pipeline.md §4) in ways
-  // ordinary relief doesn't. Several disagree with the default sea-level colour line in ways
+  // ordinary relief doesn't. Several disagree with the default sea-level color line in ways
   // no surviving mode moves — the retired `flat` mode used to be the fix; now the warning
   // just states the fact.
-  // Sub-sea land beside tidal ocean: these polders print blue at the colour line no matter
+  // Sub-sea land beside tidal ocean: these polders print blue at the color line no matter
   // which surviving mode is chosen.
   { name: "Zeeland", group: "Water", center: [51.55, 3.75], scale: 250000 },
   { name: "New Orleans", group: "Water", center: [29.97, -90.05], scale: 250000 },

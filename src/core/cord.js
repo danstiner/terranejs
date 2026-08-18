@@ -169,7 +169,7 @@ export function trenchWidthMm(cordWidthMm) {
  *
  * gridTopTris splits each cell across the B–C anti-diagonal, so the printed surface is
  * piecewise-planar over those two triangles. Bilinear sampling is a different surface — a
- * saddle — and differs by (zB + zC − zA − zD)/4 at the cell centre, which is exactly the gap
+ * saddle — and differs by (zB + zC − zA − zD)/4 at the cell center, which is exactly the gap
  * that would make the cord float or dig in.
  *
  * @param {Float32Array} grid @param {number} gw @param {number} gh
@@ -274,7 +274,7 @@ export function distField(chopped, plan, half, k) {
  *
  * Chopped first, because the budget below measures only the part of the trail that can land ON the
  * tile. Framing a tile around one stretch of a long import is normal — framing.js warns about the
- * clipped remainder rather than refusing it — and counting kilometres that are never printed would
+ * clipped remainder rather than refusing it — and counting kilometers that are never printed would
  * coarsen the lattice, or refuse a width, over geometry the tile never carries.
  *
  * @param {Float64Array[]} polys @param {TilePlan} plan @param {number} widthMm
@@ -410,7 +410,7 @@ export function subClip(dist, half, k, strideC, pushLattice, pushCross) {
 /**
  * The cord's top surface as a triangle soup over its own vertex list.
  *
- * Vertices carry relief millimetres (`(e − emin)·mmPerM·exag`) rather than metres, so the caller
+ * Vertices carry relief millimeters (`(e − emin)·mmPerM·exag`) rather than meters, so the caller
  * only has to subtract each piece's floor. `emin` cancels there, exactly as in buildDrape; it is
  * taken so `geom` has one shape across the builders.
  *
@@ -471,7 +471,7 @@ export function cordTris(grid, plan, polys, widthMm, geom, cellOk, shared) {
   // Every stamped vertex names the ONE sub-cell it is the north-west corner of, so each cell is
   // reached exactly once with no dedupe pass. A cell with any interior corner is always reached:
   // that corner's own cell is stamped, and so are all four of its corners (the band argument
-  // above), which is also why a missing neighbour here can only mean "outside".
+  // above), which is also why a missing neighbor here can only mean "outside".
   const cw = gw - 1;
   for (const [A, dA] of dist) {
     const R = (A / strideC) | 0, C = A - R * strideC;

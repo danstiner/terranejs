@@ -507,7 +507,7 @@ for (const shape of /** @type {const} */ (["hex", "circle"])) {
     const wt = checkWatertight(cut.solid);
     assert.ok(wt.closed, `${shape}: ${wt.unmatched} unmatched edges`);
     assert.ok(signedVolume(cut.solid) > 0, `${shape}: inside-out solid`);
-    // The gates checkWatertight cannot see: a rim cell meshed against a sub-meshed neighbour
+    // The gates checkWatertight cannot see: a rim cell meshed against a sub-meshed neighbor
     // leaves every directed edge paired and still fails here.
     assert.equal(cut.solid.mirrored, false, `${shape}: non-conforming seam`);
     assert.equal(cut.solid.loops, 1, `${shape}: ${cut.solid.loops} boundary loops`);

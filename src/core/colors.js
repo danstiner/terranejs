@@ -25,7 +25,7 @@ export const BAND_NAMES = ["water", "forest", "tundra", "rock", "snow"];
 
 /** The line crossed to ENTER band i+1, index-aligned with the thresholds array
  * ([water line, timberline, tundra line, snowline]) — for the legend. Index 0 is the tile's
- * anchored water/land colour line (waterLineThresholds), NOT absolute sea level — a Lake Tahoe
+ * anchored water/land color line (waterLineThresholds), NOT absolute sea level — a Lake Tahoe
  * tile's line sits at ~1890 m. */
 export const BOUNDARY_NAMES = ["water line", "timberline", "tundra line", "snowline"];
 
@@ -56,7 +56,7 @@ export const CORD_COLOR = [0.71, 0.27, 0.24];
  */
 export const INLAY_COLOR = [0.24, 0.58, 0.62];
 
-// --- Ecological band thresholds (metres vs |latitude|) --------------------
+// --- Ecological band thresholds (meters vs |latitude|) --------------------
 // One base curve carries the shape: the timberline (closed-canopy forest edge) vs
 // |latitude|. It plateaus across the tropics/subtropics, then descends in two slopes —
 // steeper through the mid-latitudes, gentler toward the poles (the tree line falls
@@ -118,13 +118,13 @@ export function bandThresholds(centerLat) {
 }
 
 /**
- * Swap the sea-level threshold[0] for the tile's water colour line and clamp the ecological lines
- * up to it, keeping the array ascending. bandOf/colorChanges index colour by position and assume
- * ascending thresholds, so a colour line above timberline (an alpine lake above the treeline) must
+ * Swap the sea-level threshold[0] for the tile's water color line and clamp the ecological lines
+ * up to it, keeping the array ascending. bandOf/colorChanges index color by position and assume
+ * ascending thresholds, so a color line above timberline (an alpine lake above the treeline) must
  * not un-sort the array — the sub-line bands collapse to coincident values and fold together via
  * colorChanges' EPS merge instead.
  * @param {number[]} thresholds  [sea level, timberline, tundra, snowline] from bandThresholds
- * @param {number} lineElev      the water/land colour line (metres) from applyWaterRecess
+ * @param {number} lineElev      the water/land color line (meters) from applyWaterRecess
  * @returns {number[]}
  */
 export function waterLineThresholds(thresholds, lineElev) {
@@ -132,7 +132,7 @@ export function waterLineThresholds(thresholds, lineElev) {
 }
 
 /**
- * value → band index 0..4. Generic over metres OR print-Z (same comparison).
+ * value → band index 0..4. Generic over meters OR print-Z (same comparison).
  * Threshold is the TOP of the lower band (strict >): value 0 is water, 0+ε forest.
  * @param {number} value
  * @param {number[]} thresholds
@@ -166,7 +166,7 @@ const EPS = 0.05; // mm; merge sub-layer-coincident changes
  * Color changes to fire, ascending — thresholds whose print-Z lands in [base, zmax).
  * z = base + (t − emin)·mmPerM·exag; crossing threshold i enters band i+1. exag ∈
  * [0.5,4] from the slider, so K > 0. A change exactly AT the base is kept: the waterline
- * sits at emin on an ocean-floor tile, the shader colours land above it, and the export
+ * sits at emin on an ocean-floor tile, the shader colors land above it, and the export
  * lifts it clear of the base. Coincident changes (within EPS — e.g. near-polar ties where
  * treeline and snowline collapse together) merge into one, keeping the HIGHER band.
  * `pauseLiftMm` (export only) raises the WATER pause — thresholds[0] — that much print-Z

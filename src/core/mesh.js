@@ -380,7 +380,7 @@ function gridTopTris(gw, span, mask, skip) {
 // `poly`; returns its length. cell ∩ P is an intersection of two convex sets and therefore
 // convex in EXACT arithmetic — but crossings and ring vertices are snapped onto the 1/256
 // lattice INDEPENDENTLY of each other (clip.js), and that can leave one point a hair inside
-// the true hull of its neighbours (observed: a crossing and a true ring vertex 1/256 apart
+// the true hull of its neighbors (observed: a crossing and a true ring vertex 1/256 apart
 // left a third point non-extremal by ~1e-3 doubled-area — far above AREA2_EPS's 1e-9, so an
 // exact-collinear test does not see it). Sorting by angle about the vertex-average centroid
 // has no way to notice a point isn't extremal — the centroid of a lopsided point cluster can
@@ -485,7 +485,7 @@ function clippedTopTris(gw, span, clip, skip) {
       // A cell the boundary touches must be walked even when every corner reads outside: a
       // convex corner can poke through one side, which corner parity alone cannot see.
       const touched = bcells.has(r * (gw - 1) + c);
-      // `skip` is honoured only on the branch below, which is correct because the channel's cells
+      // `skip` is honored only on the branch below, which is correct because the channel's cells
       // are eroded one ring in from the footprint and so are never boundary cells. If that ever
       // stopped holding, this cell would be emitted twice — once clipped here, once sub-meshed —
       // and a doubled face is the one corruption no runtime check sees (checkNoCoincidentFaces is

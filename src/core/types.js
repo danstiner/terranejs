@@ -12,19 +12,19 @@
  * @typedef {"none" | "flat" | "lakes" | "all"} WaterMode
  *   What happens to the masked water. `none` leaves it at true elevation; `flat` pulls all of it
  *   onto one plane below the land; `all` sinks all of it by the recess depth; `lakes` sinks only
- *   the bodies sitting above the colour line, so an ocean already printing blue keeps its true
+ *   the bodies sitting above the color line, so an ocean already printing blue keeps its true
  *   elevation while a high lake gets a groove and a drop-in part. The UI offers `none`, `lakes`
  *   and `all`; `flat` is retired there but stays legal here and in the hash — decode maps an old
  *   `mode=flat` link to `none` so it opens as Natural, and only headless callers can still build
  *   it. Only the grooving modes build parts — `flat`
- *   displaces water but paints it by colour band, so it never emits any. `none` ignores a
+ *   displaces water but paints it by color band, so it never emits any. `none` ignores a
  *   nonzero recess: the mode decides whether the depth applies.
  * @typedef {{ gx0: number, gy0: number, gw: number, gh: number }} Window
  *   Inclusive global-pixel window: origin (gx0,gy0), width gw, height gh.
  * @typedef {{ data: Float32Array, width: number, height: number, originGx: number, originGy: number, z: number }} Mosaic
  *   Rectangle of elevation values in web-mercator global-pixel space. Produced
  *   by stiching several tiles together into a single "mosaic". `data` is a
- *   row-major width×height Float32Array of metres; (originGx,originGy) is the
+ *   row-major width×height Float32Array of meters; (originGx,originGy) is the
  *   global pixel of data[0] (row 0 = north); z is the source zoom.
  * @typedef {{ positions: Float32Array, indices: Uint32Array,
  *   mirrored?: boolean, loops?: number }} Solid

@@ -15,10 +15,10 @@ import { earclip } from "./mesh.js";
  * Cells the channel may be meshed into: the cord's own admissible mask, eroded by one edge-ring.
  *
  * The extra ring is what buys the transition somewhere to live. A cell carrying the channel has
- * subdivided edges, so its edge-neighbours have to be retriangulated to match — and a boundary
+ * subdivided edges, so its edge-neighbors have to be retriangulated to match — and a boundary
  * cell cannot be: its top is cellPoly's convex hull, which deliberately drops non-extremal points
  * and so cannot be made to pass through k+1 vertices on one of its sides. Eroding here means the
- * neighbour is always an ordinary two-triangle cell.
+ * neighbor is always an ordinary two-triangle cell.
  *
  * Stated as a delta from admissibleCells rather than re-derived, and that is load-bearing: the
  * obvious rewrite ("not a bcell, and not edge-adjacent to one") also admits cells wholly OUTSIDE
@@ -77,7 +77,7 @@ export function featherField(gw, gh, trenchOk, waterMask) {
 
 /**
  * The tile's top over the channel: trench cells sub-clipped against the isoline, and their
- * edge-neighbours retriangulated so the two meet vertex-for-vertex.
+ * edge-neighbors retriangulated so the two meet vertex-for-vertex.
  *
  * Returns the extra vertices it minted (addressed from `idBase`), the displacement it applied to
  * PARENT grid vertices, and the cells it claimed — buildSolid skips those and emits the rest as
@@ -187,7 +187,7 @@ export function trenchTop(grid, plan, dist, k, half, depthMm, feather, trenchOk,
   }
 
   // Pass C: the fan ring. A cell edge-adjacent to a trench cell has k+1 vertices on that side --
-  // plus any crossings, where the shared edge straddles the admissibility border and the neighbour
+  // plus any crossings, where the shared edge straddles the admissibility border and the neighbor
   // clips on distance while this cell is not admissible. Those crossings are feather-dead, so they
   // add no geometry, only topology; omitting them is a T-junction.
   const idOf = (/** @type {number} */ R, /** @type {number} */ C) => lattice(R * strideC + C);
@@ -209,16 +209,16 @@ export function trenchTop(grid, plan, dist, k, half, depthMm, feather, trenchOk,
   /** @type {number[]} */ const ring = [];
   const emitRing = () => {
     let n = 0;
-    for (let i = 0; i < ring.length; i++) { // welded crossings can repeat a neighbour
+    for (let i = 0; i < ring.length; i++) { // welded crossings can repeat a neighbor
       if (n > 0 && ring[n - 1] === ring[i]) continue;
       ring[n++] = ring[i];
     }
     if (n > 1 && ring[0] === ring[n - 1]) n--;
     if (n < 3) return;
     const pts = ring.slice(0, n).map(xyOf);
-    // Centred on the ring's own first point, not the tile's origin: this ring's true area is one
+    // Centerd on the ring's own first point, not the tile's origin: this ring's true area is one
     // sub-cell (~dx^2), but pts carries tile-scale coordinates (up to tileWidthMm) on a fine
-    // sub-lattice (dx << tileWidthMm), so an uncentred shoelace sums tileWidthMm^2-scale terms down
+    // sub-lattice (dx << tileWidthMm), so an uncentered shoelace sums tileWidthMm^2-scale terms down
     // to a dx^2-scale result — cancellation of order (tileWidthMm/dx)^2, swamping this check long
     // before `covered` (summed from small per-triangle differences, already well conditioned) had
     // moved at all. A trail near the tile's own origin never hit this; one far from it did.

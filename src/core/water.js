@@ -1,9 +1,10 @@
-// Water handling for headless bakes. Pure, DOM-free. Colour is per-print-Z (one M600 change
-// recolours the whole cross-section below a height), so water only reads blue at or below the
-// water/land colour line; geometric separation is what lets same-height water and land differ.
+// Water handling for headless bakes. Pure, DOM-free. Color is per-print-Z (one M600 change
+// recolors the whole cross-section below a height), so water only reads blue at or below the
+// water/land color line; geometric separation is what lets same-height water and land differ.
 // ONE control decides what happens to the water. "flat" pulls every masked cell down to one plane
-// held two print layers below all land (a tile-anchored waterline); "none" leaves the line AT 0 m —
-// classic sea-level tint, geometry untouched; the sinking modes groove the water by `recessMm`
+// held two print layers below all land (a tile-anchored waterline); "none" leaves the line at 0 m,
+// rising to a perched lake's surface only when all land clears it by that same two-layer margin —
+// geometry untouched; the sinking modes groove the water by `recessMm`
 // without moving the line. They are exclusive by construction: a plane is never sunk further, which
 // is what stops the depth meaning two different things. The line is the TRUE waterline at any map
 // scale; only the exported M600 pause is lifted one layer above it (colors.colorChanges
@@ -14,12 +15,6 @@
 import { cellsFromVertexMask } from "./mesh.js";
 
 /** @typedef {import("./types.js").WaterMode} WaterMode */
-
-/** Warning threshold: % of land printing blue before the UI states it plainly; no surviving mode
- * moves the colour line. Strict (5) because blue land here means land genuinely at/below the
- * waterline (polders, deltas) — the line sits at the true waterline, so ordinary coasts carry no
- * inherent blue fringe. */
-export const LAND_BLUE_WARN_PCT = 5;
 
 /** Warning threshold: % of the TILE that is masked water showing above the height the print
  * changes color at before the UI names the Lake inserts card. Share of tile, not of water, and
@@ -32,7 +27,7 @@ export const WATER_AS_LAND_WARN_PCT = 1;
 
 /** Narrowest water body worth keeping, in PRINT mm. Two 0.4 mm extrusions: #cordW's floor is
  * already one, and an insert is a free-standing part pressed into a groove rather than a bead
- * fused to the tile. Print mm and not ground metres because "too small to print" is a property of
+ * fused to the tile. Print mm and not ground meters because "too small to print" is a property of
  * the part — which is why a wide tile keeps no rivers: 0.8 mm is 120 m of ground at 1:150000. */
 export const MIN_WATER_BODY_WIDTH_MM = 0.8;
 
@@ -43,9 +38,77 @@ export const MIN_WATER_BODY_WIDTH_MM = 0.8;
 export const WATER_DROPPED_WARN_PCT = 20;
 
 /**
- * Anchor the water colour line and, per the mode, flatten OR sink the water for one bake, in place.
- * No mask (or no water cells) → no mutation, lineElev −Infinity — NOT 0, which would blue
- * genuinely below-sea-level land (Death Valley) on a tile with no water at all.
+ * The water/land color line for one bake — pure, no mutation. Split out of applyWaterRecess
+ * because the pipeline needs the line BEFORE the recess runs (splitWaterByLine classifies
+ * against it, and the recess needs the mask the split produces — a cycle otherwise), and
+ * applyWaterRecess calls this same function, so the two can never disagree.
+ *
+ * Anchor rules, by mode: flatten targets a plane 2 lifts below the lowest land — the exported
+ * pause sits one layer above the line, so the first lift is consumed by that offset and the
+ * second is the land's real clearance (see the flatten-margin pin in colors.test).
+ * "none" rises to the lowest in-footprint water — but ONLY when all land clears it by that same
+ * 2-lift margin, and never from below 0 m. The DEM hydro-flattens LAKES (each a constant), so on
+ * a tile whose water is all perched above all land (Tahoe) waterMin IS the lake's surface and
+ * the line rises to it rather than printing the lake as land. Natural cannot move the water the
+ * way flatten could, so where flatten pulled the plane DOWN, Natural refuses the rise: a line
+ * land does not clear floods it blue (Crater Lake's line at its own lake drowned the outer
+ * valleys — tried, reverted), and a line below 0 greens the sea, because ocean samples are only
+ * clamped NEAR 0 and real masks carry below-0 bathymetry noise (a Puget Sound sample reads
+ * −227 m).
+ * The line never sits above land, in ANY mode: land at or below the candidate line (polders,
+ * deltas) lowers it to landMin − 2·lift instead — rather sea-as-land than land-as-sea. The sea
+ * above the lowered line prints as land and the waterAsLand warning names an inserts card, which
+ * genuinely fixes it: the lowered line also lowers the lakes-mode ceiling, so the sea itself
+ * becomes a groove and a part. landBluePct is ≈0 because of this — only land sitting exactly AT
+ * the line still counts (boundary-blue, matching bandOf) — so it survives as a returned
+ * invariant (a real percentage means the anchor broke), not as a warning.
+ * "all" carries no line at all (−Infinity, the waterless sentinel): every printable body becomes
+ * a part, so the pause that would paint sub-line layers blue is never worth its filament swap —
+ * grooves, walls and polders print as land, and every drop of blue on the tile is an insert.
+ * colorChanges folds the water band into the base and the legend row disappears with it.
+ *
+ * No mask (or no water cells) → lineElev −Infinity — NOT 0, which would blue genuinely
+ * below-sea-level land (Death Valley) on a tile with no water at all.
+ *
+ * fround, and not as a nicety: the line has to be a value the GRID can hold. `grid` is a
+ * Float32Array and every consumer compares its samples against this line — baseBand and
+ * colorChanges against emin, landBluePct and the preview shader against each sample. A raw
+ * float64 anchor is generally not float32-representable, and when the store rounds it UP,
+ * emin lands ABOVE the tile's own waterline: baseBand then folds the water band into the base
+ * (it folds a threshold strictly below emin), colorChanges puts the water→land change at
+ * z < base and drops it, and the tile prints with no water at all. Measured on a 150 km
+ * Puget Sound tile: line −227.41165625, stored −227.41165161, a 4.6e-6 m gap and every drop
+ * of water gone. Snapping here makes emin === lineElev exactly, which is the equality both
+ * functions are already written around (see their comments on the ocean-floor tile).
+ *
+ * @param {Float32Array} grid  elevation grid cropped to the bake window
+ * @param {Uint8Array | undefined} mask  1 = water, 0 = land, index-aligned with grid
+ * @param {{ waterMode: WaterMode, layerMm: number, K: number, footprint?: Uint8Array }} opts
+ * @returns {{ lineElev: number, waterMin: number, landCount: number }}
+ */
+export function waterColorLine(grid, mask, { waterMode, layerMm, K, footprint }) {
+  if (!mask) return { lineElev: -Infinity, waterMin: Infinity, landCount: 0 };
+  let waterMin = Infinity, landMin = Infinity, landCount = 0;
+  for (let i = 0; i < grid.length; i++) {
+    if (footprint && !footprint[i]) continue; // discarded corner: not in the print
+    if (mask[i]) { if (grid[i] < waterMin) waterMin = grid[i]; }
+    else { if (grid[i] < landMin) landMin = grid[i]; landCount++; }
+  }
+  if (waterMin === Infinity) return { lineElev: -Infinity, waterMin, landCount };
+  const lift = layerMm / K; // one print layer, in meters
+  let anchor;
+  if (waterMode === "flat") anchor = landCount > 0 ? Math.min(waterMin, landMin - 2 * lift) : waterMin;
+  else {
+    anchor = waterMode === "none" && waterMin > 0 && waterMin <= landMin - 2 * lift ? waterMin : 0;
+    if (landMin < anchor) anchor = landMin - 2 * lift; // never above land — see the doc block
+  }
+  const lineElev = waterMode === "all" ? -Infinity : Math.fround(anchor);
+  return { lineElev, waterMin, landCount };
+}
+
+/**
+ * Anchor the water color line (waterColorLine above) and, per the mode, flatten OR sink the
+ * water for one bake, in place. No mask (or no water cells) → no mutation, lineElev −Infinity.
  * @param {Float32Array} grid  elevation grid cropped to the bake window; MUTATED in place
  * @param {Uint8Array | undefined} mask  1 = water, 0 = land, index-aligned with grid
  * @param {{ waterMode: WaterMode, recessMm: number, layerMm: number, K: number, footprint?: Uint8Array, recessMask?: Uint8Array, filled?: boolean }} opts
@@ -53,7 +116,7 @@ export const WATER_DROPPED_WARN_PCT = 20;
  *   it all onto one plane below the land, "all"/"lakes" sink it by recessMm. The mode is the axis —
  *   flat and the sink are exclusive, so a flattened plane is never sunk further; recessMm = groove
  *   depth (mm, print space), read only by the sinking modes, and 0 is legal here even though the UI
- *   floors it at 0.5; layerMm = slicer layer height (the colour-lift unit); K = mmPerM·exag;
+ *   floors it at 0.5; layerMm = slicer layer height (the color-lift unit); K = mmPerM·exag;
  *   footprint = optional vertex mask; samples outside it are not MEASURED (hex/circle discard
  *   their window's corners, and water there must not anchor the line) but masked water outside
  *   it is still moved with the rest — the rim interpolates across that edge, see the loop.
@@ -70,34 +133,10 @@ export function applyWaterRecess(grid, mask, { waterMode, recessMm, layerMm, K, 
   // on. Zero stays legal — the UI floors at 0.5, core does not — but negative (or NaN) is refused
   // loudly here rather than silently inverting parts downstream.
   if (!(recessMm >= 0)) throw new Error(`applyWaterRecess: recessMm must be ≥ 0, got ${recessMm}`);
-  if (!mask) return { lineElev: -Infinity, landBluePct: 0, waterAsLandPct: 0 };
-  let waterMin = Infinity, landMin = Infinity, landCount = 0;
-  for (let i = 0; i < grid.length; i++) {
-    if (footprint && !footprint[i]) continue; // discarded corner: not in the print
-    if (mask[i]) { if (grid[i] < waterMin) waterMin = grid[i]; }
-    else { if (grid[i] < landMin) landMin = grid[i]; landCount++; }
-  }
-  if (waterMin === Infinity) return { lineElev: -Infinity, landBluePct: 0, waterAsLandPct: 0 };
-  const lift = layerMm / K; // one print layer, in metres
-  // Anchor: flatten targets a plane 2 lifts below the lowest land — the exported pause sits one
-  // layer above the line, so the first lift is consumed by that offset and the second is the
-  // land's real clearance (see the flatten-margin pin in colors.test). Any other mode anchors at
-  // 0 m: classic sea-level tint, land-blind by design (landBluePct warns instead).
-  // fround, and not as a nicety: the line has to be a value the GRID can hold. `grid` is a
-  // Float32Array and every consumer compares its samples against this line — baseBand and
-  // colorChanges against emin, landBluePct and the preview shader against each sample. A raw
-  // float64 anchor is generally not float32-representable, and when the store rounds it UP,
-  // emin lands ABOVE the tile's own waterline: baseBand then folds the water band into the base
-  // (it folds a threshold strictly below emin), colorChanges puts the water→land change at
-  // z < base and drops it, and the tile prints with no water at all. Measured on a 150 km
-  // Puget Sound tile: line −227.41165625, stored −227.41165161, a 4.6e-6 m gap and every drop
-  // of water gone. Snapping here makes emin === lineElev exactly, which is the equality both
-  // functions are already written around (see their comments on the ocean-floor tile).
+  const { lineElev, waterMin, landCount } = waterColorLine(grid, mask, { waterMode, layerMm, K, footprint });
+  if (!mask || waterMin === Infinity) return { lineElev: -Infinity, landBluePct: 0, waterAsLandPct: 0 };
+  const lift = layerMm / K; // one print layer, in meters
   const flat = waterMode === "flat";
-  const anchor = Math.fround(flat
-    ? (landCount > 0 ? Math.min(waterMin, landMin - 2 * lift) : waterMin)
-    : 0);
-  const lineElev = anchor; // the true waterline; only the export pause is lifted a layer above it
   // Exclusive, structurally: one mode either moves water onto a plane or sinks it, never both.
   // `none` is a zero sink rather than a branch, so the loop below keeps one shape.
   const sink = flat || waterMode === "none" ? 0 : recessMm / K;
@@ -113,26 +152,26 @@ export function applyWaterRecess(grid, mask, { waterMode, recessMm, layerMm, K, 
       // crossings), so nothing else moves.
       // Compare the STORED sample, now that lineElev is itself float32: fround is monotonic and
       // sink is never negative (the entry guard refuses a negative depth; the UI and hash floor
-      // it besides), so fround(anchor − sink) ≤ fround(anchor) = lineElev
+      // it besides), so fround(line − sink) ≤ fround(line) = lineElev
       // holds exactly and a flattened tile can't fire the warning against its own plane. (Comparing
       // the float64 value instead was the fix while the line was float64; with a snapped line it
       // is the bug, in mirror image — the raw anchor sits above a line the store rounded down.)
       // Water the recess moved is excused from "showing as land" only when a part is coming to
-      // fill it — the insert is what makes it blue, not the colour band, and `filled` is the
+      // fill it — the insert is what makes it blue, not the color band, and `filled` is the
       // caller's word on whether one is. Moved-but-unfilled is an open groove: still bare rock at
       // the bottom, so it still counts. The sink > 0 term matters independently of `filled`: a
       // full recessMask with a zero depth moves nothing and must still count, which is what keeps
       // the default tile's warning exactly as strict as it was.
       // What counts as "above" is the line plus one LIFT — the height the print actually changes
-      // colour at, since the export raises the water pause that far so the water's top layer
+      // color at, since the export raises the water pause that far so the water's top layer
       // prints blue. Water inside that layer prints blue whatever its sample reads, so naming it
-      // would be a false alarm; at map scale a layer is tens of metres of ground, which is most
+      // would be a false alarm; at map scale a layer is tens of meters of ground, which is most
       // of a coastal tile's near-0 bathymetry noise. Measured share of tile: 5.06% → 0.13% on
       // Puget Sound, 4.50% → 0.50% on San Francisco Bay, both from over the 1% threshold to under
       // it, while Titicaca (58%) and Crater Lake (13%) are untouched — that water really does
       // print as rock. Same ceiling splitWaterByLine classifies against, so the two agree.
       const moved = sink > 0 && (!recessMask || recessMask[i] !== 0);
-      grid[i] = flat ? anchor : grid[i] - (moved ? sink : 0);
+      grid[i] = flat ? lineElev : grid[i] - (moved ? sink : 0); // flat: the line IS the plane
       if (inPrint && !(moved && filled) && grid[i] > lineElev + lift) waterAsLand++;
       // The TRUE line below, deliberately not the ceiling this counter uses. The two ask different
       // questions: this one is "will this water print as land", a print question, while landBlue is
@@ -162,7 +201,7 @@ export function applyWaterRecess(grid, mask, { waterMode, recessMm, layerMm, K, 
  * case this exists to remove. Measured: a 1-vertex tail on a printable lake, 11/11 vertices kept
  * under a vertex fill, 0/11 under this one.
  *
- * One bit per cell, so "the whole (2k+1)² neighbourhood is water" is a window SUM against 2k+1 —
+ * One bit per cell, so "the whole (2k+1)² neighborhood is water" is a window SUM against 2k+1 —
  * two sliding passes carrying O(1) state, not a min-filter, which would cost O(N·k). Out-of-range
  * reads as land, so a body must fit its square inside the grid.
  *
@@ -256,13 +295,13 @@ function cornerOfOtherBody(cells, cw, ch, r, c) {
 
 /**
  * Split printed water into the bodies a recess has to move and the bodies already printing blue.
- * "Already blue" is a claim about the PRINT, so the caller passes the height the colour actually
+ * "Already blue" is a claim about the PRINT, so the caller passes the height the color actually
  * changes at, not the waterline — see the ceiling at the pipeline call site.
  *
  * Classification reads a body's INTERIOR — itself eroded one cell in from its outer ring — because
  * the elevation grid and the watermask are different products whose coastlines disagree by a pixel
  * or two at every shore, and the outer ring is exactly where they disagree: it samples the DEM's
- * shore bluff. The ceiling absorbs most of that (a print layer is tens of metres of ground at map
+ * shore bluff. The ceiling absorbs most of that (a print layer is tens of meters of ground at map
  * scale), but not on a steep coast, where one wall pixel clears it and grooves the whole body.
  * Measured against the ceiling at exag 1: Sognefjord's fjord tops out at 47.4 m over its full
  * extent and 10.1 m eroded, Bora Bora's lagoon at 12.6 and 10.5, against ceilings of 45 and 12 —
@@ -284,9 +323,9 @@ function cornerOfOtherBody(cells, cw, ch, r, c) {
  * for the reason recorded there: vertex-8-connectivity is coarser than cell-8-connectivity, so a
  * vertex fill would join a lake to the ocean through a one-vertex touch and hand the pair a single
  * classification. Water contributing no whole cell therefore never moves, which is the same answer
- * the size filter already gave it. A cell is INTERIOR iff all 8 of its neighbour cells are members
+ * the size filter already gave it. A cell is INTERIOR iff all 8 of its neighbor cells are members
  * of the same body and in-grid; two bodies are never 8-adjacent (if they were, they'd be one body),
- * so any non-zero neighbour cell is necessarily this body's.
+ * so any non-zero neighbor cell is necessarily this body's.
  *
  * Classification reads every cell of the body regardless of footprint — the opposite of the
  * measurement loop in applyWaterRecess, and for a different question. Water outside the print must
@@ -310,7 +349,7 @@ function cornerOfOtherBody(cells, cw, ch, r, c) {
  * @param {Float32Array} grid elevations at true elevation — call before applyWaterRecess moves them
  * @param {number} gw
  * @param {number} gh
- * @param {number} blueCeiling metres; the height the print changes colour at — the water/land
+ * @param {number} blueCeiling meters; the height the print changes color at — the water/land
  *   line plus the layer the export lifts the pause by. At or below it, a body already prints blue.
  * @returns {{ mask: Uint8Array, recessedPct: number }} a NEW mask, always
  */
@@ -328,7 +367,7 @@ export function splitWaterByLine(mask, grid, gw, gh, blueCeiling) {
   // keeps membership legible after a cell is visited: 1 = member, unvisited; 2 = member, visited
   // by a body no longer being processed; 3 = member of the body CURRENTLY being processed. A cell
   // is a MEMBER iff cells[j] !== 0, whichever state it's in — that is what lets the interior test
-  // below read a neighbour's membership regardless of walk order, and cornerOfOtherBody tell
+  // below read a neighbor's membership regardless of walk order, and cornerOfOtherBody tell
   // "mine" (3) apart from "anyone else's" (1 or 2).
   const queue = new Int32Array(cw * ch);
   // The vertex closure's own frontier, sized for the worst case (every vertex claimed) and reused
@@ -352,8 +391,8 @@ export function splitWaterByLine(mask, grid, gw, gh, blueCeiling) {
       if (grid[A + gw] > m) m = grid[A + gw];
       if (grid[A + gw + 1] > m) m = grid[A + gw + 1];
       if (m > maxAll) maxAll = m;
-      // In-grid check first (cheap, and required before the neighbour reads below are safe), then
-      // the 8 neighbour cells — an out-of-grid neighbour, or a land one, disqualifies the cell.
+      // In-grid check first (cheap, and required before the neighbor reads below are safe), then
+      // the 8 neighbor cells — an out-of-grid neighbor, or a land one, disqualifies the cell.
       if (r > 0 && r < ch - 1 && c > 0 && c < cw - 1 &&
           cells[i - cw - 1] && cells[i - cw] && cells[i - cw + 1] &&
           cells[i - 1] && cells[i + 1] &&

@@ -20,7 +20,7 @@ test("clipPolygon: rejects degenerate and non-convex rings", () => {
     globalRing([[1, 1], [7, 1], [7, 7], [4, 3], [1, 7]])), /not convex/);
 });
 
-// Winding is normalised on entry, so a ring, its reversal, and every rotation resolve to
+// Winding is normalized on entry, so a ring, its reversal, and every rotation resolve to
 // the same directed edge cycle and must clip identically; rotations additionally exercise
 // allocation-order independence. This can never see the canonical endpoint ordering —
 // normalisation makes all variants evaluate each edge in the same direction — so that
@@ -44,7 +44,7 @@ test("clipPolygon: output is invariant under ring rotation and reversal", () => 
 // border edge in opposite directions, and P + t(Q−P) is not bit-identical to Q + (1−t)(P−Q).
 // Rotating or reversing ONE ring can never show this (see above), so clip two triangles
 // sharing an edge traversed in opposite directions, apexes on opposite sides — exactly the
-// neighbouring-tiles configuration. The edge is engineered so its y = 4 crossing is exactly
+// neighboring-tiles configuration. The edge is engineered so its y = 4 crossing is exactly
 // 879/512, a Math.round half-way point: the two evaluation directions land on opposite
 // sides of the tie, so without the canonical order the rings disagree by a full 1/256.
 // Found by lattice search, the way clipCircle's tangent-row repro was.
@@ -176,7 +176,7 @@ test("clipElevs: an integral coordinate reproduces the edge lerp exactly", () =>
 // > 3e-3). A threshold at half the quantum cannot pull in two distinct points; anything it does
 // pull in is two tiles' versions of one seam point, compared here with exact equality.
 //
-// Both neighbour directions are covered because they fail differently: (1,0) shares a
+// Both neighbor directions are covered because they fail differently: (1,0) shares a
 // 60-degree edge, (0,1) shares a FLAT one, and a flat edge lies exactly on the window's y
 // extreme — the case where rounding the window inward truncated the rim in one tile while the
 // other clipped past it.
@@ -245,7 +245,7 @@ test("clipPolygon: crossing snap is window-frame independent", () => {
 /**
  * Rim points from two tiles that land within half the snap quantum of each other, asserting
  * every such pair is bit-identical and returning how many there were. Spatial hash of A on the
- * quantum grid, so each B point scans its 3x3 neighbourhood rather than all of A — O(n) instead
+ * quantum grid, so each B point scans its 3x3 neighborhood rather than all of A — O(n) instead
  * of O(n^2) for ~14000-point rims.
  * @param {Array<[number, number]>} a @param {Array<[number, number]>} b @param {string} label
  * @returns {number}

@@ -49,7 +49,7 @@ export function decodeWatermask(rgba, n = rgba.length / 4) {
 }
 
 // 256×256 2d context: OffscreenCanvas in a worker, else a DOM canvas. willReadFrequently keeps
-// getImageData on the CPU path; srgb avoids colour management.
+// getImageData on the CPU path; srgb avoids color management.
 /**
  * @returns {CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D}
  */
@@ -88,7 +88,7 @@ async function fetchTileRGBA(urlTemplate, x, y, z, retina) {
   const url = urlTemplate.replace("{z}", String(sz)).replace("{x}", String(sx)).replace("{y}", String(sy));
   const res = await fetch(url, { mode: "cors", cache: "force-cache" });
   if (!res.ok) throw new Error(`tile ${sz}/${sx}/${sy}: HTTP ${res.status}`);
-  // colorSpaceConversion/premultiplyAlpha "none": keep the raw bytes exact — any colour
+  // colorSpaceConversion/premultiplyAlpha "none": keep the raw bytes exact — any color
   // management or alpha premultiply would corrupt the terrarium encoding or the mask alpha.
   const bmp = await createImageBitmap(await res.blob(), { colorSpaceConversion: "none", premultiplyAlpha: "none" });
   const ctx = ctx2d();

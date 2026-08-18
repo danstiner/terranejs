@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { decodeTerrarium, mosaicTiles, fetchMosaic } from "../src/core/terrain.js";
 
-test("decodeTerrarium: (R*256+G+B/256)-32768 metres", () => {
+test("decodeTerrarium: (R*256+G+B/256)-32768 meters", () => {
   // 32768 -> 0 m ; encode 0 m as R=128,G=0,B=0 -> 128*256-32768 = 0
   const rgba = new Uint8ClampedArray([128, 0, 0, 255, 128, 100, 128, 255]);
   const el = decodeTerrarium(rgba);

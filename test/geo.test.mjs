@@ -15,7 +15,7 @@ test("flat-rate bbox model matches WGS84 geodesics (<1e-6)", () => {
     const ew = Math.abs(got.realW - realW) / realW;
     const eh = Math.abs(got.realH - realH) / realH;
     // The residual is a MODEL gap, not a code bug: realW is the parallel arc vs
-    // the golden's geodesic (~sin²φ·Δλ²/24), plus centre-latitude midpoint
+    // the golden's geodesic (~sin²φ·Δλ²/24), plus center-latitude midpoint
     // integration for realH. Measured max ~4e-7 — a real bound on the model.
     assert.ok(ew < 1e-6, `${name} realW off by ${(ew * 100).toFixed(5)}%`);
     assert.ok(eh < 1e-6, `${name} realH off by ${(eh * 100).toFixed(5)}%`);
@@ -23,7 +23,7 @@ test("flat-rate bbox model matches WGS84 geodesics (<1e-6)", () => {
 });
 
 test("metersPerDegree: matches published WGS84 values at 0° and 45°", () => {
-  // Independent published metres-per-degree (hand-derivable from a and f; at 45°
+  // Independent published meters-per-degree (hand-derivable from a and f; at 45°
   // sin²φ = 1/2 exactly). 45° is load-bearing: at the equator sinφ = 0, so a
   // meridian-vs-prime-vertical radius mixup is invisible — but not here.
   /** @type {(lat: number, mLat: number, mLon: number) => void} */

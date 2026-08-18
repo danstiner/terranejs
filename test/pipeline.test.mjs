@@ -71,7 +71,7 @@ test("planTile: rejects a tile spilling past the ±85° Mercator cap", () => {
   assert.throws(() => planTile(beyond), /Web Mercator/);
 });
 
-test("planTile: rejects a pole-centred tile (bbox reaches ±90°, past the cap)", () => {
+test("planTile: rejects a pole-centered tile (bbox reaches ±90°, past the cap)", () => {
   /** @type {TileSettings} */
   const pole = { center: [90, 0], scale: 61150, tileWidthMm: 100, base: 5, exag: 2 };
   assert.throws(() => planTile(pole), /Web Mercator/);
@@ -80,8 +80,8 @@ test("planTile: rejects a pole-centred tile (bbox reaches ±90°, past the cap)"
 // The bbox guard admits a tile whose north edge lands exactly ON the cap, but a clipped shape's
 // window is expanded outward past its ring, so the WINDOW still escapes the top of the world
 // (gy0 = -1 here) while the ring does not. Latitudes are per-shape because each footprint puts
-// its north extreme at a different offset from the centre; both were found by bisecting for the
-// centre whose ring bbox lands on the cap. The northOK assertion is what keeps this a test of
+// its north extreme at a different offset from the center; both were found by bisecting for the
+// center whose ring bbox lands on the cap. The northOK assertion is what keeps this a test of
 // the window guard — without it, a future change could make the ring itself illegal and this
 // would silently pass by re-testing the guard above.
 test("planTile: rejects a clipped tile whose expanded window escapes the world", () => {
@@ -206,14 +206,14 @@ test("bakeTileSolid: water recess anchors below the land, stays watertight", () 
   // water 500 m, land ≥ 560 m → plane = min(500, 560 − 2·lift)
   const planeExp = Math.min(500, 560 - 2 * lift);
   assert.ok(Math.abs(flat.emin - planeExp) < 1e-2, `flatten emin = plane (got ${flat.emin})`);
-  assert.ok(flat.lineElev < 560, "colour line below the lowest land → land keeps its colours");
+  assert.ok(flat.lineElev < 560, "color line below the lowest land → land keeps its colors");
   assert.equal(flat.landBluePct, 0, "no land prints blue");
 
   const dflt = bakeTileSolid(mosaic, plan, { ...SETTINGS }, mask);
   assert.ok(checkWatertight(dflt.solid).closed, "default solid watertight");
   assert.ok(Math.abs(dflt.emin - 500) < 1e-2, "default: geometry untouched, emin = waterMin");
-  assert.equal(dflt.lineElev, 0, "default: line at true sea level");
-  assert.equal(dflt.landBluePct, 0, "land far above sea level stays green");
+  assert.ok(Math.abs(dflt.lineElev - 500) < 1e-2, "default: line anchors to the tile's lowest water");
+  assert.equal(dflt.landBluePct, 0, "all land above the anchored line stays green");
 });
 
 // Regression for the clip/recess ordering constraint: bakeTileSolid must run applyWaterRecess
@@ -224,10 +224,10 @@ test("bakeTileSolid: water recess anchors below the land, stays watertight", () 
 // the ordering bug pipeline.js shipped with once and fixed before the first commit landed.
 test("bakeTileSolid: circle + flatten reads post-recess elevations at the rim (ordering)", () => {
   const plan = planTile({ ...SETTINGS, shape: "circle" }, { z: 10 }); // 45×45: a clipped shape's
-  // window is expanded outward past its ring, so R≈20 centred at (22,22) sweeps x∈[2.0, 42.0] —
+  // window is expanded outward past its ring, so R≈20 centered at (22,22) sweeps x∈[2.0, 42.0] —
   // the rim crosses interior rows and columns across the full width, not one corner.
   const mosaic = mosaicFor(plan); // ramp elevations, so every water cell's pre-flatten value differs
-  // West half water, east half land. Column 20 (the mask split) passes through the circle's centre
+  // West half water, east half land. Column 20 (the mask split) passes through the circle's center
   // (cx≈20), so the split crosses the rim near the top and bottom of the window: several of
   // clip.js's rim-crossing edges have one water endpoint and one land endpoint. Flatten collapses
   // every water sample to one shared plane; a crossing that samples the water endpoint BEFORE that
@@ -267,7 +267,7 @@ test("defaultTileName: ground extent stays legible below 10 km", () => {
   //                       tileWidthMm, scale  → km
   assert.match(defaultTileName({ ...g, tileWidthMm: 100, scale: 25000 }), /_2\.5km$/);
   assert.match(defaultTileName({ ...g, tileWidthMm: 200, scale: 5000 }), /_1\.0km$/);
-  // Metres under 1 km — the smallest tile the UI allows (50 mm at 1 mm = 1 km) would
+  // Meters under 1 km — the smallest tile the UI allows (50 mm at 1 mm = 1 km) would
   // otherwise round to "0km" and name every such tile identically.
   assert.match(defaultTileName({ ...g, tileWidthMm: 50, scale: 1000 }), /_50m$/);
 });
@@ -312,7 +312,7 @@ test("bakeTileSolid: footprint areas match their analytic fractions", () => {
   // Hex is clipped to its true 6 edges now (footprintPx's hexagon is exact, not an
   // approximation of some other curve), so the residual against 3√3/8 is window whole-pixel
   // rounding only — measured 1.06e-5. 1e-3 clears that noise floor by two orders while still
-  // catching a real regression (e.g. falling back to the old cell-centre mask, whose stairstep
+  // catching a real regression (e.g. falling back to the old cell-center mask, whose stairstep
   // error is two more orders up again).
   assert.ok(Math.abs(hex - (3 * Math.sqrt(3)) / 8) < 1e-3, `hex ratio ${hex}`);
   // Circle is clipped to the adaptive n-gon `ring` (clipPolygon consumes it directly), not the
@@ -413,8 +413,8 @@ test("bakeTileSolid: waterFilter off keeps sub-cell water, and hands back the ca
   // The SAME object, not a copy: the worker's land/printed/dropped annotation walks both arrays
   // and marks a vertex dropped only where they disagree, so identity is what makes it a no-op.
   assert.equal(r.printedWaterMask, mask);
-  // With the filter on this same fixture loses its water line entirely (test above); off, it keeps it.
-  assert.equal(r.lineElev, 0);
+  // `all` never has a color line; the identity assertion above is this test's real payload.
+  assert.equal(r.lineElev, -Infinity);
 });
 
 test("bakeTileSolid: waterMode none ignores a recess depth the hash still carries", () => {
@@ -426,7 +426,8 @@ test("bakeTileSolid: waterMode none ignores a recess depth the hash still carrie
   const off = bakeTileSolid(mosaicFor(plan), plan, { ...SETTINGS, waterMode: "none", recessMm: 2 }, mask);
   const zero = bakeTileSolid(mosaicFor(plan), plan, { ...SETTINGS, waterMode: "all", recessMm: 0 }, mask);
   assert.equal(signedVolume(off.solid), signedVolume(zero.solid), "`none` moved water");
-  assert.equal(off.lineElev, zero.lineElev);
+  assert.equal(off.lineElev, 0, "`none` keeps its line (this synthetic water is not flat, so no rise)");
+  assert.equal(zero.lineElev, -Infinity, "`all` never has one — every body is a part");
 });
 
 test("bakeTileSolid: waterMode all reproduces the recess it replaced", () => {
@@ -440,7 +441,7 @@ test("bakeTileSolid: waterMode all reproduces the recess it replaced", () => {
   // match, and that added base outweighs what the recess removed locally. emin isolates the
   // water's own displacement from that base-plate side effect.
   assert.ok(a.emin < b.emin, "a 2 mm recess sinks water below the tile's untouched minimum");
-  assert.equal(a.lineElev, b.lineElev, "the recess never moves the colour line");
+  assert.equal(a.lineElev, -Infinity, "`all` carries no color line — the parts are the blue");
 });
 
 /** Ocean at 0 m across the top rows, land ramping up, a lake at 1500 m near the bottom. The one
@@ -506,10 +507,10 @@ function pondAt(plan, elev) {
   return { mosaic: { data, width: gw, height: gh, originGx: gx0, originGy: gy0, z: plan.z }, mask };
 }
 
-test("bakeTileSolid: lakes leaves water under the printed colour change alone", () => {
+test("bakeTileSolid: lakes leaves water under the printed color change alone", () => {
   const plan = planTile(SETTINGS, { z: 10 });
   // The export puts the water→land change one print LAYER above the line (colorChanges
-  // pauseLiftMm), and a layer is metres of ground at map scale — 4.59 m here, 45 m on a
+  // pauseLiftMm), and a layer is meters of ground at map scale — 4.59 m here, 45 m on a
   // 1:300000 tile. Water inside that layer prints blue, so grooving it and moulding a part
   // for it buys nothing; judged at the bare line instead, the DEM/watermask coastline
   // disagreement grooves every coastal body on a real tile.
@@ -519,8 +520,8 @@ test("bakeTileSolid: lakes leaves water under the printed colour change alone", 
     return bakeTileSolid(mosaic, plan, { ...SETTINGS, waterMode: "lakes", recessMm: 2, layerMm }, mask)
       .waterRecessedPct;
   };
-  assert.equal(at(ceilM - 1), 0, "a metre under the change: already blue, no groove and no part");
-  assert.equal(at(ceilM + 1), 100, "a metre over it: grooved, which is what the mode is for");
+  assert.equal(at(ceilM - 1), 0, "a meter under the change: already blue, no groove and no part");
+  assert.equal(at(ceilM + 1), 100, "a meter over it: grooved, which is what the mode is for");
   // The ceiling is the PRINT's, not a constant — a coarser layer swallows the same pond.
   assert.equal(at(ceilM + 1, 0.3), 0, "at 0.3 mm the change sits twice as high above the line");
 });
