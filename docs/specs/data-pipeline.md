@@ -502,6 +502,23 @@ alternative ways to displace water, never combined. With water left at
 true elevation, nothing was displaced and nothing is exported. Print
 them in blue, drop them into the hollows, and the terrain is whole again.
 
+With the box ticked the settled preview draws them where they drop in,
+so the tile on screen is the tile as it prints once the parts are
+seated. They are drawn in a glacial aquamarine rather than the water
+band's slate blue: the band is the tint the tile itself prints at sea
+level, while these are separate parts a user picks filament for, and a
+mountain-lake turquoise still reads as water while telling the two
+apart. They ride the crisp pass only — a second full-grid snapshot and
+their own mesh is worth paying once the user has stopped moving, not
+on every frame of a slider drag — so the quick tier shows terrain
+alone and the blue arrives with the sharp mesh.
+
+The exported parts are not the drawn ones. Each connected piece is
+dropped so its lowest point rests on z 0, which is what lets the writer
+plate them side by side; seated, they keep the elevation spread of the
+bodies they came from, which a bed cannot hold. One flag on the bake
+picks the frame, so neither has to be reconstructed from the other.
+
 Undersides mate for the same reason the cord's does, by a simpler route:
 water bodies are wide, so an inlay keeps whole cells and reuses the
 terrain's own triangulation on the same vertex ids, with the same relief

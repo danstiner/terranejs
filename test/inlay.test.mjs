@@ -354,3 +354,68 @@ test("tileTo3mf seats the cord in the tile and plates the inlays clear of both",
   assert.ok(placed[2][0] >= placed[0][1],
     `inlays placed at ${placed[2][0]}, under a tile reaching ${placed[0][1]}`);
 });
+
+// --- seated mode ----------------------------------------------------------
+//
+// The preview draws these parts where they belong; the export plates them on the bed. Those are
+// different frames and no single translation connects them, because each PIECE is dropped to z 0
+// independently — two bodies 400 m apart in elevation both bottom out at 0. Hence a mode here
+// rather than an offset at the far end.
+
+test("seated: the part's underside IS the printed surface, for every body on the tile", () => {
+  const plan = planTile(BASE, { z: 10 });
+  const { mosaic, mask } = seaLakeTile(plan);
+  const s = opts({ recessMm: 3 });
+  const { solid, inlays } = bakeTileSolid(mosaic, plan, { ...s, inlaySeated: true }, mask);
+  assert.ok(inlays);
+  const tile = columns(solid.positions), part = columns(inlays.positions);
+  const midX = (plan.gw - 1) * plan.dx / 2;
+  let checked = 0, sawSea = 0, sawLake = 0, worst = 0;
+  for (const [k, p] of part) {
+    const t = tile.get(k);
+    if (!t) continue;
+    worst = Math.max(worst, Math.abs(p.lo - t.hi));
+    Number(k.split(",")[0]) < midX ? sawSea++ : sawLake++;
+    checked++;
+  }
+  assert.ok(checked > 100, `only ${checked} columns compared`);
+  assert.ok(sawSea > 20 && sawLake > 20, `must cover both bodies (${sawSea} sea, ${sawLake} lake)`);
+  assert.ok(worst < 1e-4, `seated underside must mate with the printed surface, worst gap ${worst}`);
+});
+
+// The assertion that fails if anything reintroduces a shared floor: a single offset would put
+// both pieces on the same plane, which is precisely the bug the mode exists to avoid.
+test("seated: two bodies keep the elevation gap between them", () => {
+  const plan = planTile(BASE, { z: 10 });
+  const { mosaic, mask } = seaLakeTile(plan);
+  const s = opts({ recessMm: 3 });
+  const { inlays } = bakeTileSolid(mosaic, plan, { ...s, inlaySeated: true }, mask);
+  assert.ok(inlays);
+  const midX = (plan.gw - 1) * plan.dx / 2;
+  const lo = [Infinity, Infinity];
+  const P = inlays.positions;
+  for (let i = 0; i < P.length; i += 3) {
+    const side = P[i] < midX ? 0 : 1;
+    if (P[i + 2] < lo[side]) lo[side] = P[i + 2];
+  }
+  const K = plan.mmPerM * s.exag;
+  assert.ok(Math.abs((lo[1] - lo[0]) - (LAKE - SEA) * K) < 1e-3,
+    `pieces must sit ${((LAKE - SEA) * K).toFixed(2)} mm apart, got ${(lo[1] - lo[0]).toFixed(2)}`);
+});
+
+// The export's contract, asserted here so the new branch cannot quietly take it away.
+test("unseated: every piece still floors at exactly 0, which is what plates them", () => {
+  const plan = planTile(BASE, { z: 10 });
+  const { mosaic, mask } = seaLakeTile(plan);
+  const { inlays } = bakeTileSolid(mosaic, plan, opts({ recessMm: 3 }), mask);
+  assert.ok(inlays);
+  const midX = (plan.gw - 1) * plan.dx / 2;
+  const lo = [Infinity, Infinity];
+  const P = inlays.positions;
+  for (let i = 0; i < P.length; i += 3) {
+    const side = P[i] < midX ? 0 : 1;
+    if (P[i + 2] < lo[side]) lo[side] = P[i + 2];
+  }
+  assert.equal(lo[0], 0, "sea piece must rest on the bed");
+  assert.equal(lo[1], 0, "lake piece must rest on the bed too — per piece, not per part");
+});

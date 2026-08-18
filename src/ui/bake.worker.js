@@ -33,8 +33,8 @@ const post = /** @type {(msg: unknown, transfer?: Transferable[]) => void} */ (
 let catalogPromise = null;
 const catalogOnce = () => (catalogPromise ??= fetchCatalog().catch(() => null));
 
-/** @param {{ gen: number, settings: TileSettings, maxTiles: number, format: "mesh" | "3mf", name?: string, color?: boolean, coverage?: boolean, trail?: {segments: import("../core/types.js").LatLon[][], widthMm: number, heightMm: number, trenchDepthMm: number} | null }} data */
-async function handle({ gen, settings, maxTiles, format, name, color, coverage, trail }) {
+/** @param {{ gen: number, settings: TileSettings, maxTiles: number, format: "mesh" | "3mf", name?: string, color?: boolean, coverage?: boolean, inlays?: boolean, trail?: {segments: import("../core/types.js").LatLon[][], widthMm: number, heightMm: number, trenchDepthMm: number} | null }} data */
+async function handle({ gen, settings, maxTiles, format, name, color, coverage, inlays: wantInlays, trail }) {
   try {
     const plan = planTile(settings, { maxTiles });
     // Started with the raster fans but never awaited in this path: it rides its own message
@@ -64,11 +64,20 @@ async function handle({ gen, settings, maxTiles, format, name, color, coverage, 
     for (let i = 0; i < wmGrid.length; i++) waterMask[i] = wmGrid[i] > 0.5 ? 1 : 0;
 
     post({ gen, baking: true }); // all tiles in hand → meshing + validation (synchronous, blocks the worker)
-    // waterInlay stays off for a preview: the inlays cost a second full-grid snapshot plus their
-    // own mesh — on every keystroke of a slider drag, for something nothing displays. The cord is
-    // the opposite case, so it rides both paths: it IS displayed, and meshing the same geometry
-    // the export ships beats drawing an approximation of it.
-    const opts = { ...settings, waterInlay: format === "3mf" && !!settings.waterInlay };
+    // The inlays cost a second full-grid snapshot plus their own mesh — measured at +60% on a
+    // 583² Puget Sound tile — so they are baked only where something reads them: the export, and
+    // the settled crisp pass that draws them. Never the quick tier, which fires on every keystroke
+    // of a slider drag. Gated on the checkbox in both cases, so a user who is not exporting parts
+    // pays nothing and their preview is the mesh it was before.
+    //
+    // Seated for the mesh, plated for the .3mf: the preview draws them in the hollows they fill,
+    // the writer lays them out on the bed. See buildDrape — the two frames are not a translation
+    // apart, because each piece is dropped to z 0 independently.
+    const opts = {
+      ...settings,
+      waterInlay: !!settings.waterInlay && (format === "3mf" || !!wantInlays),
+      inlaySeated: format === "mesh",
+    };
     const job = trail ?? undefined;
     let cordDropped = false;
     let baked;
@@ -167,9 +176,17 @@ async function handle({ gen, settings, maxTiles, format, name, color, coverage, 
       const cord = ribbon
         ? { positions: ribbon.positions, indices: ribbon.indices, normals: vertexNormals(ribbon.positions, ribbon.indices) }
         : null;
-      post({ gen, positions: solid.positions, indices: solid.indices, normals, bands, frame: probeFrame, lineElev, landBluePct, waterAsLandPct, waterDroppedPct, waterRecessedPct, cord, cordDropped },
+      // Same message as the tile for the same reason as the cord: the parts and the grooves they
+      // fill are one picture, and arriving apart would show a frame of hollows with the water
+      // missing. No offset rides along — the bake already seated them.
+      const parts = inlays
+        ? { positions: inlays.positions, indices: inlays.indices,
+            normals: vertexNormals(inlays.positions, inlays.indices) }
+        : null;
+      post({ gen, positions: solid.positions, indices: solid.indices, normals, bands, frame: probeFrame, lineElev, landBluePct, waterAsLandPct, waterDroppedPct, waterRecessedPct, cord, cordDropped, parts },
         [solid.positions.buffer, solid.indices.buffer, normals.buffer, probeGrid.buffer, waterMask.buffer, detail.buffer,
-          ...(cord ? [cord.positions.buffer, cord.indices.buffer, cord.normals.buffer] : [])]);
+          ...(cord ? [cord.positions.buffer, cord.indices.buffer, cord.normals.buffer] : []),
+          ...(parts ? [parts.positions.buffer, parts.indices.buffer, parts.normals.buffer] : [])]);
       // Deliberately not awaited — see above. Detached from the job's own catch, so it carries
       // the same guard: a post() that throws here has no other handler.
       coverageJob?.then((c) => post({ gen, coverage: c })).catch((e) => { console.error("bake worker coverage:", e); });

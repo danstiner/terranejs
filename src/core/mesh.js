@@ -667,12 +667,13 @@ function labelPieces(gw, gh, span, mask) {
  * @param {number} gh
  * @param {Span} span
  * @param {Uint8Array} mask cell mask, from cellsFromVertexMask
- * @param {{ dx: number, dy: number, mmPerM: number, emin: number, exag: number }} geom
+ * @param {{ dx: number, dy: number, mmPerM: number, emin: number, exag: number,
+ *   seatBase?: number }} geom
  * @param {Float32Array} top upper-surface elevation grid, in `grid`'s units
  * @returns {Solid | null} null when the mask covers no cell
  */
 export function buildDrape(grid, gw, gh, span, mask, geom, top) {
-  const { dx, dy, mmPerM, emin, exag } = geom;
+  const { dx, dy, mmPerM, emin, exag, seatBase } = geom;
   const { r1, c0 } = span;
   const topTris = gridTopTris(gw, span, mask);
   if (topTris.length === 0) return null;
@@ -691,8 +692,16 @@ export function buildDrape(grid, gw, gh, span, mask, geom, top) {
     const id = topTris[i], z = rel(grid[id]);
     if (z < floor[vertexLabel[id]]) floor[vertexLabel[id]] = z;
   }
+  // `seatBase` = draw the part where it BELONGS rather than where it prints: the tile's own frame,
+  // base plate included, so it mates with the surface it fills. Absent — every export path — each
+  // piece drops to z 0 instead, which is what lets the writer plate them side by side. The two
+  // cannot be one mesh: a tile's water bodies sit at different elevations, so seating them keeps a
+  // spread the bed cannot.
+  const drop = seatBase == null
+    ? (/** @type {number} */ id) => floor[vertexLabel[id]]
+    : () => -seatBase;
   return assembleSolid(topTris, gw * gh,
     (id) => [((id % gw) - c0) * dx, (r1 - ((id / gw) | 0)) * dy],
-    (id) => rel(top[id]) - floor[vertexLabel[id]],
-    (id) => rel(grid[id]) - floor[vertexLabel[id]], "mirror");
+    (id) => rel(top[id]) - drop(id),
+    (id) => rel(grid[id]) - drop(id), "mirror");
 }

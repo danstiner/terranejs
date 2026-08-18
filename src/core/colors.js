@@ -41,6 +41,21 @@ export const MAX_CHANGES = BAND_COLORS.length - 1; // 4
  */
 export const CORD_COLOR = [0.71, 0.27, 0.24];
 
+/**
+ * Deep glacial aqua for previewing the water inlays where they seat.
+ *
+ * Deliberately NOT the water band: the band is the tint the tile prints at sea level, a slate blue,
+ * while these are separate parts a user chooses filament for. A mountain-lake aqua reads as water
+ * at a glance and still tells the two apart, which is the whole point of drawing them. It sits
+ * between the two — bluer and darker than a tropical turquoise, greener and darker than the band —
+ * so neither reads as the other.
+ *
+ * Authored in sRGB like CORD_COLOR and for the same reason — it is a display color handed to
+ * three.js, not a value written into the linear working space the bands live in.
+ * @type {RGB}
+ */
+export const INLAY_COLOR = [0.24, 0.58, 0.62];
+
 // --- Ecological band thresholds (metres vs |latitude|) --------------------
 // One base curve carries the shape: the timberline (closed-canopy forest edge) vs
 // |latitude|. It plateaus across the tropics/subtropics, then descends in two slopes —

@@ -3,7 +3,7 @@
 // combined bounds. three.js loads via the importmap.
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { MAX_CHANGES, CORD_COLOR } from "../core/colors.js";
+import { MAX_CHANGES, CORD_COLOR, INLAY_COLOR } from "../core/colors.js";
 import { sourcesAt, describeSources, rankSources, edgeDistance, featherPx, maxzoomFor } from "../core/coverage.js";
 import { roseMarks } from "./compass.js";
 
@@ -29,6 +29,13 @@ import { roseMarks } from "./compass.js";
  * @typedef {{ positions: Float32Array, indices: Uint32Array, normals: Float32Array }} Cord
  *   the trail cord in the tile's own frame: underside on the printed terrain, where the trail
  *   runs. The export writes the very same mesh, which is what lets it seat in its channel.
+ */
+/**
+ * @typedef {{ positions: Float32Array, indices: Uint32Array, normals: Float32Array }} Parts
+ *   the water inlays, baked SEATED — already in the tile's own frame rather than dropped to the
+ *   bed the way the export plates them, so this draws them untransformed. Same shape as Cord, kept
+ *   a separate name because it answers a different question: the cord asks whether the trail sits
+ *   right, these ask how much of this tile is a separate part.
  */
 /**
  * @typedef {{ features: import("../core/coverage.js").PlacedFeature[],
@@ -245,6 +252,8 @@ export function initPreview(container) {
   /** @type {Coverage | null} */
   let coverage = null;
   let viewMode = 0;                                   // index into VIEW_MODES; session state, not in the URL
+  /** @type {THREE.Mesh | null} */
+  let partsMesh = null;                               // held so applyView can hide it under an overlay
   /** @type {THREE.DataTexture | null} */
   let overlay = null;
   let probeDirty = false; // set on pointer move; one raycast per frame, then cleared
@@ -422,6 +431,11 @@ export function initPreview(container) {
       u.uOverlay.value = overlay;
       if (frame) u.uSpan.value.set((frame.gw - 1) * frame.dx, (frame.gh - 1) * frame.dy);
     }
+    // The diagnostic overlays are about the tile's grid; a part drawn over them would hide the
+    // very cells they exist to show. `!overlay` rather than `viewMode === 0` so this matches the
+    // shader's own fallback above: a mode selected before any frame has landed draws bands, and
+    // should draw the parts with them.
+    if (partsMesh) partsMesh.visible = !overlay;
   }
 
   /** @param {number} mode index into VIEW_MODES */
@@ -434,8 +448,9 @@ export function initPreview(container) {
    * @param {{ positions: Float32Array, indices: Uint32Array, normals: Float32Array, bands: Bands }[]} solids
    * @param {ProbeFrame | null} [probeFrame]
    * @param {Cord | null} [cord]
+   * @param {Parts | null} [parts]
    */
-  function setTiles(solids, probeFrame = null, cord = null) {
+  function setTiles(solids, probeFrame = null, cord = null, parts = null) {
     frame = probeFrame;
     coverage = null; // the new bake's provenance rides a later message; never show the old one against it
     for (const c of group.children) {
@@ -444,6 +459,7 @@ export function initPreview(container) {
       /** @type {THREE.Material} */ (m.material).dispose();
     }
     group.clear();
+    partsMesh = null; // group.clear() dropped it; applyView must not hold a disposed mesh
 
     const box = new THREE.Box3();
     for (const s of solids) {
@@ -474,6 +490,27 @@ export function initPreview(container) {
       // heightMm/(mmPerM·exag) metres, with a source label, and no sign anything was wrong.
       m.raycast = () => {};
       group.add(m);
+    }
+    // Opaque and untransformed — the bake seated it, so this is the tile as it prints once the
+    // parts drop in, which is the question the checkbox raises and nothing else answers. Opaque
+    // rather than tinted glass because on a coastal tile the parts can cover most of the surface,
+    // where a translucent slab reads as a highlight rather than as a separate object. Untick the
+    // box to see the bare grooves.
+    if (parts && parts.positions.length) {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute("position", new THREE.BufferAttribute(parts.positions, 3));
+      g.setIndex(new THREE.BufferAttribute(parts.indices, 1));
+      g.setAttribute("normal", new THREE.BufferAttribute(parts.normals, 3));
+      // Tagged sRGB, like the cord and unlike the bands: setRGB writes the WORKING space, and
+      // INLAY_COLOR is authored as a display color (see its note in colors.js). Dropping the tag
+      // would read it as linear and wash the part out.
+      const col = new THREE.Color().setRGB(...INLAY_COLOR, THREE.SRGBColorSpace);
+      partsMesh = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color: col, roughness: 0.9, metalness: 0 }));
+      // Non-pickable for the cord's reason: the probe answers for the terrain CELL, and a part's
+      // top is the water's ORIGINAL elevation, so a hit here would report the pre-recess surface
+      // as though it were what prints.
+      partsMesh.raycast = () => {};
+      group.add(partsMesh);
     }
     applyView(); // the new bake carries new grids, so the overlay is rebuilt against them
     // Forget the view along with the tile, so the next placement is framed rather than inheriting
