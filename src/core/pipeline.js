@@ -10,7 +10,7 @@ import { trailToPrintMm, cordSolid, admissibleCells, cordLattice, distField,
   trenchWidthMm } from "./cord.js";
 import { trenchAdmissibleCells, featherField, trenchTop } from "./trench.js";
 import { clipPolygon, clipElevs, clipRange } from "./clip.js";
-import { applyWaterRecess, filterUnprintableWater } from "./water.js";
+import { applyWaterRecess, filterUnprintableWater, splitWaterByLine } from "./water.js";
 import { checkWatertight, signedVolume } from "./validate.js";
 import { ThreeMFWriter } from "./threemf.js";
 import { fetchMosaic } from "./terrain.js";
@@ -31,7 +31,8 @@ import { fetchMosaic } from "./terrain.js";
  *   center = [lat,lon] of the tile; scale = 1:N; tileWidthMm = print size of the tile
  *   edge; base = base-plate thickness (mm); exag = vertical exaggeration;
  *   waterMode = how water is treated: "none" leaves it at true elevation, "flat" pulls it all
- *   onto one waterline below the land, "all" sinks it all by recessMm (default "none");
+ *   onto one waterline below the land, "lakes" sinks only the bodies above the colour line,
+ *   "all" sinks it all by recessMm (default "none");
  *   recessMm = water sink in print mm, ignored by "none" (default 0); layerMm = slicer
  *   layer height (default 0.15); shape = tile footprint (default "square"); tileWidthMm is
  *   the bounding-square side in every shape; waterInlay = also export the displaced water
@@ -137,7 +138,7 @@ export function planTile(settings, { z, maxTiles = 300 } = {}) {
  * @param {Uint8Array} [waterMask]
  * @param {{ segments: LatLon[][], widthMm: number, heightMm: number,
  *   trenchDepthMm?: number }} [trail]
- * @returns {{ solid: Solid, ribbon: Solid | null, inlays: Solid | null, emin: number, emax: number, lineElev: number, landBluePct: number, waterAsLandPct: number, printedWaterMask: Uint8Array | undefined, waterDroppedPct: number }}
+ * @returns {{ solid: Solid, ribbon: Solid | null, inlays: Solid | null, emin: number, emax: number, lineElev: number, landBluePct: number, waterAsLandPct: number, printedWaterMask: Uint8Array | undefined, waterDroppedPct: number, movedWaterMask: Uint8Array | undefined, waterRecessedPct: number }}
  */
 export function bakeTileSolid(mosaic, plan,
   { base, exag, waterMode = "none", recessMm = 0, layerMm = 0.15, waterInlay = false, waterFilter = true },
@@ -163,18 +164,34 @@ export function bakeTileSolid(mosaic, plan,
   const { mask: printedWaterMask, droppedPct: waterDroppedPct } = waterFilter
     ? filterUnprintableWater(waterMask, gw, gh, dx)
     : { mask: waterMask, droppedPct: 0 };
+  // The height the print CHANGES COLOUR at, one layer above the line: the export lifts the water
+  // pause that far (colors.colorChanges pauseLiftMm) so the water's top layer prints blue. A
+  // layer is metres of GROUND at map scale — 45 m at 1:300000, exag 1 — and water inside it
+  // cannot print as anything else, so grooving it buys nothing and costs a part. Judged at the
+  // bare line instead, the DEM/watermask coastline disagreement grooves 100% of the water on
+  // every real coastal tile; against this ceiling, 0-1.2% on Puget Sound, San Francisco Bay and
+  // Zeeland. `lakes` runs with flatten off, so the line it sits above is exactly Math.fround(0)
+  // — see applyWaterRecess's anchor. Deriving it from that instead would mean running the recess
+  // before the split, and the recess needs the mask the split produces.
+  const blueCeiling = layerMm / (mmPerM * exag);
+  const { mask: recessMask, recessedPct } = waterMode === "lakes" && printedWaterMask
+    ? splitWaterByLine(printedWaterMask, grid, gw, gh, blueCeiling)
+    : { mask: printedWaterMask, recessedPct: 100 };
   // The set whose elevation this bake actually changed, which is a narrower claim than "the water
-  // this tile printed" — with the mode at rest the water is terrain that happens to be wet.
-  // Two consumers, so they cannot disagree about which water moved: the inlay fills exactly what
-  // moved, and the channel refuses exactly what the inlay claims.
+  // this tile printed". One array, four consumers, so none of them can disagree about which water
+  // moved: the sink, the inlay (it fills exactly what moved), the trail channel (it refuses
+  // exactly what the inlay claims), and the probe's per-cell "(recessed)" marker. Undefined when
+  // nothing moved, which is also the inlay's guard — with the controls at rest there is no
+  // displaced volume to hand back, and the water is terrain that happens to be wet.
   // NOT `waterMode !== "none"`, tempting as that is now the depth cannot be zero from the UI. The
   // 0.5 floor is a UI and hash bound; a headless caller may pass 0, and claiming that tile moved
   // water would refuse the trail channel over a river nothing touched. app.js may make exactly
   // that reduction — it owns the floor — and this is the half that cannot.
   const movedWaterMask = waterMode === "flat" || (waterMode !== "none" && recessMm > 0)
-    ? printedWaterMask : undefined;
+    ? recessMask : undefined;
+  const waterRecessedPct = movedWaterMask && waterMode !== "flat" && recessMm > 0 ? recessedPct : 0;
   const { lineElev, landBluePct, waterAsLandPct } = applyWaterRecess(grid, printedWaterMask, {
-    waterMode, recessMm, layerMm, K: mmPerM * exag, footprint,
+    waterMode, recessMm, layerMm, K: mmPerM * exag, footprint, recessMask, filled: waterInlay,
   });
   // Projected once, because the channel and the cord must be measured against the same polyline,
   // and meshed against the same lattice: two builders picking their own k would compute crossings
@@ -213,10 +230,12 @@ export function bakeTileSolid(mosaic, plan,
       // The MOVED mask, not the printed one. The channel is refused over water because lowering a
       // vertex the recess put at a known depth would unseat the part moulded to it — a claim about
       // water this bake displaced, not about water in general. Left at true elevation it is terrain
-      // the trail may cross, which is what a trail fording a river does. Water is normally the
-      // tile's own emin, so a ford cuts the thinnest ground on the tile and can reach trench.js's
-      // base-cut refusal on a thin base — loud and remediable, which is the wanted direction.
-      // Undefined when nothing moved. Unconditional on waterInlay: that toggle is export-only, so keying tile geometry to
+      // the trail may cross, which is what a trail fording a river does. Under `lakes` that is per
+      // BODY: the channel crosses the ungrooved ocean and stops at the grooved lake on the same
+      // tile. Water it crosses is normally the tile's own emin, so a ford cuts the thinnest ground
+      // there is and can reach trench.js's base-cut refusal on a thin base — loud and remediable,
+      // which is the wanted direction. Undefined when nothing moved. Unconditional on waterInlay:
+      // that toggle is export-only, so keying tile geometry to
       // it would make the previewed tile a different object from the exported one. And the printed
       // mask feeds it, for the reason filterUnprintableWater exists: water too narrow to print is
       // ordinary land in the tile now, and refusing the channel over it would leave the trail
@@ -317,7 +336,7 @@ export function bakeTileSolid(mosaic, plan,
   }
 
   return { solid, ribbon, inlays, emin, emax, lineElev, landBluePct, waterAsLandPct,
-    printedWaterMask, waterDroppedPct };
+    printedWaterMask, waterDroppedPct, movedWaterMask, waterRecessedPct };
 }
 
 // One to three solids → a .3mf blob. The tile sits at the plate origin, the cord in the tile's

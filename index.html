@@ -78,11 +78,12 @@
           <div class="labelrow">
             <label for="waterMode">Water mode</label>
             <button type="button" class="help" aria-label="About water modes"
-              data-help="Leave it: only terrain at or below sea level prints blue. One level: every water body drops to a single plane held below all land, so all water prints blue and no land does — a lake far above sea level can drop a long way. Recess all water: grooves every body to the insert depth without moving the color line, so each one gets a blue part to drop in.">?</button>
+              data-help="Leave it: only terrain at or below sea level prints blue. One level: every water body drops to a single plane held below all land, so all water prints blue and no land does — a lake far above sea level can drop a long way. Recess water above the waterline: grooves only the bodies that would otherwise print as terrain — lakes and reservoirs above sea level — and leaves the ocean where it is, because it already prints blue. Export the inlays and print them in blue to fill those grooves. Recess all water: grooves every body to the insert depth without moving the color line, so each one gets a blue part to drop in.">?</button>
           </div>
           <select id="waterMode">
             <option value="none">Leave water at true elevation</option>
             <option value="flat">Flatten all water to one level</option>
+            <option value="lakes">Recess water above the waterline</option>
             <option value="all">Recess all water</option>
           </select>
 

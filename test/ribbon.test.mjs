@@ -386,6 +386,50 @@ test("bakeTileSolid: fording a river cuts at the tile's thinnest ground", () => 
   assert.ok(bakeTileSolid(mosaic, plan, sunk, water, trail).solid);
 });
 
+// What `lakes` buys the trail, and the reason the channel reads movedWaterMask rather than a
+// tile-wide "is the recess on" flag: one tile holds an ocean the mode left alone and a lake it
+// grooved, and the trail has to cross the first and stop at the second.
+test("bakeTileSolid: under lakes the channel crosses the ocean and stops at the lake", () => {
+  const plan = planTile(PIPE_SETTINGS, { z: 10 });
+  const trail = trailAcross(plan);
+  const { gw, gh } = plan;
+  // Two bands straight across the trail, six columns each so both survive filterUnprintableWater
+  // and both keep an interior for splitWaterByLine to classify from.
+  const OCEAN = ((gw / 4) | 0), LAKE = (((3 * gw) / 4) | 0) - 3;
+  const band = (/** @type {Uint8Array} */ m, /** @type {number} */ c0) => {
+    for (let r = 0; r < gh; r++) for (let c = c0; c < c0 + 6; c++) m[r * gw + c] = 1;
+    return m;
+  };
+  const both = band(band(new Uint8Array(gw * gh), OCEAN), LAKE);
+  const lakeOnly = band(new Uint8Array(gw * gh), LAKE);
+  // Land at 100 m, the ocean under the 0 m line, the lake well above it.
+  const mosaic = () => {
+    const m = flatMosaicFor(plan);
+    for (let r = 0; r < plan.window.gh; r++) {
+      for (let c = 0; c < plan.window.gw; c++) {
+        const i = r * plan.window.gw + c;
+        if (c >= OCEAN && c < OCEAN + 6) m.data[i] = -5;
+        else if (c >= LAKE && c < LAKE + 6) m.data[i] = 50;
+      }
+    }
+    return m;
+  };
+  /** @param {any} s @param {Uint8Array} mask */
+  const cut = (s, mask) =>
+    signedVolume(bakeTileSolid(mosaic(), plan, s, mask, { ...trail, trenchDepthMm: 0 }).solid)
+    - signedVolume(bakeTileSolid(mosaic(), plan, s, mask, { ...trail, trenchDepthMm: 0.6 }).solid);
+
+  const lakes = { ...PIPE_SETTINGS, waterMode: "lakes", recessMm: 2 };
+  const all = { ...PIPE_SETTINGS, waterMode: "all", recessMm: 2 };
+  // Grooving both bands costs the channel strictly more than grooving one.
+  assert.ok(cut(lakes, both) > cut(all, both) + 1e-6,
+    "the ocean lakes left alone must not stop the channel");
+  // And the cost is exactly the lake's: the same tile with the ocean out of the mask entirely
+  // recesses the same vertices, so the channel it carries has to be the same channel.
+  assert.ok(Math.abs(cut(lakes, both) - cut(all, lakeOnly)) < 1e-6,
+    "only the grooved body may cost the channel anything");
+});
+
 test("bakeTileSolid: an inset deeper than the base plate is refused, not clamped", () => {
   const plan = planTile(PIPE_SETTINGS, { z: 10 });
   assert.throws(() => bakeTileSolid(flatMosaicFor(plan), plan, PIPE_SETTINGS, undefined,

@@ -42,7 +42,7 @@ const SHAPES = /** @type {Shape[]} */ (["square", "hex", "circle"]);
 // Strict, like SHAPES: an unrecognised mode rejects the payload rather than falling back. Unlike
 // `shape` and `inlay`, an ABSENT mode also rejects — there is no pre-feature default to decode to,
 // because v1 spelled this as a boolean and v1 payloads are refused by the version check above.
-const WATER_MODES = /** @type {WaterMode[]} */ (["none", "flat", "all"]);
+const WATER_MODES = /** @type {WaterMode[]} */ (["none", "flat", "lakes", "all"]);
 
 // Print preferences are clamped, not rejected: their bounds are UI choices that may widen, and an
 // old link should still open. Geography is different — a bad coordinate has no sane fallback, so

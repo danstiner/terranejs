@@ -172,13 +172,14 @@ Consequences of clipping:
 Water (ocean + lakes + rivers) is masked from the Re:Earth **watermask** tile, fetched at the
 same bbox and zoom as the elevation mosaic — pixel-aligned, so no detection or flood-fill is
 needed. Colour is per-print-Z, so water reads blue only at or below the water/land color line.
-One control decides what happens to that water; a groove depth in Advanced feeds the one mode
-that sinks it:
+One control decides what happens to that water; a groove depth in Advanced feeds the modes
+that sink it:
 
 | mode | color line sits at | what moves | groove depth |
 |---|---|---|---|
 | Leave water at true elevation | 0 m | nothing | — |
 | Flatten all water to one level | a plane below all land | all water | — |
+| Recess water above the waterline | 0 m | bodies whose interior sits above the color change | applies |
 | Recess all water | 0 m | all water | applies |
 
 **Leave water at true elevation** is the default: the terrain is untouched and the line sits at
@@ -199,6 +200,64 @@ far any given body falls depends on where it started, which no single number can
 water and land. A large recess can sink even high water below the sea-level line: blue pits where
 lakes were, documented rather than guarded.
 
+**Recess water above the waterline** grooves only the bodies that would otherwise print as
+terrain, and leaves the rest at true elevation.
+
+"Would print as terrain" is a claim about the print, so the test is against the height the print
+**changes color at**, not the waterline. The export lifts the water pause one layer above the line
+so the water's top layer prints blue, and one layer is metres of *ground* at map scale — 45 m at
+1:300,000 and exaggeration 1, since a layer buys `layerMm × scale ÷ (1000 × exag)` metres. Water
+inside that layer cannot print as anything but blue however far above 0 m its sample reads, so
+grooving it would buy nothing and cost a part. Both the layer-height control and the exaggeration
+slider therefore move this boundary, the same way the flatten plane already moves with layer
+height.
+
+A body is grooved iff its **interior** — itself eroded one cell in from its outer ring — holds a
+vertex above that height; a body with no interior cells (one cell thick, or run edge to edge
+against the tile) falls back to judging its full extent instead. The erosion is a second, separate
+guard, and it is needed because the elevation grid and the watermask are different products whose
+coastlines disagree by a pixel or two at every shore: the outer ring samples the DEM's shore bluff,
+which on a steep coast clears the color change on its own. Measured at exaggeration 1, a Sognefjord
+tile's fjord reaches 47.4 m over its full extent and 10.1 m eroded against a 45 m color change, and
+a Bora Bora lagoon 12.6 m and 10.5 m against 12 m — each grooves whole without the erosion and not
+at all with it. Neither guard is sufficient alone: after erosion every ocean body still carries
+~10–12 m of excursion from low real land inside the water polygon (motu, marsh islands, dikes),
+which clears a bare 0 m line every time. Together they let a real mixed tile happen — ocean left at
+the line, alpine lakes and reservoirs grooved.
+
+The fallback stays conservative: a sliver too narrow to have an interior still grooves rather than
+being silently left alone. Either way the decision remains whole-body — half a body would leave a
+cliff inside the water and an insert tapering to nothing along the split, so a decisive vertex
+anywhere in the chosen evidence still grooves ALL of it, shoreline included. That one vertex
+decides a body of a million cells is the rule's limit: at exaggeration 4 the color change falls to
+3–11 m of ground, under the residue above, and coastal tiles groove whole again. The answer there
+would be a robust statistic over the body rather than a deeper erosion.
+
+Classification measures a body's full membership, footprint or not, which is the opposite of how
+the color line is measured: water outside the print must not anchor the plane, but a body left
+alone whose out-of-footprint cells sat above the color change would leave the rim climbing a
+cliff.
+
+This is the mode that lets one tile carry an ocean blue by color band and lakes blue by drop-in
+part. It expects the inlays: without them the grooves are open hollows, and the panel says so.
+
+`waterAsLandPct` counts only water the recess did NOT move, and counts it against the same color
+change the mode above classifies by, in every mode. Water in a groove has a part to fill it, so it
+is blue by part rather than showing as land — the warning would otherwise tell a user to flatten a
+tile whose lakes are working exactly as intended. Water under the color change is blue by band, so
+naming it would be a false alarm on the near-0 bathymetry noise every coastal tile carries: share
+of tile falls from 5.06% to 0.13% on a Puget Sound tile and 4.50% to 0.50% on San Francisco Bay,
+both from over the 1% threshold to under it, while Lake Titicaca (58%) and Crater Lake (13%) are
+untouched — that water really does print as rock. With no recess depth the count is unchanged in
+every other respect.
+
+`landBluePct` keeps measuring against the true line rather than the color change, deliberately.
+The two counters ask different questions: one is "will this water print as land", a question about
+the print, and the other is "is there land under the waterline", which is what the flatten it
+nudges toward actually fixes. Land inside the lifted layer does print blue, but flattening cannot
+help it — the lift is inherent to the print — so counting it would nudge at every coast with no
+remedy behind the nudge.
+
 The **insert groove depth** (0.5–5 mm in 0.5 mm steps, default 1 mm — half a millimetre is 3–4
 layers at a typical layer height) is how deep the groove is that a blue insert drops into, and so
 how thick that part is. It lives in Advanced, beside layer height, because it describes how you
@@ -217,12 +276,14 @@ wide tile keeps no rivers — 0.8 mm is 120 m of ground at 1:150,000. One filter
 the recess and the inlay, which is what makes them agree: the recess moves masked vertices while
 the inlay meshes all-four-corners cells, so before this, water narrower than a cell was grooved
 with nothing built to fill it. The tile says so when more than 20% of its water is dropped, and
-the hover probe and water overlay mark those cells as a third state — neither printed water nor
-land — so a lake that failed to groove can be asked about directly. A checkbox under Advanced
-turns the whole filter off. It is one of the two controls there the shared link does not carry:
-the mode describes the tile, this one describes the nozzle printing it, and someone opening the
-link on different hardware should get their own answer rather than the sharer's. Advanced and
-Trail are the only groups that may hold a control the hash does not carry.
+the hover probe and water overlay mark those cells as one of four states — land, water printed at
+the line, water dropped as too narrow to print, and water this bake grooved for an insert — so a
+dropped lake and a grooved one can each be asked about directly. A checkbox under Advanced
+turns the whole filter off. It sits there, and not with the water controls, because it is not
+in the shared link: the water controls describe the tile, this one describes the nozzle
+printing it, and someone opening the link on different hardware should get their own answer
+rather than the sharer's. Advanced and Trail are the only groups that may hold a control the
+hash does not carry.
 
 The mode moves geometry, and the insert groove depth sets how far; what moves can be exported
 back as separate drop-in parts — see "Water inlays" under Export.
@@ -400,16 +461,18 @@ The channel stops short of the rim and of recessed water. It keeps one
 cell further in than the cord does, because a cell carrying it has
 subdivided edges and its neighbours must be retriangulated to match —
 which a rim cell, whose top is a clipped polygon rather than two
-triangles, cannot be. It also never lowers a vertex the water mode
-**moved**, per vertex rather than per cell, or the drop-in inlay moulded
-to that shore would no longer seat. Water the mode left where it was
-is not a border at all: with it at rest the mask marks terrain that
-happens to be wet, and a trail fording a river shows a trail. The
-channel and the inlay read the same mask, so they cannot disagree about
-which water moved. At both borders the depth ramps to zero over the last
-cell rather than ending in a step, and the cord's underside follows the
-same ramp, so a trail running off the tile or across a recessed lake
-stays seated to where it stops.
+triangles, cannot be. It also never lowers a vertex the water controls
+**moved**, per vertex rather than per cell, or the drop-in inlay
+moulded to that shore would no longer seat. Water the controls left
+where it was is not a border at all: with them at rest the mask marks
+terrain that happens to be wet, and a trail fording a river shows a
+trail. Under **Recess water above the waterline** that is decided per
+body, so on one tile the channel crosses the ungrooved ocean and stops
+at the grooved lake. The channel and the inlay read the same mask, so
+they cannot disagree about which water moved. At both borders the
+depth ramps to zero over the last cell rather than ending in a step,
+and the cord's underside follows the same ramp, so a trail running off
+the tile or across a recessed lake stays seated to where it stops.
 
 Two things refuse an inset outright, both reported on the trail warning.
 The lattice is chosen from the cord's width against a triangle budget

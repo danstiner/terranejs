@@ -12,12 +12,14 @@ import { roseMarks } from "./compass.js";
 /**
  * @typedef {{ emin: number, base: number, mmPerM: number, exag: number,
  *   orig: Float32Array, mask: Uint8Array, detail: Float32Array, gw: number, gh: number,
- *   dx: number, dy: number, recessed: boolean }} ProbeFrame
+ *   dx: number, dy: number }} ProbeFrame
  *   the bake's own inputs, shipped alongside the mesh: the hover probe reads elevations and the
  *   mask, the view overlays read all three grids.
- *   `mask` is three-valued — 0 land, 1 water the tile printed as water, 2 water the size filter
- *   left at terrain level. 2 exists because 0 would be a lie the user cannot see through: the
- *   raster says water, the print says rock, and only the mask knows which question was asked.
+ *   `mask` is four-valued — 0 land, 1 water the tile printed at the waterline, 2 water the size
+ *   filter left at terrain level, 3 water the tile grooved for an insert. 2 exists because 0 would
+ *   be a lie the user cannot see through: the raster says water, the print says rock, and only the
+ *   mask knows which question was asked. 3 is per cell rather than per frame because one tile can
+ *   now hold both an ungrooved ocean and grooved lakes.
  */
 /**
  * @typedef {{ changes: ColorChange[], baseColor: [number,number,number], baseHex: string, baseName: string }} Bands
@@ -189,12 +191,14 @@ function overlayTexture(f, mode) {
   for (let i = 0; i < n; i++) {
     let r, g, b;
     if (name === "water") {
-      // Flat colors, no ramp: the mask is three states and a gradient would imply an ordering.
-      // The dropped state is a washed-out blue rather than a fourth hue — it reads as "water,
-      // but not the printed kind" at a glance, which is the comparison being made.
+      // Flat colors, no ramp: the mask is four states and a gradient would imply an ordering.
+      // The dropped state is a washed-out blue rather than a fourth hue — it reads as "water, but
+      // not the printed kind" at a glance, which is the comparison being made. The grooved state
+      // keeps the printed hue and darkens, because it IS printed water; the difference is depth.
       [r, g, b] = f.mask[i] === 1 ? [56, 108, 176]
-        : f.mask[i] === 2 ? [142, 160, 180]
-          : [222, 219, 210];
+        : f.mask[i] === 3 ? [30, 66, 120]
+          : f.mask[i] === 2 ? [142, 160, 180]
+            : [222, 219, 210];
     } else if (name === "height") {
       const v = 255 * Math.max(0, Math.min(1, (scalar[i] - lo) / (hi - lo)));
       [r, g, b] = [v, v, v];
@@ -380,8 +384,8 @@ export function initPreview(container) {
         const c = Math.round(lx / frame.dx);
         const r = frame.gh - 1 - Math.round(ly / frame.dy);
         const i = r >= 0 && r < frame.gh && c >= 0 && c < frame.gw ? r * frame.gw + c : -1;
-        if (i >= 0 && frame.mask[i] === 1) {
-          probe.textContent = `${metres(frame.orig[i])} · water${frame.recessed ? " (recessed)" : ""}`;
+        if (i >= 0 && (frame.mask[i] === 1 || frame.mask[i] === 3)) {
+          probe.textContent = `${metres(frame.orig[i])} · water${frame.mask[i] === 3 ? " (recessed)" : ""}`;
         } else if (i >= 0 && frame.mask[i] === 2) {
           // The raster calls this water and the print does not. Reading `orig` is not a fallback
           // here: the filter left the sample where it was, so this IS the printed elevation.
