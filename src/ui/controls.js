@@ -28,8 +28,11 @@ export function syncControls(s) {
   set("recess", s.recessMm);
   set("layerMm", s.layerMm);
   /** @type {HTMLSelectElement} */ (el("shape")).value = s.shape;
-  /** @type {HTMLSelectElement} */ (el("waterMode")).value = s.waterMode;
-  /** @type {HTMLInputElement} */ (el("waterInlay")).checked = s.waterInlay;
+  // Uniform loop, no `flat` case: decodeState maps the retired mode to `none` before the store
+  // ever holds it, so the store can never carry a value this loop doesn't have a card for.
+  for (const mode of /** @type {const} */ (["none", "lakes", "all"])) {
+    /** @type {HTMLInputElement} */ (el(`water-${mode}`)).checked = s.waterMode === mode;
+  }
   el("exagVal").textContent = s.exag.toFixed(1);
   el("baseVal").textContent = s.base.toFixed(1);
 }
@@ -72,14 +75,12 @@ export function wireControls(store) {
     // Guard like the numeric inputs: the store must never hold a value the hash rejects.
     if (v === "square" || v === "hex" || v === "circle") store.set({ shape: v });
   });
-  el("waterMode").addEventListener("change", (e) => {
-    const v = /** @type {HTMLSelectElement} */ (e.target).value;
-    // Guard like #shape: the store must never hold a value the hash rejects.
-    if (v === "none" || v === "flat" || v === "lakes" || v === "all") store.set({ waterMode: v });
-  });
-  el("waterInlay").addEventListener("change", (e) => {
-    store.set({ waterInlay: /** @type {HTMLInputElement} */ (e.target).checked });
-  });
+  // The radio values ARE the mode strings, so the loop is the closed-set guard the select needed
+  // a conditional for. `flat` has no radio: it is retired from the panel but legal in the hash —
+  // see syncControls.
+  for (const mode of /** @type {const} */ (["none", "lakes", "all"])) {
+    el(`water-${mode}`).addEventListener("change", () => store.set({ waterMode: mode }));
+  }
   el("recess").addEventListener("input", (e) => {
     const v = num(e);
     if (Number.isFinite(v) && v >= 0.5 && v <= 5) store.set({ recessMm: v });
@@ -192,7 +193,9 @@ export function wireHelp() {
     const btn = /** @type {HTMLElement} */ (node);  // not `el` — that is this module's id lookup
     btn.addEventListener("pointerenter", () => show(btn));
     btn.addEventListener("pointerleave", () => hide(btn));
-    btn.addEventListener("focus", () => show(btn));
-    btn.addEventListener("blur", () => hide(btn));
+    // focusIN, not focus: a help target may be a wrapper whose focusable part is inside it —
+    // the water cards are a <label> around a hidden radio — and `focus` does not bubble.
+    btn.addEventListener("focusin", () => show(btn));
+    btn.addEventListener("focusout", () => hide(btn));
   }
 }

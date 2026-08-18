@@ -48,7 +48,6 @@ const store = createStore(/** @type {AppState} */ ({
     center: DEFAULT_PRESET.center, scale: DEFAULT_PRESET.scale, tileWidthMm: 200, base: 6, exag: 1,
     waterMode: /** @type {const} */ ("none"), recessMm: 1, layerMm: 0.15, // sea-level tint by default
     shape: "square",
-    waterInlay: false,
   }),
   trail: null, // a restored link never carries one — see the AppState note above
   cord: { widthMm: 1, heightMm: 1, trenchDepthMm: 0 }, // session-only: a hash carries no trail, so no cord either
@@ -158,8 +157,9 @@ function detailSummary(settings) {
   }
 }
 
-// The mask and the color line can disagree in both directions, and both disagreements have the
-// same one-click remedy — so they compose into one sentence rather than two banners. Land below
+// The mask and the color line can disagree in both directions, and one banner covers both facts
+// as independent sentences — the remedies split. Water-as-land names the Lake inserts card;
+// land-blue names nothing, because nothing surviving moves the colour line. Land below
 // the line prints blue (polders); masked water above it shows as terrain (a high lake, or noisy
 // near-0 bathymetry fragmenting a bay). The water clause counts against the height the print
 // changes color at rather than the line — the M600 pause sits a layer above it, tens of metres of
@@ -170,16 +170,20 @@ function detailSummary(settings) {
 /** @param {{ landBluePct: number, waterAsLandPct: number, waterDroppedPct: number,
  *   lineElev: number, waterRecessedPct: number, waterMode: string, recessMm: number }} data */
 function updateWaterWarning(data) {
-  const clauses = [];
-  if (data.landBluePct > LAND_BLUE_WARN_PCT) clauses.push(`${Math.round(data.landBluePct)}% of the land will print blue`);
-  // One decimal: rounding a firing 1.4% to "1%" would quote the threshold at which it stays silent.
-  if (data.waterAsLandPct > WATER_AS_LAND_WARN_PCT) clauses.push(`water covering ${data.waterAsLandPct.toFixed(1)}% of the tile will show as land`);
   const sentences = [];
-  if (clauses.length) sentences.push(`${clauses.join(" and ")} — choose "Flatten all water to one level" to separate land from water.`);
-  // Its own sentence, not a third clause: the remedy above cannot reach it. A dropped body is out
-  // of the mask, so flattening does nothing to it; only a tighter scale prints it wide enough.
+  // The two facts part ways on remedy. Lake inserts genuinely fix water-showing-as-land — the
+  // grooves get blue parts — so that clause names the card. Nothing surviving moves the colour
+  // LINE, so polder land printing blue is stated plainly with no control named: flattening was
+  // the only fix, and it is retired.
+  if (data.landBluePct > LAND_BLUE_WARN_PCT)
+    sentences.push(`${Math.round(data.landBluePct)}% of the land will print blue.`);
+  // One decimal: rounding a firing 1.4% to "1%" would quote the threshold at which it stays silent.
+  if (data.waterAsLandPct > WATER_AS_LAND_WARN_PCT)
+    sentences.push(`Water covering ${data.waterAsLandPct.toFixed(1)}% of the tile will show as land — choose "Lake inserts" to print it blue.`);
+  // Its own sentence, like the two above: flattening never reached it and neither do the inserts.
+  // A dropped body is out of the mask, so flattening does nothing to it; only a tighter scale prints it wide enough.
   if (data.waterDroppedPct > WATER_DROPPED_WARN_PCT) {
-    sentences.push(`${data.waterDroppedPct.toFixed(1)}% of this tile's water is too narrow to print and stays at terrain level — raise "Map scale" to print it wider.`);
+    sentences.push(`${data.waterDroppedPct.toFixed(1)}% of this tile's water is too narrow to print and stays at terrain level — raise "Scale" to print it wider.`);
   }
   // Its own sentence for the same reason as the dropped-water one: the remedy above cannot reach
   // it. Every body already prints blue, so there is nothing for a groove to improve — the mode is
@@ -187,7 +191,7 @@ function updateWaterWarning(data) {
   // dry tile, where "no water sits above the waterline" would be true and useless.
   if (data.waterMode === "lakes" && data.recessMm > 0 && data.lineElev !== -Infinity &&
       data.waterRecessedPct === 0) {
-    sentences.push('No water on this tile sits above the waterline, so "Recess water above the waterline" grooves nothing — every body already prints blue.');
+    sentences.push('No water on this tile sits above the waterline, so "Lake inserts" grooves nothing — every body already prints blue.');
   }
   // Mirror case, and the one users actually hit on a real coastal tile: every body grooved, an
   // inlay covering most of the tile. waterAsLandPct is silent here by design (the recess moved
@@ -195,7 +199,7 @@ function updateWaterWarning(data) {
   // the only place that says so.
   if (data.waterMode === "lakes" && data.recessMm > 0 && data.lineElev !== -Infinity &&
       data.waterRecessedPct === 100) {
-    sentences.push('Every body of water on this tile sits above the waterline, so "Recess water above the waterline" grooves all of it — the same as "Recess all water".');
+    sentences.push('Every body of water on this tile sits above the waterline, so "Lake inserts" grooves all of it — the same as "Lake & sea inserts".');
   }
   const warn = $("waterWarn");
   warn.hidden = sentences.length === 0;
@@ -418,7 +422,7 @@ function pump() {
     setProgress("Detailed preview…");
     // Inlays ride the crisp pass only, like coverage: they cost a second full-grid snapshot and
     // their own mesh, worth paying once the user has stopped moving and not on every frame of a
-    // slider drag. An ask, not a tell — the worker still gates on the checkbox, so render policy
+    // slider drag. An ask, not a tell — the worker still gates on the mode, so render policy
     // here needs to know nothing about export intent.
     worker.postMessage({ gen: previewGen, settings: previewSettings, maxTiles: CRISP_MAX_TILES, format: "mesh", coverage: true, inlays: true, trail: previewTrail });
   }
@@ -440,7 +444,11 @@ function loadPreview() {
   // `trail` rides its own field (the worker reads only that one), so it is destructured out
   // rather than posted twice — a structured clone of 15.7k points per pass, for a field nothing
   // downstream of `settings` reads. Same split as the export click below.
-  const { trail, ...settings } = { ...s, center: s.center, waterFilter: waterFilterOn() };
+  const { trail, ...settings } = { ...s, center: s.center, waterFilter: waterFilterOn(),
+    // Composed here, not stored: the parts are the grooving modes' point, so core's build switch
+    // is a fact about the mode rather than a setting of its own. (`flat` builds none either way —
+    // core excludes it — so this stays a plain mode check, not a policy.)
+    waterInlay: s.waterMode === "lakes" || s.waterMode === "all" };
   previewSettings = settings;
   previewTrail = trail ? { segments: trail.segments, ...s.cord } : null;
   previewGen = ++gen;
@@ -503,27 +511,6 @@ store.subscribe((s) => {
   // the same number at every tier and cannot disagree with the one that cuts.
   $("trenchHint").textContent = s.center
     ? trenchHint(s.cord.trenchDepthMm, s.cord.widthMm, s.cord.heightMm) : "";
-  // The inlays are the volume the water mode displaced, so with the mode at rest there is no
-  // volume and the export silently gains nothing. Say so at the checkbox rather than let the
-  // user find a .3mf with one object in it.
-  //
-  // This covers the settings only. A tile with no water at all also exports nothing and says
-  // nothing here — whether the tile HAS water is a bake result, and the crisp preview now draws
-  // the parts it made, so an empty tile shows no blue and needs no sentence for it.
-  // The UI may reduce this where core may not: no control can produce a depth below 0.5, so a
-  // mode past `none` always displaces something. pipeline.js keeps the full predicate because
-  // headless callers are not bound by that floor.
-  const displaces = s.waterMode !== "none";
-  const hint = $("inlayHint");
-  // Not a disabled checkbox in either direction: a disabled box that is already ticked reads as
-  // "off" while the state says on, so both of these say the words instead.
-  const text = s.waterInlay && !displaces
-    ? "No water is displaced yet — pick a water mode, or the export adds nothing."
-    : !s.waterInlay && (s.waterMode === "lakes" || s.waterMode === "all")
-      ? 'Without the parts this mode leaves open grooves — tick "Also export water inlays" and print them in blue.'
-      : "";
-  hint.hidden = !text;
-  if (text) hint.textContent = text;
   const km = (s.tileWidthMm * s.scale) / 1e6; // print mm × 1:N scale → real km the tile spans
   // tileWidthMm is the bounding-square side, so only the hex prints shorter than it is wide.
   const tile = s.shape === "hex"
@@ -711,7 +698,8 @@ $("export").addEventListener("click", () => {
   quickDue = crispDue = false;     // both describe work this export supersedes
   // `trail` rides its own field below (the worker reads only that one), so it's destructured
   // out here rather than posted twice inside `settings` too.
-  const { trail, ...settings } = { ...s, center: s.center, waterFilter: waterFilterOn() };
+  const { trail, ...settings } = { ...s, center: s.center, waterFilter: waterFilterOn(),
+    waterInlay: s.waterMode === "lakes" || s.waterMode === "all" }; // composed, not stored — see loadPreview
   exportGen = ++gen;
   exportName = defaultTileName(settings); // lat/lng/width/scale → describes the tile
   setProgress("Export…");

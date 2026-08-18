@@ -51,17 +51,18 @@ export const PRESETS = [
   { name: "Great Smoky Mountains", group: "Park", center: [35.65, -83.5], scale: 250000 },
   { name: "Haleakalā", group: "Park", center: [20.71, -156.17], scale: 150000 },
   // Water — tiles chosen because they stress the water model (data-pipeline.md §4) in ways
-  // ordinary relief doesn't. Each is a different disagreement between the default sea-level
-  // colour line and the `flat` mode.
-  // Sub-sea land beside tidal ocean: under `none`, the polders print blue with the warning;
-  // `flat` carves the sea below them and hands the land back its terrain colours.
+  // ordinary relief doesn't. Several disagree with the default sea-level colour line in ways
+  // no surviving mode moves — the retired `flat` mode used to be the fix; now the warning
+  // just states the fact.
+  // Sub-sea land beside tidal ocean: these polders print blue at the colour line no matter
+  // which surviving mode is chosen.
   { name: "Zeeland", group: "Water", center: [51.55, 3.75], scale: 250000 },
   { name: "New Orleans", group: "Water", center: [29.97, -90.05], scale: 250000 },
   // Water ABOVE the tropical treeline (3812 m) — the band clamp keeps the array ascending so
   // the lake reads blue against tundra/rock rather than mis-sorting into green.
   { name: "Lake Titicaca", group: "Water", center: [-15.85, -69.4], scale: 500000 },
-  // Water BELOW sea level (−430 m, the lowest on Earth): the only case where the default 0 m
-  // line blues the water AND its shore, so `flat` is the whole story.
+  // Water BELOW sea level (−430 m, the lowest on Earth): the default 0 m line blues the water
+  // AND its shore, and no surviving choice moves the line.
   { name: "Dead Sea", group: "Water", center: [31.5, 35.47], scale: 300000 },
   // Deep fjords: sea inlets threading 1500 m walls — the recess groove reads as real coastline.
   { name: "Sognefjord", group: "Water", center: [61.15, 6.9], scale: 300000 },

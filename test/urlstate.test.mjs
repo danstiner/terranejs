@@ -8,7 +8,6 @@ const FULL = {
   // 1, not 0: the depth is floored at 0.5 now, so a zero here would clamp on decode and every
   // deepEqual round-trip below would fail against its own input.
   waterMode: /** @type {const} */ ("none"), recessMm: 1, layerMm: 0.15, shape: /** @type {const} */ ("square"),
-  waterInlay: false,
 };
 
 test("encodeState → decodeState round-trips every field", () => {
@@ -20,7 +19,7 @@ test("round-trip survives the leading # the browser reports", () => {
 });
 
 test("round-trip preserves non-default water settings", () => {
-  const s = { ...FULL, waterMode: /** @type {const} */ ("flat"), recessMm: 3, layerMm: 0.2, exag: 2.5, base: 8.5, tileWidthMm: 250 };
+  const s = { ...FULL, waterMode: /** @type {const} */ ("lakes"), recessMm: 3, layerMm: 0.2, exag: 2.5, base: 8.5, tileWidthMm: 250 };
   assert.deepEqual(decodeState(encodeState(s)), s);
 });
 
@@ -55,8 +54,8 @@ test("decodeState rejects out-of-range geography", () => {
   assert.equal(decodeState(bend("scale", "-5")), null, "negative scale");
 });
 
-test("waterMode round-trips every mode, and an unknown mode is rejected not defaulted", () => {
-  for (const waterMode of /** @type {const} */ (["none", "flat", "lakes", "all"])) {
+test("waterMode round-trips none/lakes/all, and an unknown mode is rejected not defaulted", () => {
+  for (const waterMode of /** @type {const} */ (["none", "lakes", "all"])) {
     const s = { ...FULL, waterMode };
     assert.deepEqual(decodeState(encodeState(s)), s, `${waterMode} survives`);
     assert.ok(encodeState(s).includes(`mode=${waterMode}`), `${waterMode} is spelled in the hash`);
@@ -67,6 +66,14 @@ test("waterMode round-trips every mode, and an unknown mode is rejected not defa
   assert.equal(decodeState(bend("T")), null, "the old flag form is not silently accepted");
   assert.equal(decodeState(bend("lakez")), null, "an unrecognised mode is rejected, not defaulted");
   assert.equal(decodeState(encodeState(FULL).replace(/&mode=[^&]*/, "")), null, "absent mode rejected");
+});
+
+// `flat` is retired: it still passes the strict mode check above (rejecting would blank the whole
+// payload), but decode deliberately maps it to `none` rather than carrying it into the UI. This is
+// a mapping, not a round trip and not a rejection — every other field must still survive intact.
+test("mode=flat decodes to waterMode none, with every other field intact", () => {
+  const s = { ...FULL, waterMode: /** @type {const} */ ("flat"), recessMm: 3, layerMm: 0.2 };
+  assert.deepEqual(decodeState(encodeState(s)), { ...s, waterMode: "none" });
 });
 
 test("a v=1 link decodes to null, so the app opens its default region", () => {
@@ -147,27 +154,26 @@ test("a pre-shape link still opens, as a square", () => {
   assert.equal(s?.shape, "square");
 });
 
-test("the water-inlay flag round-trips", () => {
-  assert.deepEqual(decodeState(encodeState({ ...FULL, waterInlay: true })), { ...FULL, waterInlay: true });
+// The key is retired, not validated: a dead field's spelling must not reject an otherwise sound
+// link, so well-formed and mangled values alike decode identically to the key being absent. This
+// deliberately buries the old "corruption is not off" strictness with the flag it protected —
+// there is no "off" left to be wrong about.
+test("the retired inlay key is ignored whatever it says", () => {
+  const base = encodeState(FULL);
+  assert.ok(!base.includes("inlay="), "encode no longer emits the key");
+  const expected = decodeState(base);
+  assert.ok(expected);
+  for (const tail of ["inlay=T", "inlay=F", "inlay=true", "inlay="])
+    assert.deepEqual(decodeState(`${base}&${tail}`), expected, tail);
 });
 
-// Same contract as `shape` above, for the same reason: every link shared before water inlays
-// existed carries no `inlay` key, and back then the tile was the only object in the .3mf — so
-// absent decodes as off exactly.
-test("a pre-inlay link still opens, with inlays off", () => {
-  const legacy = "v=2&lat=46.8523&lon=-121.7603&scale=150000&width=200&base=6&exag=1" +
-    "&mode=all&recess=0&layer=0.15&shape=hex";
-  const s = decodeState(legacy);
-  assert.ok(s, "legacy link is not rejected");
-  assert.equal(s?.waterInlay, false);
-  assert.equal(s?.shape, "hex", "the rest of the payload still decodes");
-});
-
-// Absent is a legacy link; present-but-mangled is corruption, and corruption is not "off" —
-// the same strictness the water mode gets, and the reason the flag is a letter rather than 1/0.
-test("a mangled inlay flag is rejected, not read as off", () => {
-  const bend = (/** @type {string} */ v) => encodeState(FULL).replace(/inlay=[^&]*/, `inlay=${v}`);
-  for (const bad of ["1", "true", "", "t"]) assert.equal(decodeState(bend(bad)), null, `rejected: ${bad}`);
+// The two grooving modes are two of the three cards, and the mode key is their only carrier —
+// both spellings must survive a link.
+test("both grooving modes round-trip", () => {
+  for (const m of /** @type {const} */ (["lakes", "all"])) {
+    const s = { ...FULL, waterMode: m, recessMm: 2 };
+    assert.deepEqual(decodeState(encodeState(s)), s);
+  }
 });
 
 test("an unrecognised shape is rejected, not coerced", () => {

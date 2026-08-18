@@ -15,14 +15,14 @@ import { cellsFromVertexMask } from "./mesh.js";
 
 /** @typedef {import("./types.js").WaterMode} WaterMode */
 
-/** Warning threshold: % of land printing blue before the UI nudges toward the flatten mode.
- * Strict (5) because the remedy is one click and blue land here means land genuinely at/below
- * the waterline (polders, deltas) — the line sits at the true waterline, so ordinary coasts
- * carry no inherent blue fringe. */
+/** Warning threshold: % of land printing blue before the UI states it plainly; no surviving mode
+ * moves the colour line. Strict (5) because blue land here means land genuinely at/below the
+ * waterline (polders, deltas) — the line sits at the true waterline, so ordinary coasts carry no
+ * inherent blue fringe. */
 export const LAND_BLUE_WARN_PCT = 5;
 
 /** Warning threshold: % of the TILE that is masked water showing above the height the print
- * changes color at before the UI nudges toward the same mode. Share of tile, not of water, and
+ * changes color at before the UI names the Lake inserts card. Share of tile, not of water, and
  * low because of it: the
  * bug that motivated this (noisy near-0 bathymetry speckling a bay) is only 3.1% of that tile's
  * water but 1.5% of the tile, while a Rainier-style tile whose 0.3% water is alpine tarns is

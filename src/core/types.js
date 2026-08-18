@@ -10,12 +10,15 @@
  * @typedef {"square" | "hex" | "circle"} Shape
  *   Tile footprint shape.
  * @typedef {"none" | "flat" | "lakes" | "all"} WaterMode
- *   How the water controls treat the mask. `none` leaves water at true elevation; `flat` pulls all
- *   of it onto one plane below the land; `all` sinks all of it by the recess depth. `lakes` sinks
- *   only the bodies sitting above the colour line, so an ocean already printing blue keeps its
- *   true elevation while a high lake gets a groove and a drop-in part. The mode is the one setting a
- *   user picks — whether the geometry flattens or sinks, and by how much, is what it derives, which
- *   is why `none` ignores a nonzero recess outright rather than needing the depth cleared to match.
+ *   What happens to the masked water. `none` leaves it at true elevation; `flat` pulls all of it
+ *   onto one plane below the land; `all` sinks all of it by the recess depth; `lakes` sinks only
+ *   the bodies sitting above the colour line, so an ocean already printing blue keeps its true
+ *   elevation while a high lake gets a groove and a drop-in part. The UI offers `none`, `lakes`
+ *   and `all`; `flat` is retired there but stays legal here and in the hash — decode maps an old
+ *   `mode=flat` link to `none` so it opens as Natural, and only headless callers can still build
+ *   it. Only the grooving modes build parts — `flat`
+ *   displaces water but paints it by colour band, so it never emits any. `none` ignores a
+ *   nonzero recess: the mode decides whether the depth applies.
  * @typedef {{ gx0: number, gy0: number, gw: number, gh: number }} Window
  *   Inclusive global-pixel window: origin (gx0,gy0), width gw, height gh.
  * @typedef {{ data: Float32Array, width: number, height: number, originGx: number, originGy: number, z: number }} Mosaic

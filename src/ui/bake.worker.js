@@ -67,8 +67,8 @@ async function handle({ gen, settings, maxTiles, format, name, color, coverage, 
     // The inlays cost a second full-grid snapshot plus their own mesh — measured at +60% on a
     // 583² Puget Sound tile — so they are baked only where something reads them: the export, and
     // the settled crisp pass that draws them. Never the quick tier, which fires on every keystroke
-    // of a slider drag. Gated on the checkbox in both cases, so a user who is not exporting parts
-    // pays nothing and their preview is the mesh it was before.
+    // of a slider drag. Gated on the mode in both cases (the UI composes settings.waterInlay from
+    // it), so the modes without parts pay nothing and their preview is the mesh it was before.
     //
     // Seated for the mesh, plated for the .3mf: the preview draws them in the hollows they fill,
     // the writer lays them out on the bed. See buildDrape — the two frames are not a translation
