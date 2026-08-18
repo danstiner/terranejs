@@ -10,8 +10,7 @@ import { MAX_MERCATOR_LAT } from "./tilemath.js";
 /** @typedef {import("./types.js").WaterMode} WaterMode */
 /**
  * @typedef {{ center: LatLon | null, scale: number, tileWidthMm: number, base: number,
- *   exag: number, waterMode: WaterMode, recessMm: number, layerMm: number, shape: Shape,
- *   waterInlay: boolean }} ShareableState
+ *   exag: number, waterMode: WaterMode, recessMm: number, layerMm: number, shape: Shape }} ShareableState
  */
 
 /** Payload version. Bump only for a breaking key/meaning change; old links then decode to null. */
@@ -40,7 +39,7 @@ export const MM_PER_KM_MAX = 1000;
 const SHAPES = /** @type {Shape[]} */ (["square", "hex", "circle"]);
 
 // Strict, like SHAPES: an unrecognised mode rejects the payload rather than falling back. Unlike
-// `shape` and `inlay`, an ABSENT mode also rejects — there is no pre-feature default to decode to,
+// `shape`, an ABSENT mode also rejects — there is no pre-feature default to decode to,
 // because v1 spelled this as a boolean and v1 payloads are refused by the version check above.
 const WATER_MODES = /** @type {WaterMode[]} */ (["none", "flat", "lakes", "all"]);
 
@@ -71,7 +70,7 @@ const trim = (v, places) => String(Number(v.toFixed(places)));
  * @param {ShareableState} state
  * @returns {string}
  */
-export function encodeState({ center, scale, tileWidthMm, base, exag, waterMode, recessMm, layerMm, shape, waterInlay }) {
+export function encodeState({ center, scale, tileWidthMm, base, exag, waterMode, recessMm, layerMm, shape }) {
   if (!center) return "";
   return [
     `v=${STATE_VERSION}`,
@@ -85,7 +84,6 @@ export function encodeState({ center, scale, tileWidthMm, base, exag, waterMode,
     `recess=${trim(recessMm, 2)}`,
     `layer=${trim(layerMm, 3)}`,
     `shape=${shape}`,
-    `inlay=${waterInlay ? "T" : "F"}`,
   ].join("&");
 }
 
@@ -113,12 +111,6 @@ export function decodeState(hash) {
   if (!SHAPES.includes(/** @type {Shape} */ (shape))) return null;
   const mode = p.get("mode");
   if (!WATER_MODES.includes(/** @type {WaterMode} */ (mode))) return null;
-  // Absent means a link that predates water inlays, when the tile was the only object — so the
-  // default is exact rather than a guess. Same dead-but-harmless case as the `shape` precedent
-  // above: STATE_VERSION is 2 now, so the only links actually missing `inlay` are v1 and already
-  // refused above. Present-but-mangled still rejects, matching the water mode: corruption is not "off".
-  const inlayRaw = p.get("inlay");
-  if (inlayRaw !== null && inlayRaw !== "T" && inlayRaw !== "F") return null;
   // Geography must be exact: past the Mercator band or the antimeridian there is no tile to
   // plan, and a non-positive scale divides by zero downstream.
   if (Math.abs(lat) > MAX_MERCATOR_LAT || Math.abs(lon) > 180 || !(scale > 0)) return null;
@@ -128,10 +120,13 @@ export function decodeState(hash) {
     tileWidthMm: clamp(tileWidthMm, LIMITS.width),
     base: clamp(base, LIMITS.base),
     exag: clamp(exag, LIMITS.exag),
-    waterMode: /** @type {WaterMode} */ (mode),
+    // `flat` is retired: the panel cannot express it, and a link that decodes to a state no card
+    // matches reads as a bug rather than as fidelity. It still PASSES the strict mode check —
+    // rejecting would blank the whole payload — and then opens as Natural. Core keeps the mode
+    // for headless callers; only the decode boundary refuses to carry it into the UI.
+    waterMode: /** @type {WaterMode} */ (mode === "flat" ? "none" : mode),
     recessMm: clamp(recessMm, LIMITS.recess),
     layerMm: clamp(layerMm, LIMITS.layer),
     shape: /** @type {Shape} */ (shape),
-    waterInlay: inlayRaw === "T",
   };
 }

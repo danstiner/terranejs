@@ -1,7 +1,7 @@
-// The water inlays exist to drop back into the hollow the water controls left, so what is
-// asserted here is the pair of surfaces that makes that true: an underside congruent with the
-// printed water, and a top on the water's ORIGINAL elevation — not on the tile's waterline,
-// which flatten invents.
+// The water inlays exist to drop back into the hollow a grooving mode left, so what is asserted
+// here is the pair of surfaces that makes that true: an underside congruent with the printed
+// (recessed) water, and — seated, where a single tile-wide offset cannot hide a per-body bug —
+// a top on the water's ORIGINAL elevation, from before that mode sank it.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { inflateRawSync } from "node:zlib";
@@ -153,38 +153,6 @@ function seaLakeTile(plan) {
 /** @param {Partial<{waterMode: "none"|"flat"|"all", recessMm: number, waterInlay: boolean}>} [o] */
 const opts = (o = {}) => ({ ...BASE, waterMode: /** @type {const} */ ("all"), recessMm: 0, layerMm: 0.15, waterInlay: true, ...o });
 
-test("the inlay's top is the water's ORIGINAL elevation, not the tile's waterline", () => {
-  const plan = planTile(BASE, { z: 10 });
-  const { mosaic, mask } = seaLakeTile(plan);
-  // Flatten pulls both bodies onto one plane anchored below the sunk land column; the recess
-  // never applies here, flat and the sink being exclusive by construction (applyWaterRecess). If
-  // the top followed that plane, every piece would be flush; the original surface makes each
-  // piece carry exactly its own body's drop instead.
-  const s = opts({ waterMode: "flat" });
-  const { inlays } = bakeTileSolid(mosaic, plan, s, mask);
-  assert.ok(inlays);
-  const K = plan.mmPerM * s.exag;
-  // Ground truth computed independently of applyWaterRecess, same style as the offset test
-  // below: the sunk land column (SEA − 50) pulls the anchor below SEA, so the sea half now has
-  // to move too and both halves discriminate top-follows-original from top-follows-plane.
-  const lift = s.layerMm / K;
-  const anchor = Math.min(SEA, SEA - 50 - 2 * lift);
-  const seaThick = (SEA - anchor) * K;
-  const lakeThick = (LAKE - anchor) * K;
-  assert.ok(lakeThick > seaThick + 1, "fixture must separate the two thicknesses");
-  assert.ok(seaThick > 1, "fixture must make the sea half discriminate too");
-
-  let sawSea = 0, sawLake = 0;
-  const midX = (plan.gw - 1) * plan.dx / 2;
-  for (const [k, { lo, hi }] of columns(inlays.positions)) {
-    const x = Number(k.split(",")[0]);
-    const want = x < midX ? seaThick : lakeThick;
-    assert.ok(Math.abs(hi - lo - want) < 1e-4, `column ${k}: thickness ${hi - lo}, expected ${want}`);
-    if (x < midX) sawSea++; else sawLake++;
-  }
-  assert.ok(sawSea > 20 && sawLake > 20, `covered ${sawSea} sea and ${sawLake} lake columns`);
-});
-
 test("the inlay's underside is the printed water surface, offset by one constant per piece", () => {
   const plan = planTile(BASE, { z: 10 });
   const { mosaic, mask } = seaLakeTile(plan);
@@ -260,25 +228,27 @@ test("nothing displaced, nothing exported", () => {
   assert.equal(bakeTileSolid(mosaic, plan, opts({ recessMm: 3, waterInlay: false }), mask).inlays, null);
 });
 
-test("a flatten that moves nothing yields no inlay, rather than a degenerate one", () => {
+// `flat` displaces water — movedWaterMask must still say so, the trail channel's refusal depends
+// on it — but it no longer BUILDS anything: its parts filled from the plane back to the original
+// surface, for a sea a very large block, duplicating what the colour band already paints. The
+// water here is the HIGH third of the tile, so the plane genuinely moves it: exactly the fixture
+// where the old code made a part.
+test("flat displaces water but never builds a part for it", () => {
   const plan = planTile(BASE, { z: 10 });
   const { gx0, gy0, gw, gh } = plan.window;
-  // One water body, already the lowest thing in the tile: flatten's plane is min(lowest water,
-  // lowest land − 2 layers), so it lands ON the water and moves it 0. Top meets bottom at every
-  // vertex — an empty part, not an inverted one, and the pipeline must drop it rather than
-  // throw the way it does for a bad cord height.
   const data = new Float32Array(gw * gh);
   const mask = new Uint8Array(gw * gh);
   for (let r = 0; r < gh; r++) {
     for (let c = 0; c < gw; c++) {
       const water = c < gw / 3;
-      data[r * gw + c] = water ? SEA : LAND;
+      data[r * gw + c] = water ? LAND : SEA;
       mask[r * gw + c] = water ? 1 : 0;
     }
   }
   const mosaic = { data, width: gw, height: gh, originGx: gx0, originGy: gy0, z: plan.z };
-  const { inlays } = bakeTileSolid(mosaic, plan, opts({ waterMode: "flat", recessMm: 0 }), mask);
-  assert.equal(inlays, null);
+  const r = bakeTileSolid(mosaic, plan, opts({ waterMode: "flat" }), mask);
+  assert.ok(r.movedWaterMask, "the plane moved the water, and the channel must still know");
+  assert.equal(r.inlays, null, "no part — the colour band already paints a flattened sea blue");
 });
 
 /** The model part out of the .3mf zip. Same extraction as ribbon.test.mjs, including its guard:
@@ -401,6 +371,39 @@ test("seated: two bodies keep the elevation gap between them", () => {
   const K = plan.mmPerM * s.exag;
   assert.ok(Math.abs((lo[1] - lo[0]) - (LAKE - SEA) * K) < 1e-3,
     `pieces must sit ${((LAKE - SEA) * K).toFixed(2)} mm apart, got ${(lo[1] - lo[0]).toFixed(2)}`);
+});
+
+// Ports the SEA/LAKE-discriminating fixture that used to prove `flat`'s top didn't follow its
+// one shared plane; `flat` can't build a part at all now, so the point that survives is narrower
+// but still live for every grooving mode: the top is `preWater`, the pre-sink surface, not the
+// printed (recessed) one the underside test above pins. Seated, so the only offset is the
+// tile-wide seatBase — an unseated per-piece drop would let a top built from the wrong array
+// still float its piece to floor 0 and hide the bug.
+test("seated: the inlay's top is the water's ORIGINAL elevation, not the printed surface", () => {
+  const plan = planTile(BASE, { z: 10 });
+  const { mosaic, mask } = seaLakeTile(plan);
+  const s = opts({ recessMm: 3 });
+  const { inlays } = bakeTileSolid(mosaic, plan, { ...s, inlaySeated: true }, mask);
+  assert.ok(inlays);
+  const part = columns(inlays.positions);
+
+  // Ground truth from the RAW elevations, not the recessed grid: SEA and LAKE are what the top
+  // must show, not (SEA − recessMm/K) or (LAKE − recessMm/K), which is what a bug reading `grid`
+  // for the top instead of `preWater` would produce.
+  const K = plan.mmPerM * s.exag;
+  const emin = SEA - s.recessMm / K;                            // the recessed sea floor, in metres
+  const midX = (plan.gw - 1) * plan.dx / 2;
+  const expect = (/** @type {number} */ x) => s.base + ((x < midX ? SEA : LAKE) - emin) * K;
+
+  let checked = 0, sawSea = 0, sawLake = 0;
+  for (const [k, p] of part) {
+    const x = Number(k.split(",")[0]);
+    assert.ok(Math.abs(p.hi - expect(x)) < 1e-4, `column ${k}: top ${p.hi}, expected ${expect(x)}`);
+    x < midX ? sawSea++ : sawLake++;
+    checked++;
+  }
+  assert.ok(checked > 100, `only ${checked} columns compared`);
+  assert.ok(sawSea > 20 && sawLake > 20, `must cover both bodies (${sawSea} sea, ${sawLake} lake)`);
 });
 
 // The export's contract, asserted here so the new branch cannot quietly take it away.

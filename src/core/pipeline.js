@@ -35,8 +35,11 @@ import { fetchMosaic } from "./terrain.js";
  *   "all" sinks it all by recessMm (default "none");
  *   recessMm = water sink in print mm, ignored by "none" (default 0); layerMm = slicer
  *   layer height (default 0.15); shape = tile footprint (default "square"); tileWidthMm is
- *   the bounding-square side in every shape; waterInlay = also export the displaced water
- *   as drop-in parts (default false); waterFilter = skip water too narrow to print a part
+ *   the bounding-square side in every shape;
+ *   waterInlay = build the insert solids (a second full-grid snapshot plus their own mesh, so a
+ *   grooving caller that only needs geometry may decline); the UI always asks in the grooving
+ *   modes — this stays a switch for headless callers only. `flat` never builds parts regardless:
+ *   see the snapshot in bakeTileSolid; waterFilter = skip water too narrow to print a part
  *   for (default true — see water.filterUnprintableWater); inlaySeated = build the water
  *   inlays in the tile's own frame instead of dropped to the plate, for a preview that draws
  *   them seated (default false — the export plates them).
@@ -148,10 +151,14 @@ export function bakeTileSolid(mosaic, plan,
   waterMask, trail) {
   const { window, span, gw, gh, dx, dy, mmPerM, ring } = plan;
   const grid = cropGrid(mosaic, window);
-  // The inlay's TOP is the original water surface, and flatten destroys it in place (a flattened
+  // The inlay's TOP is the original water surface, and the move destroys it in place (a moved
   // vertex keeps no record of where it started), so the snapshot has to be taken here — before
   // applyWaterRecess — or not at all. A second full grid, so it is taken only when asked for.
-  const preWater = waterInlay && waterMask ? grid.slice() : null;
+  // `flat` is excluded outright rather than left to the caller: its parts would fill from the
+  // plane back to the original surface — for a sea, a very large block — duplicating what the
+  // colour band already paints. A fact about the mode, so it lives beside the geometry, not in
+  // the UI; the exclusion also spares every flat bake the snapshot's cost.
+  const preWater = waterInlay && waterMode !== "flat" && waterMask ? grid.slice() : null;
   // Clip geometry first — applyWaterRecess mutates the grid, so crossing ELEVATIONS have
   // to wait for it, but the inside mask and crossing positions are pure geometry.
   const clip = ring ? clipPolygon(gw, gh, window.gx0, window.gy0, ring) : null;
@@ -184,8 +191,9 @@ export function bakeTileSolid(mosaic, plan,
   // this tile printed". One array, four consumers, so none of them can disagree about which water
   // moved: the sink, the inlay (it fills exactly what moved), the trail channel (it refuses
   // exactly what the inlay claims), and the probe's per-cell "(recessed)" marker. Undefined when
-  // nothing moved, which is also the inlay's guard — with the controls at rest there is no
-  // displaced volume to hand back, and the water is terrain that happens to be wet.
+  // nothing moved, which is half the inlay's guard (the mode is the other half — flat moves water
+  // and still builds nothing) — with the controls at rest there is no displaced volume to hand
+  // back, and the water is terrain that happens to be wet.
   // NOT `waterMode !== "none"`, tempting as that is now the depth cannot be zero from the UI. The
   // 0.5 floor is a UI and hash bound; a headless caller may pass 0, and claiming that tile moved
   // water would refuse the trail channel over a river nothing touched. app.js may make exactly
@@ -335,9 +343,10 @@ export function bakeTileSolid(mosaic, plan,
         { dx, dy, mmPerM, emin, exag, ...(inlaySeated ? { seatBase: base } : {}) }, preWater);
       const iwt = checkWatertight(/** @type {Solid} */ (inlays));
       if (!iwt.closed) throw new Error(`pipeline: non-watertight water inlay (${iwt.unmatched} unmatched edges)`);
-      // Zero volume is reachable without being a bug: `flat` on a tile whose water is already the
-      // lowest thing in it moves every vertex onto the plane it is already on, so every top sits on
-      // its own underside. That is an empty part, not an inverted one — drop it rather than throw.
+      // Defensive now, not a live case: with `flat` excluded at the snapshot, a part exists only
+      // where a grooving mode sank water, so it is `sink` thick everywhere and its volume should
+      // always be positive. The guard stays because the failure modes differ — an empty part is
+      // a harmless drop, an inverted one corrupts the .3mf.
       if (signedVolume(/** @type {Solid} */ (inlays)) <= 0) inlays = null;
     }
   }

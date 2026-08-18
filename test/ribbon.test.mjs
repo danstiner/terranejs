@@ -294,7 +294,7 @@ test("bakeTileSolid: the seam holds over recessed water and through a switchback
   for (let r = 0; r < plan.gh; r++)
     for (let c = (gw / 2) | 0; c < gw; c++) water[r * gw + c] = 1;
   const wet = bakeTileSolid(flatMosaicFor(plan), plan,
-    { ...PIPE_SETTINGS, waterMode: "flat", recessMm: 0.4, waterInlay: true }, water,
+    { ...PIPE_SETTINGS, waterMode: "all", recessMm: 0.4, waterInlay: true }, water,
     { ...trailAcross(plan), trenchDepthMm: 0.6 });
   assert.equal(wet.solid.mirrored, false, "water: non-conforming seam");
   assert.equal(wet.solid.loops, 1);

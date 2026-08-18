@@ -172,35 +172,44 @@ Consequences of clipping:
 Water (ocean + lakes + rivers) is masked from the Re:Earth **watermask** tile, fetched at the
 same bbox and zoom as the elevation mosaic — pixel-aligned, so no detection or flood-fill is
 needed. Colour is per-print-Z, so water reads blue only at or below the water/land color line.
-One control decides what happens to that water; a groove depth in Advanced feeds the modes
-that sink it:
+One choice decides what happens to that water; the groove depth sits under Advanced. Three cards:
 
-| mode | color line sits at | what moves | groove depth |
+| choice | color line sits at | what moves | builds parts |
 |---|---|---|---|
-| Leave water at true elevation | 0 m | nothing | — |
-| Flatten all water to one level | a plane below all land | all water | — |
-| Recess water above the waterline | 0 m | bodies whose interior sits above the color change | applies |
-| Recess all water | 0 m | all water | applies |
+| Natural | 0 m | nothing | — |
+| Lake inserts | 0 m | bodies whose interior sits above the color change | yes |
+| Lake & sea inserts | 0 m | all water | yes |
 
-**Leave water at true elevation** is the default: the terrain is untouched and the line sits at
-0 m exactly — classic sea-level tint at any map scale. Ocean prints blue; land above sea level
-prints as terrain, however low; land at or below the line (polders) prints blue, with a warning
-naming the mode as the fix.
+A fourth mode, `flat` (all water pulled to one plane the colour band paints), is retired from the
+panel: an old `mode=flat` link opens as Natural, because decode maps the mode to `none` before the
+UI ever sees it. Core still accepts and builds `flat` for headless callers — the mechanism just has
+no card that can select it.
 
-**Flatten all water to one level** pulls every masked cell down to one plane two print layers
+**Natural** (leave water at true elevation) is the default: the terrain is untouched and the line
+sits at 0 m exactly — classic sea-level tint at any map scale. Ocean prints blue; land above sea
+level prints as terrain, however low; land at or below the line (polders) prints blue, and the
+tile says so plainly — no surviving choice moves the colour line, so the warning names no fix.
+
+**Retired: flatten to one level.** It pulls every masked cell down to one plane two print layers
 below the lowest land — `min(lowest water, lowest land − 2 layers)` — and the line sits at that
 plane, so every water body prints blue and land never does. The second term nearly always wins,
 because the source carries no bathymetry and clamps ocean to ~0 m: the plane therefore sits BELOW
 the lowest water, not at it, by 75 m on a Zeeland tile and 1794 m on a Titicaca one. Flattening is
 unbounded by design — a reservoir far above a river drops all the way to the shared plane, and how
 far any given body falls depends on where it started, which no single number can describe. On one
-667 km Peru tile the ocean falls 0.3 mm of print while a 5009 m lake falls 6.3 mm.
+667 km Peru tile the ocean falls 0.3 mm of print while a 5009 m lake falls 6.3 mm. The panel no
+longer offers it: it went unused, and its unbounded drop — correct by design — reads as a defect
+in the preview. Old `mode=flat` links now open as Natural instead; only headless callers can still
+build it.
 
-**Recess all water** sinks it in print space without moving the color line — a groove between
-water and land. A large recess can sink even high water below the sea-level line: blue pits where
-lakes were, documented rather than guarded.
+**Lake & sea inserts** (recess all water) sinks it in print space without moving the color line —
+a groove between water and land. A large recess can sink even high water below the sea-level
+line: blue pits where lakes were, documented rather than guarded. The sea's insert is the reason
+to choose this over Lake inserts: its top is the original sea surface — a flat plane — so as a
+separate part it can be ironed or printed in one glossy blue, where in place it is paint on
+terrain.
 
-**Recess water above the waterline** grooves only the bodies that would otherwise print as
+**Lake inserts** (recess water above the waterline) grooves only the bodies that would otherwise print as
 terrain, and leaves the rest at true elevation.
 
 "Would print as terrain" is a claim about the print, so the test is against the height the print
@@ -239,33 +248,36 @@ alone whose out-of-footprint cells sat above the color change would leave the ri
 cliff.
 
 This is the mode that lets one tile carry an ocean blue by color band and lakes blue by drop-in
-part. It expects the inlays: without them the grooves are open hollows, and the panel says so.
+part. Its parts are implied, not optional: a grooving choice always bakes and exports them, so
+the grooves never ship open.
 
 `waterAsLandPct` counts only water the recess did NOT move, and counts it against the same color
 change the mode above classifies by, in every mode. Water in a groove has a part to fill it, so it
-is blue by part rather than showing as land — the warning would otherwise tell a user to flatten a
-tile whose lakes are working exactly as intended. Water under the color change is blue by band, so
-naming it would be a false alarm on the near-0 bathymetry noise every coastal tile carries: share
-of tile falls from 5.06% to 0.13% on a Puget Sound tile and 4.50% to 0.50% on San Francisco Bay,
-both from over the 1% threshold to under it, while Lake Titicaca (58%) and Crater Lake (13%) are
-untouched — that water really does print as rock. With no recess depth the count is unchanged in
-every other respect.
+is blue by part rather than showing as land — and the warning names the fix plainly: choose "Lake
+inserts" to print it blue. Naming it is safe only because the fix is real; without a groove the
+count would otherwise complain about a tile whose lakes are working exactly as intended. Water
+under the color change is blue by band, so naming it would be a false alarm on the near-0
+bathymetry noise every coastal tile carries: share of tile falls from 5.06% to 0.13% on a Puget
+Sound tile and 4.50% to 0.50% on San Francisco Bay, both from over the 1% threshold to under it,
+while Lake Titicaca (58%) and Crater Lake (13%) are untouched — that water really does print as
+rock. Under the choices that groove nothing the count is unchanged, which is what keeps the
+default tile's warning as strict as it was.
 
 `landBluePct` keeps measuring against the true line rather than the color change, deliberately.
 The two counters ask different questions: one is "will this water print as land", a question about
-the print, and the other is "is there land under the waterline", which is what the flatten it
-nudges toward actually fixes. Land inside the lifted layer does print blue, but flattening cannot
-help it — the lift is inherent to the print — so counting it would nudge at every coast with no
-remedy behind the nudge.
+the print, and the other is "is there land under the waterline". Land inside the lifted layer does
+print blue, but no surviving choice can help it — the lift is inherent to the print, and the
+flatten that was once this warning's remedy has left the panel — so counting it would nudge at
+every coast with nothing behind the nudge. The sentence it prints therefore names no fix.
 
 The **insert groove depth** (0.5–5 mm in 0.5 mm steps, default 1 mm — half a millimetre is 3–4
 layers at a typical layer height) is how deep the groove is that a blue insert drops into, and so
 how thick that part is. It lives in Advanced, beside layer height, because it describes how you
 print rather than what the tile is: the mode is the water decision, and the depth is a preference
 set once. Only the sinking modes read it. It is floored rather than allowed to reach zero, because
-a zero depth cancels the mode that reads it — the select would promise grooves and deliver none.
-"Flatten all water to one level" does not read it at all: a plane sunk further was a shoreline lip,
-a different intent wearing the same control, and it is gone.
+a zero depth cancels the mode that reads it — the card would promise grooves and deliver none.
+The retired flatten mode does not read it at all: a plane sunk further was a shoreline lip, a
+different intent wearing the same control, and it is gone.
 
 Before either control runs, water too narrow to print is dropped from the mask: a body survives
 only if it holds a square 0.8 mm across that is entirely water — two 0.4 mm extrusions, the width
@@ -297,16 +309,19 @@ step above it — which matters because the colour model treats "the line is the
 elevation" as the ocean-floor case and colours the base plate itself blue. A line the grid
 could only round to would land above its own water and take the whole water band with it.
 
-**The mask and the line can disagree in both directions, and one warning covers both** — they
-share the single remedy above, so the banner composes clauses into one sentence rather than
-stacking. `landBluePct` counts land at/below the line, as a share of the **land**, warning past
-5%. `waterAsLandPct` counts masked water above the line, as a share of the **tile**, warning
-past 1%. The denominators differ on purpose: a bay speckled by noisy near-0 bathymetry is only
-~3% of its water but ~1.5% of its tile, while a tile whose 0.3% water is alpine tarns is 100% of
-its water — measured against the water, the warning would shout at the quiet case and stay
-silent on the real one. Both are structurally 0 with the mode set to "Flatten all water to one
-level", which is what makes the mode the remedy for either. The second says water will "show" as
-land, not print: the export pause sits a layer above the line, so water within one layer of it
+**The mask and the line can disagree in both directions, and one warning covers both** — as
+independent sentences, since the two no longer share a fix. `landBluePct` counts land at/below
+the line, as a share of the **land**, warning past 5%.
+`waterAsLandPct` counts masked water above the line, as a share of the **tile**, warning past 1%.
+The denominators differ on purpose: a bay speckled by noisy near-0 bathymetry is only ~3% of its
+water but ~1.5% of its tile, while a tile whose 0.3% water is alpine tarns is 100% of its water —
+measured against the water, the warning would shout at the quiet case and stay silent on the real
+one. Water-showing-as-land names its fix, "Lake inserts" (above); polder land printing blue is
+stated with none among the surviving choices — only flattening ever moved the colour line. Both
+are structurally 0 under the retired flatten mode, which headless callers can still build even
+though old links no longer reach it: a property of that legacy state, not a remedy the panel can
+offer. The second says water will "show" as land, not print: the export pause sits a layer above
+the line, so water within one layer of it
 still prints blue — a sub-mm offset that is tens to hundreds of metres of *elevation* at map
 scale. See
 `docs/superpowers/specs/2026-08-04-water-as-land-warning-design.md`.
@@ -466,10 +481,10 @@ triangles, cannot be. It also never lowers a vertex the water controls
 moulded to that shore would no longer seat. Water the controls left
 where it was is not a border at all: with them at rest the mask marks
 terrain that happens to be wet, and a trail fording a river shows a
-trail. Under **Recess water above the waterline** that is decided per
-body, so on one tile the channel crosses the ungrooved ocean and stops
-at the grooved lake. The channel and the inlay read the same mask, so
-they cannot disagree about which water moved. At both borders the
+trail. Under **Lake inserts** that is decided per body, so on one tile
+the channel crosses the ungrooved ocean and stops at the grooved
+lake. The channel and the inlay read the same mask, so they cannot
+disagree about which water moved. At both borders the
 depth ramps to zero over the last cell rather than ending in a step,
 and the cord's underside follows the same ramp, so a trail running off
 the tile or across a recessed lake stays seated to where it stops.
@@ -492,17 +507,16 @@ there is.
 
 ### Water inlays
 
-**Also export water inlays** (checkbox, default off) adds the water the
-tile displaced back as its own drop-in objects. Each one's underside is
-the printed water surface and its top is that water's **original**
-elevation — not the tile's waterline, which flatten invents — so an
-inlay is exactly the volume the water control removed. The mode
-decides: flatten's drop to the plane and a sinking mode's groove are
-alternative ways to displace water, never combined. With water left at
-true elevation, nothing was displaced and nothing is exported. Print
-them in blue, drop them into the hollows, and the terrain is whole again.
+A grooving choice **always exports the water it displaced** back as its own drop-in objects — the
+parts are the choice's point, so there is no checkbox to withhold them (bare grooves for an epoxy
+pour are one slicer delete away). Each part's underside is the printed water surface and its top
+is that water's **original** elevation, so it is exactly the volume the recess removed. The
+retired flatten mode builds none, even from an old link: its parts would fill from the plane back
+to the original surface — for a sea, a very large block — duplicating what the colour band
+already paints. Print the parts in blue, drop them into the hollows, and the terrain is whole
+again.
 
-With the box ticked the settled preview draws them where they drop in,
+The settled preview draws them where they drop in,
 so the tile on screen is the tile as it prints once the parts are
 seated. They are drawn in a glacial aquamarine rather than the water
 band's slate blue: the band is the tint the tile itself prints at sea
@@ -525,7 +539,7 @@ terrain's own triangulation on the same vertex ids, with the same relief
 expression over the tile's own already-displaced grid. It needs no
 sub-lattice — a lake is never a fraction of a cell across.
 The top comes from a snapshot of the grid taken *before* the water moves
-— flatten overwrites elevations in place, so a flattened vertex keeps no
+— the recess overwrites elevations in place, so a moved vertex keeps no
 record of where it started.
 
 A cell is claimed only when all four of its corners are water. The tile
