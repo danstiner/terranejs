@@ -541,7 +541,11 @@ for (const key of /** @type {const} */ (["Park", "Water", "Terrane"])) {
 }
 /** @param {import("./presets.js").Preset} preset */
 function applyPreset(preset) {
-  store.set({ center: preset.center, scale: preset.scale });
+  // Always written, so a preset frames its place the same way every time. Left to the user's
+  // last choice, an ordinary preset would inherit `lakes` from whichever lake was picked before
+  // it. syncControls because nothing else tells the cards the mode moved.
+  store.set({ center: preset.center, scale: preset.scale, waterMode: preset.waterMode ?? "none" });
+  syncControls(store.get());
   syncScaleInput(preset.scale);
   map.focus({ center: preset.center, scale: preset.scale, tileWidthMm: store.get().tileWidthMm, shape: store.get().shape });
 }
