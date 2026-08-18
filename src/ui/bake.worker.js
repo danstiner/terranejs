@@ -115,19 +115,28 @@ async function handle({ gen, settings, maxTiles, format, name, color, coverage, 
     // it so the threshold array stays ascending (see colors.waterLineThresholds).
     const thresholds = waterLineThresholds(bandThresholds(settings.center[0]), lineElev);
     const frame = { emin, base: settings.base, mmPerM: plan.mmPerM, exag: settings.exag, zmax: settings.base + (emax - emin) * K };
+    // ONE pause height, shared by the preview shader and the export embed. The preview used to
+    // ask for the unlifted line on the grounds that a layer is a print quantization rather than
+    // a model difference — true of the geometry, false of the color. The swap physically
+    // happens at line+lift, so water sampling anywhere inside that layer prints BLUE; drawing it
+    // against the bare line banded it as land instead. On a 0 m ocean that is not a hairline: the
+    // source tiles quantize to ~0.1 m and carry small positive samples over open water, so a
+    // whole lagoon speckled green in a preview of a print that comes out solid blue (Bora Bora).
+    // water.js already measures waterAsLand against line+lift for exactly this reason — the
+    // preview was the last thing still using the bare line, and now nothing does.
+    const pauseLiftMm = settings.layerMm ?? 0.15;
     // Enrich each change with its boundary line + elevation for the preview legend
     // (the shader and export use only z + color, so the extra fields are harmless there).
-    const changes = colorChanges(thresholds, frame).map((c) => ({
+    // `elev` stays the THRESHOLD, not the lifted z: the line really is at that elevation, and
+    // only the filament swap is a layer above it.
+    const changes = colorChanges(thresholds, frame, { pauseLiftMm }).map((c) => ({
       ...c, elev: Math.round(thresholds[c.band - 1]), boundary: BOUNDARY_NAMES[c.band - 1],
     }));
     if (format === "3mf") {
-      // Export lifts the water pause one print layer above the line so the water's top layer
-      // prints blue before the swap; preview/warning keep the true line (a sub-layer print
-      // quantization, not a model difference). Base divisible by layer height → the pause lands
-      // exactly on the first land layer of an ocean-floor tile.
-      const exportChanges = color
-        ? colorChanges(thresholds, frame, { pauseLiftMm: settings.layerMm ?? 0.15 })
-        : undefined;
+      // The same changes the preview drew — one pause height, so what was on screen is what the
+      // slicer is told to do. Base divisible by layer height → the pause lands exactly on the
+      // first land layer of an ocean-floor tile.
+      const exportChanges = color ? changes : undefined;
       const bytes = await tileTo3mf(name ?? "tile", solid, exportChanges, ribbon, inlays);
       post({ gen, bytes }, [bytes.buffer]);
     } else {
