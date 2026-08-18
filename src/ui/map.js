@@ -1,5 +1,5 @@
 // Leaflet single-square-tile picker. Click the map to place the tile at the
-// origin; drag the centre marker to move it. The tile footprint is drawn from
+// origin; drag the center marker to move it. The tile footprint is drawn from
 // layout geometry, so the picker never duplicates scale math. Leaflet loads
 // from the CDN via the importmap.
 import * as L from "leaflet";
@@ -52,7 +52,7 @@ export function initMap({ start, onPlace, onMove, onFile }) {
   // Leaflet's own trackResize listens to the WINDOW, which never fires for the case that moves
   // this container: the panel's scrollbar appearing when the settings section unhides takes ~15px
   // off the column, and a square map turns that into a height change too. Without this the map
-  // keeps its stale size and paints grey bands where it thinks it has no tiles.
+  // keeps its stale size and paints gray bands where it thinks it has no tiles.
   new ResizeObserver(() => map.invalidateSize({ animate: false })).observe(map.getContainer());
 
   // Fly the view to frame a tile's footprint (initial paint + every preset

@@ -113,7 +113,7 @@ test("clip: circle footprint area matches the inscribed n-gon", () => {
   assert.ok(rel < 1e-4, `area ${signedVolume(m) / H} vs ${want} (rel ${rel})`);
 });
 
-// The circle centre lands on an arbitrary float in practice, so sweep sub-pixel phase as
+// The circle center lands on an arbitrary float in practice, so sweep sub-pixel phase as
 // well as radius.
 test("clip: watertight and positive-volume across radii and phases", () => {
   const gw = 121, gh = 121;
@@ -172,7 +172,7 @@ function worstTriArea(m) {
 test("clip: no zero-area triangles", () => {
   const gw = 121, gh = 121;
   const { grid } = flatGrid(gw, gh);
-  const clip = clipPolygon(gw, gh, 0, 0, ngon(60, 60, 40, 64)); // integer centre and radius: crossings hit vertices
+  const clip = clipPolygon(gw, gh, 0, 0, ngon(60, 60, 40, 64)); // integer center and radius: crossings hit vertices
   clipElevs(clip, grid);
   const m = buildSolid(grid, gw, gh, { r0: 0, r1: gh - 1, c0: 0, c1: gw - 1 }, null, GEOM, clip);
   assert.ok(worstTriArea(m) > 1e-7, `smallest triangle area ${worstTriArea(m)}`);
@@ -255,9 +255,9 @@ test("clip: no collinear zero-area triangle from a snap/inside disagreement (rou
 });
 
 // Second-order defect found while stress-testing the round-2 fix above: dilating `inside`
-// can flip an isolated grid vertex to "inside" whose same-line neighbours stay outside (the
+// can flip an isolated grid vertex to "inside" whose same-line neighbors stay outside (the
 // true circle is nearly tangent to a grid line over exactly one cell). Both of that vertex's
-// collinear neighbour edges then get independent, well-separated (non-snapped) crossings, and
+// collinear neighbor edges then get independent, well-separated (non-snapped) crossings, and
 // the *global* rim loop ends up with 3 exactly-collinear consecutive vertices — not a
 // near-coincidence round 1's dedupe can catch (the gaps here are 0.017 and 0.34 grid units,
 // nowhere near DEDUPE_EPS), and not a snap/inside disagreement round 2's dilation targets
@@ -324,7 +324,7 @@ test("clip: near-tangent row does not invert a fan triangle's winding (review re
 // A corner grid vertex sitting a hair OUTSIDE the circle leaves a tiny chord between the two
 // crossings on the edges meeting there. Neither snaps if both miss SNAP_EPS, and a per-cell
 // geometric dedupe only sees the pair when the walk happens to make them adjacent — true in
-// the corner cell, false in the neighbours sharing just one of those edges. The cells then
+// the corner cell, false in the neighbors sharing just one of those edges. The cells then
 // disagree about the shared boundary, and assembleSolid closes the slit with a full-height
 // skirt wall INSIDE the tile. Edge parity balances (the flap is closed), so checkWatertight,
 // volume and area all pass while the preview shows a dark vertical band.
@@ -557,7 +557,7 @@ test("assembleSolid reports whether it took the mirror fallback", () => {
 });
 
 // The seam is the whole risk. A mismatched vertex count between a sub-meshed cell and its
-// neighbour leaves zero visible gap and a corrupt solid: checkWatertight passes, signedVolume
+// neighbor leaves zero visible gap and a corrupt solid: checkWatertight passes, signedVolume
 // passes, and the base silently mirrors. `mirrored`/`loops` are what actually see it.
 test("buildSolid stitches a flat one-loop base with the channel meshed in", () => {
   const gw = 30, pitch = 1, W = 1, depth = 0.6;
@@ -622,7 +622,7 @@ test("buildSolid stitches a flat base through a switchback at k >= 2", () => {
 });
 
 // The channel's cells are eroded one ring in from the footprint, so this cannot happen today --
-// but `skip` is honoured on only one of clippedTopTris' two branches, and if the erosion ever
+// but `skip` is honored on only one of clippedTopTris' two branches, and if the erosion ever
 // stopped holding, a claimed boundary cell would be emitted twice: once clipped, once sub-meshed.
 // Both copies are watertight and positive-volume, so only checkNoCoincidentFaces would see it, and
 // that runs in tests alone.

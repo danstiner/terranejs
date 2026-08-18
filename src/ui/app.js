@@ -10,7 +10,7 @@ import { defaultTileName, planTile } from "../core/pipeline.js";
 import { encodeState, decodeState } from "../core/urlstate.js";
 import { PRESETS, DEFAULT_PRESET } from "./presets.js";
 import { BAND_NAMES } from "../core/colors.js";
-import { LAND_BLUE_WARN_PCT, WATER_AS_LAND_WARN_PCT, WATER_DROPPED_WARN_PCT } from "../core/water.js";
+import { WATER_AS_LAND_WARN_PCT, WATER_DROPPED_WARN_PCT } from "../core/water.js";
 import { HEX_H } from "../core/layout.js";
 import { fitTile, clippedFraction, TRAIL_CLIP_WARN } from "../core/framing.js";
 import { parseGpxText } from "./gpxparse.js";
@@ -39,7 +39,7 @@ const EXPORT_MAX_TILES = 300;  // full print resolution (core's default tile bud
 const QUICK_MS = 100;   // relief while the user is still moving
 const SETTLE_MS = 2000; // they stopped — the only moment worth spending a sharp bake on
 
-// A shared link carries the full state, not a preset name: presets get retuned (a recentre, a
+// A shared link carries the full state, not a preset name: presets get retuned (a recenter, a
 // scale nudge), and a name would silently repoint every old link at the new framing. An
 // unreadable hash decodes to null, so a mangled link opens the default region instead of failing.
 const restored = decodeState(location.hash);
@@ -134,7 +134,7 @@ function writeHash(s) {
 /** @type {Record<import("../core/types.js").Shape, number>} */
 const AREA_FRAC = { square: 1, hex: (3 * Math.sqrt(3)) / 8, circle: Math.PI / 4 };
 
-// Resting status after the detailed preview lands: the resolution (real metres per
+// Resting status after the detailed preview lands: the resolution (real meters per
 // grid sample) and rough triangle count of what's on screen vs what Export will
 // bake at the full print budget — so the preview-vs-print gap is legible. Both are
 // planned with the same pure planTile the worker uses; no fetch, no bake.
@@ -145,7 +145,7 @@ function detailSummary(settings) {
   const part = (maxTiles) => {
     const { dx } = planTile(settings, { maxTiles });
     const spanPx = settings.tileWidthMm / dx;              // the tile's own width in cells
-    const gsd = (dx * settings.scale) / 1000;              // real metres between mesh vertices
+    const gsd = (dx * settings.scale) / 1000;              // real meters between mesh vertices
     const tris = (2 * frac * spanPx * spanPx) / 1e6;       // ≈ top-surface triangles, millions
     return { dx, text: `${gsd >= 10 ? Math.round(gsd) : gsd.toFixed(1)} m/vertex, ~${tris.toFixed(1)}M triangles` };
   };
@@ -157,26 +157,22 @@ function detailSummary(settings) {
   }
 }
 
-// The mask and the color line can disagree in both directions, and one banner covers both facts
-// as independent sentences — the remedies split. Water-as-land names the Lake inserts card;
-// land-blue names nothing, because nothing surviving moves the colour line. Land below
-// the line prints blue (polders); masked water above it shows as terrain (a high lake, or noisy
-// near-0 bathymetry fragmenting a bay). The water clause counts against the height the print
-// changes color at rather than the line — the M600 pause sits a layer above it, tens of metres of
-// elevation at map scale — so water that reads above the line but still prints blue is not named
-// here. The land clause keeps the true line: flattening cannot recover land inside that layer.
-// Percentages are differently based on purpose — see WATER_AS_LAND_WARN_PCT.
+// One banner, independent sentences. Masked water above the color line shows as terrain (a high
+// lake, noisy near-0 bathymetry fragmenting a bay, or the whole sea on a polder tile whose line
+// dropped below its land), and the sentence names the Lake inserts card — the remedy that fixes
+// every one of those. The count is against the height the print changes color at rather than the
+// line — the M600 pause sits a layer above it, tens of meters of elevation at map scale — so
+// water that reads above the line but still prints blue is not named here. Land printing blue has
+// no sentence because it cannot happen: waterColorLine never lets the line sit above land.
 // The quoted label must match index.html: the sentence is only actionable if it names the control.
 /** @param {{ landBluePct: number, waterAsLandPct: number, waterDroppedPct: number,
  *   lineElev: number, waterRecessedPct: number, waterMode: string, recessMm: number }} data */
 function updateWaterWarning(data) {
   const sentences = [];
-  // The two facts part ways on remedy. Lake inserts genuinely fix water-showing-as-land — the
-  // grooves get blue parts — so that clause names the card. Nothing surviving moves the colour
-  // LINE, so polder land printing blue is stated plainly with no control named: flattening was
-  // the only fix, and it is retired.
-  if (data.landBluePct > LAND_BLUE_WARN_PCT)
-    sentences.push(`${Math.round(data.landBluePct)}% of the land will print blue.`);
+  // No land-blue clause any more: the line never sits above land (waterColorLine lowers it
+  // below polders instead), so land printing blue cannot happen — the polder tile's fact is now
+  // "the sea shows as land", which is the water clause below, and its named remedy genuinely
+  // works there: the lowered ceiling makes "Lake inserts" groove and insert the sea itself.
   // One decimal: rounding a firing 1.4% to "1%" would quote the threshold at which it stays silent.
   if (data.waterAsLandPct > WATER_AS_LAND_WARN_PCT)
     sentences.push(`Water covering ${data.waterAsLandPct.toFixed(1)}% of the tile will show as land — choose "Lake inserts" to print it blue.`);
@@ -532,7 +528,7 @@ store.subscribe((s) => {
 });
 
 // Populate the region picker from PRESETS (grouped), keeping the static Custom
-// option first. Selecting a preset writes centre+scale, reflects the scale in the
+// option first. Selecting a preset writes center+scale, reflects the scale in the
 // mm/km input, and flies the map; the store change drives the debounced preview.
 // Display labels are explicit (not just `${group}s`) so "Park" reads "National Parks".
 // National Parks first, terranes last — the everyday picks sit at the top.
@@ -554,9 +550,9 @@ presetSelect.addEventListener("change", () => {
   if (preset) applyPreset(preset);
 });
 
-// On-load picker + inputs. A restored link is "Custom" by name — its centre may be nowhere near
+// On-load picker + inputs. A restored link is "Custom" by name — its center may be nowhere near
 // a preset, and matching one by coordinates would mislabel a tile the user nudged off it. The
-// map is already framed by initMap({ start }); the store carries its centre+scale so the
+// map is already framed by initMap({ start }); the store carries its center+scale so the
 // subscribe() fire runs the first preview (no redundant store.set here).
 presetSelect.value = restored ? "" : DEFAULT_PRESET.name;
 syncScaleInput(store.get().scale);

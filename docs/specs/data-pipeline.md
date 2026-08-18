@@ -24,7 +24,7 @@ end-to-end path from raw elevation data to a slicer-ready model file.
 Elevation and water extent come from **Re:Earth Terrain** (Mapterhorn),
 terrarium-encoded PNG tiles addressed as standard Web Mercator z/x/y tiles.
 Each pixel's red, green, and blue channels encode one elevation sample in
-metres (`elevation = R×256 + G + B/256 − 32768`); decoding a tile means
+meters (`elevation = R×256 + G + B/256 − 32768`); decoding a tile means
 reading its pixels and applying that formula. Full source details, the
 watermask tile, and attribution are in
 [`data-sources.md`](data-sources.md).
@@ -82,7 +82,7 @@ flowchart LR
 ## 1. Fetch + assemble
 
 Given the region and the chosen zoom, terranejs works out which source
-tiles cover it, fetches them one at a time, decodes each to metres, and
+tiles cover it, fetches them one at a time, decodes each to meters, and
 stitches the results into one elevation raster in a shared pixel space —
 the **mosaic**. This is the raw material every later stage samples from.
 The fetch is deliberately serial: the tile hosts are free, shared
@@ -124,7 +124,7 @@ other row) — wrong at any resolution, because the defect is the inconsistency,
 size. Clipping cuts boundary cells to the ring itself, at sub-cell resolution.
 
 **Why one clipper for both shapes.** Hexes add a requirement circles never have: hexes tile,
-so neighbouring tiles must agree **bit-for-bit** on a shared edge or a multi-tile print grows
+so neighboring tiles must agree **bit-for-bit** on a shared edge or a multi-tile print grows
 a seam. Rather than a hex-specific path, the single convex-polygon clipper hardens that
 guarantee into its geometry — a circle is just a ring with more vertices:
 
@@ -171,24 +171,41 @@ Consequences of clipping:
 
 Water (ocean + lakes + rivers) is masked from the Re:Earth **watermask** tile, fetched at the
 same bbox and zoom as the elevation mosaic — pixel-aligned, so no detection or flood-fill is
-needed. Colour is per-print-Z, so water reads blue only at or below the water/land color line.
+needed. Color is per-print-Z, so water reads blue only at or below the water/land color line.
 One choice decides what happens to that water; the groove depth sits under Advanced. Three cards:
 
 | choice | color line sits at | what moves | builds parts |
 |---|---|---|---|
-| Natural | 0 m | nothing | — |
-| Lake inserts | 0 m | bodies whose interior sits above the color change | yes |
-| Lake & sea inserts | 0 m | all water | yes |
+| Natural | the tile's waterline: 0 m, rising to a lake all land clears, dropping below polder land | nothing | — |
+| Lake inserts | 0 m, dropping below polder land | bodies whose interior sits above the color change | yes |
+| Lake & sea inserts | — (no line, no pause) | all water | yes |
 
-A fourth mode, `flat` (all water pulled to one plane the colour band paints), is retired from the
+A fourth mode, `flat` (all water pulled to one plane the color band paints), is retired from the
 panel: an old `mode=flat` link opens as Natural, because decode maps the mode to `none` before the
 UI ever sees it. Core still accepts and builds `flat` for headless callers — the mechanism just has
 no card that can select it.
 
 **Natural** (leave water at true elevation) is the default: the terrain is untouched and the line
-sits at 0 m exactly — classic sea-level tint at any map scale. Ocean prints blue; land above sea
-level prints as terrain, however low; land at or below the line (polders) prints blue, and the
-tile says so plainly — no surviving choice moves the colour line, so the warning names no fix.
+sits at 0 m — rising to the tile's lowest water only when ALL land clears that water by the same
+two-print-layer margin the flatten plane kept below the lowest land. A tile whose water is all
+perched above all land (Tahoe) raises the line to the lake's surface instead of printing it as
+land; a tile with any land at or below its lowest water (Crater Lake's outer valleys) refuses the
+rise and keeps 0 m, because a line land does not clear floods that land blue — tried, and the
+flooded valleys read as a defect. Both bounds of the rise are load-bearing: it never starts
+below 0 m (ocean samples are only clamped near 0, and real masks carry below-0 bathymetry noise —
+a Puget Sound sounding reads −227 m — that would sink the line under the sea), and it never comes
+within two lifts of land (the export pause prints one layer above the line; see the flatten
+margin). Water the line cannot reach still shows as terrain and the warning routes to an inserts
+card.
+
+The line never sits above land, full stop — rather sea-as-land than land-as-sea. Land at or below
+the candidate line (polders, deltas) pushes it to `landMin − 2·lift` instead, flatten's own
+clearance: the polder prints as ordinary terrain and the SEA above the lowered line shows as land,
+which the water warning states. Its named remedy genuinely works there, because the lowered line
+also lowers the lakes-mode ceiling — under "Lake inserts" a polder tile's sea rises above the
+ceiling, grooves, and becomes a part. `landBluePct` is ≈0 by construction (only land exactly AT
+the line still counts, boundary-blue) and survives as a returned invariant rather than a warning:
+a real percentage means the anchor broke.
 
 **Retired: flatten to one level.** It pulls every masked cell down to one plane two print layers
 below the lowest land — `min(lowest water, lowest land − 2 layers)` — and the line sits at that
@@ -202,20 +219,21 @@ longer offers it: it went unused, and its unbounded drop — correct by design �
 in the preview. Old `mode=flat` links now open as Natural instead; only headless callers can still
 build it.
 
-**Lake & sea inserts** (recess all water) sinks it in print space without moving the color line —
-a groove between water and land. A large recess can sink even high water below the sea-level
-line: blue pits where lakes were, documented rather than guarded. The sea's insert is the reason
-to choose this over Lake inserts: its top is the original sea surface — a flat plane — so as a
-separate part it can be ironed or printed in one glossy blue, where in place it is paint on
-terrain.
+**Lake & sea inserts** (recess all water) carries no color line at all: every printable body
+becomes a part, so the pause that would paint sub-line layers blue is never worth its filament
+swap. Grooves, outer walls and polders print as ordinary terrain, and every drop of blue on the
+tile is an insert — `lineElev` is −Infinity, the waterless sentinel, so the water band folds into
+the base and the legend row disappears with it. The sea's insert is the reason to choose this
+over Lake inserts: its top is the original sea surface — a flat plane — so as a separate part it
+can be ironed or printed in one glossy blue, where in place it is paint on terrain.
 
 **Lake inserts** (recess water above the waterline) grooves only the bodies that would otherwise print as
 terrain, and leaves the rest at true elevation.
 
 "Would print as terrain" is a claim about the print, so the test is against the height the print
 **changes color at**, not the waterline. The export lifts the water pause one layer above the line
-so the water's top layer prints blue, and one layer is metres of *ground* at map scale — 45 m at
-1:300,000 and exaggeration 1, since a layer buys `layerMm × scale ÷ (1000 × exag)` metres. Water
+so the water's top layer prints blue, and one layer is meters of *ground* at map scale — 45 m at
+1:300,000 and exaggeration 1, since a layer buys `layerMm × scale ÷ (1000 × exag)` meters. Water
 inside that layer cannot print as anything but blue however far above 0 m its sample reads, so
 grooving it would buy nothing and cost a part. Both the layer-height control and the exaggeration
 slider therefore move this boundary, the same way the flatten plane already moves with layer
@@ -265,12 +283,11 @@ default tile's warning as strict as it was.
 
 `landBluePct` keeps measuring against the true line rather than the color change, deliberately.
 The two counters ask different questions: one is "will this water print as land", a question about
-the print, and the other is "is there land under the waterline". Land inside the lifted layer does
-print blue, but no surviving choice can help it — the lift is inherent to the print, and the
-flatten that was once this warning's remedy has left the panel — so counting it would nudge at
-every coast with nothing behind the nudge. The sentence it prints therefore names no fix.
+the print, and the other is "is there land under the waterline" — whose answer is now "no" by
+construction, since the line never sits above land. It prints no sentence; it survives as an
+invariant a headless caller (or a test) can check.
 
-The **insert groove depth** (0.5–5 mm in 0.5 mm steps, default 1 mm — half a millimetre is 3–4
+The **insert groove depth** (0.5–5 mm in 0.5 mm steps, default 1 mm — half a millimeter is 3–4
 layers at a typical layer height) is how deep the groove is that a blue insert drops into, and so
 how thick that part is. It lives in Advanced, beside layer height, because it describes how you
 print rather than what the tile is: the mode is the water decision, and the depth is a preference
@@ -283,7 +300,7 @@ Before either control runs, water too narrow to print is dropped from the mask: 
 only if it holds a square 0.8 mm across that is entirely water — two 0.4 mm extrusions, the width
 of a free-standing part you can press into a groove. A dropped body is not recessed, not
 flattened, does not anchor the flatten plane, and gets no inlay; it sits at true elevation and
-prints blue only if it falls in the blue band on its own. The threshold is print millimetres, so a
+prints blue only if it falls in the blue band on its own. The threshold is print millimeters, so a
 wide tile keeps no rivers — 0.8 mm is 120 m of ground at 1:150,000. One filtered mask feeds both
 the recess and the inlay, which is what makes them agree: the recess moves masked vertices while
 the inlay meshes all-four-corners cells, so before this, water narrower than a cell was grooved
@@ -301,28 +318,26 @@ The mode moves geometry, and the insert groove depth sets how far; what moves ca
 back as separate drop-in parts — see "Water inlays" under Export.
 
 A tile with no masked water gets no water line at all: waterless below-sea-level land (Death
-Valley) prints as ordinary terrain.
+Valley) prints as ordinary terrain. Lake & sea inserts returns the same no-line sentinel on every
+tile — see its paragraph above.
 
 The line is quantized to the elevation grid's own precision, so it is always a height the grid
 can hold exactly. Water flattened onto the plane then sits *on* the line rather than a rounding
-step above it — which matters because the colour model treats "the line is the lowest printed
-elevation" as the ocean-floor case and colours the base plate itself blue. A line the grid
+step above it — which matters because the color model treats "the line is the lowest printed
+elevation" as the ocean-floor case and colors the base plate itself blue. A line the grid
 could only round to would land above its own water and take the whole water band with it.
 
-**The mask and the line can disagree in both directions, and one warning covers both** — as
-independent sentences, since the two no longer share a fix. `landBluePct` counts land at/below
-the line, as a share of the **land**, warning past 5%.
-`waterAsLandPct` counts masked water above the line, as a share of the **tile**, warning past 1%.
-The denominators differ on purpose: a bay speckled by noisy near-0 bathymetry is only ~3% of its
-water but ~1.5% of its tile, while a tile whose 0.3% water is alpine tarns is 100% of its water —
-measured against the water, the warning would shout at the quiet case and stay silent on the real
-one. Water-showing-as-land names its fix, "Lake inserts" (above); polder land printing blue is
-stated with none among the surviving choices — only flattening ever moved the colour line. Both
-are structurally 0 under the retired flatten mode, which headless callers can still build even
-though old links no longer reach it: a property of that legacy state, not a remedy the panel can
-offer. The second says water will "show" as land, not print: the export pause sits a layer above
-the line, so water within one layer of it
-still prints blue — a sub-mm offset that is tens to hundreds of metres of *elevation* at map
+**Only one direction warns now: masked water above the line shows as terrain.**
+`waterAsLandPct` counts it as a share of the **tile**, warning past 1% and naming "Lake inserts",
+which fixes every case — a high lake gets a groove and a part, and a polder tile's sea (above its
+lowered line) grooves and becomes a part the same way. The share is of the tile, not of the
+water, on purpose: a bay speckled by noisy near-0 bathymetry is only ~3% of its water but ~1.5%
+of its tile, while a tile whose 0.3% water is alpine tarns is 100% of its water — measured
+against the water, the warning would shout at the quiet case and stay silent on the real one.
+The other direction — land printing blue — no longer exists to warn about: the line never sits
+above land. The count says water will "show" as land, not print: the export pause sits a layer
+above the line, so water within one layer of it
+still prints blue — a sub-mm offset that is tens to hundreds of meters of *elevation* at map
 scale. See
 `docs/superpowers/specs/2026-08-04-water-as-land-warning-design.md`.
 
@@ -344,7 +359,7 @@ flat **base** underneath.
 
 Three settings shape the result:
 
-- **Map scale** (1:N) — how many real-world metres one print millimetre
+- **Map scale** (1:N) — how many real-world meters one print millimeter
   represents; sets both the tile's footprint size and how much the
   elevation range shrinks.
 - **Vertical exaggeration** — a multiplier on relief height only,
@@ -474,7 +489,7 @@ depth.
 
 The channel stops short of the rim and of recessed water. It keeps one
 cell further in than the cord does, because a cell carrying it has
-subdivided edges and its neighbours must be retriangulated to match —
+subdivided edges and its neighbors must be retriangulated to match —
 which a rim cell, whose top is a clipped polygon rather than two
 triangles, cannot be. It also never lowers a vertex the water controls
 **moved**, per vertex rather than per cell, or the drop-in inlay
@@ -512,7 +527,7 @@ parts are the choice's point, so there is no checkbox to withhold them (bare gro
 pour are one slicer delete away). Each part's underside is the printed water surface and its top
 is that water's **original** elevation, so it is exactly the volume the recess removed. The
 retired flatten mode builds none, even from an old link: its parts would fill from the plane back
-to the original surface — for a sea, a very large block — duplicating what the colour band
+to the original surface — for a sea, a very large block — duplicating what the color band
 already paints. Print the parts in blue, drop them into the hollows, and the terrain is whole
 again.
 
@@ -554,7 +569,7 @@ Water bodies on one tile can sit far apart in elevation, so each
 connected piece gets its own floor and rests on the plate independently.
 A single shared floor would leave every piece but the lowest hanging in
 mid-air — still closed, still positive-volume, so nothing downstream
-would object. Pieces are labelled 8-connected, which is what makes a
+would object. Pieces are labeled 8-connected, which is what makes a
 per-vertex floor well defined: a vertex's four incident cells are all
 mutually 8-adjacent, so no vertex can be claimed by two pieces at
 different heights.
@@ -583,7 +598,7 @@ color change / `M600`) at its print-Z; the operator swaps filament at those
 heights to get an altitude-banded print with no multi-material hardware. So the
 changes actually load, the colored `.3mf` is written as a minimal PrusaSlicer
 *project* (a settings-free config stub) — PrusaSlicer only reads color changes
-from a file it recognises as a project, not a bare geometry import. The band
+from a file it recognizes as a project, not a bare geometry import. The band
 model lives in `src/core/colors.js` and is deliberately approximate — a
 good-enough hypsometric look, not a climate dataset.
 

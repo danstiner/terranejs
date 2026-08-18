@@ -215,14 +215,14 @@ test("sourcesAt: the real tile's answers", () => {
 
 test("sourcesAt: a cell on a tile seam counts each source once", () => {
   // Tiles carry a 64-unit buffer (±4 px at 256), so ground beside a seam lies inside the SAME
-  // source's polygon in both neighbours. Undeduped, describeSources reads the repeat as a tie
+  // source's polygon in both neighbors. Undeduped, describeSources reads the repeat as a tie
   // and reports a source as tied with itself — over glo30, that is every seam over land.
   const buf = new Uint8Array(readFileSync(new URL("./reference/coverage-10-166-351.mvt", import.meta.url)));
   const t = decodeCoverage(buf);
   const win = { gx0: 166 * 256, gy0: 351 * 256, gw: 512, gh: 256 };
   const seam = sourcesAt([
     ...projectFeatures(t, 166, 351, 10, 10, win),
-    ...projectFeatures(t, 167, 351, 10, 10, win), // same bytes as the east neighbour: only the overlap matters
+    ...projectFeatures(t, 167, 351, 10, 10, win), // same bytes as the east neighbor: only the overlap matters
   ], 256, 128);
   assert.deepEqual(seam, [...new Set(seam)]);
   assert.ok(seam.includes("glo30"));
@@ -238,7 +238,7 @@ test("edgeDistance: distance to the nearest data edge, not to a vertex", () => {
   /** @type {PlacedFeature[]} */
   const f = [{ source: "a", clip: FAR, rings: [[[0, 0], [100, 0], [100, 100], [0, 100]]] }];
   assert.equal(edgeDistance(f, 50, 5, "a"), 5);      // nearest point is mid-segment, not a corner
-  assert.equal(edgeDistance(f, 50, 50, "a"), 50);    // dead centre
+  assert.equal(edgeDistance(f, 50, 50, "a"), 50);    // dead center
   assert.equal(edgeDistance(f, 3, 4, "a"), 3);       // near a corner: the closer EDGE wins, not 5
   assert.equal(edgeDistance(f, 50, 50, "b"), Infinity); // a source with no rings here
   // A hole is an edge too: data ends at its rim, so the merge feathers there as well.
@@ -303,7 +303,7 @@ test("describeSources: equal maxzoom resolves by id, the way the merge does", ()
 test("maxzoomFor: the z12 floor ties every coarse source together", () => {
   // aggregation_covering.py clamps with max(maxzoom, macrotile_z=12) and writes the CLAMPED
   // value, so anything coarser than ~19 Mercator m/px lands on 12 and the id tiebreak decides.
-  // glo30 vs nosvalbard is the case: ranking by raw metres names nosvalbard, at any latitude.
+  // glo30 vs nosvalbard is the case: ranking by raw meters names nosvalbard, at any latitude.
   const arctic = new Map([["glo30", 30], ["nosvalbard", 20]]);
   for (const lat of [78.22, 60, 45, 0]) {
     assert.equal(maxzoomFor(30, lat), 12, `glo30 at ${lat}`);
@@ -323,7 +323,7 @@ test("maxzoomFor: above the floor, latitude still merges buckets", () => {
 });
 
 test("describeSources: a feathered cell names both sides", () => {
-  // Within ~150 Mercator metres of where a source's data ends, the merge Gaussian-blended it
+  // Within ~150 Mercator meters of where a source's data ends, the merge Gaussian-blended it
   // with whatever filled beyond — no single-source answer is correct there.
   assert.equal(describeSources(["glo30", "us1cc"], cat, LAT, "glo30"), "us1cc 1 m ⇄ glo30 (blended)");
 });

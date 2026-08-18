@@ -113,11 +113,11 @@ label.check input { margin: 0; }
 }
 .help:hover, .help:focus-visible { background: #2d6cdf; border-color: #2d6cdf; color: #fff; }
 /* The row owns the vertical spacing; a label keeping its own asymmetric margin would have its
-   MARGIN box centred by align-items, sitting the text off-centre from the ? beside it. */
+   MARGIN box centered by align-items, sitting the text off-center from the ? beside it. */
 .labelrow { display: flex; align-items: center; margin: 10px 0 4px; }
 .labelrow > label { margin: 0; }
 /* Outcome cards. Real radios, hidden with opacity rather than display:none so they keep focus
-   and the native arrow-key group behaviour; :has() carries checked/focus out to the card border,
+   and the native arrow-key group behavior; :has() carries checked/focus out to the card border,
    so selection needs no JS. */
 .cards { display: flex; gap: 8px; margin: 10px 0 4px; }
 .card {
@@ -132,7 +132,7 @@ label.check input { margin: 0; }
 .card:has(input:checked) { border-color: #2d6cdf; box-shadow: inset 0 0 0 1px #2d6cdf; }
 .card:has(input:focus-visible) { outline: 2px solid #2d6cdf; outline-offset: 1px; }
 /* The band's slate for printed water, the preview's glacial aqua for the loose part — the same
-   two colours those things have on screen, so the cards teach the preview's vocabulary
+   two colors those things have on screen, so the cards teach the preview's vocabulary
    (colors.js: the water band and INLAY_COLOR, converted to sRGB hex). */
 .card .land { fill: #b5b0a8; }
 .card .water { fill: #295c8c; }
@@ -140,7 +140,7 @@ label.check input { margin: 0; }
 /* Lives on <body>, not in the column — see controls.wireHelp. pointer-events:none so the bubble
    can never take the hover away from the button that opened it. */
 #tip {
-  /* inset/margin/border reset the UA's [popover] rules, which centre it in the viewport. */
+  /* inset/margin/border reset the UA's [popover] rules, which center it in the viewport. */
   position: fixed; inset: auto; margin: 0; border: 0; z-index: 10;
   max-width: min(300px, calc(100vw - 16px)); /* the JS clamps left/top; this bounds the width */
   padding: 7px 9px; border-radius: 4px; pointer-events: none;
@@ -148,7 +148,7 @@ label.check input { margin: 0; }
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
 }
 
-/* Amber banner, not a `.hint`: hints are grey chrome the eye skips, and this one has to be
+/* Amber banner, not a `.hint`: hints are gray chrome the eye skips, and this one has to be
    noticed from across the panel. No `display` here — that would defeat the `hidden` attribute. */
 #waterWarn, #trailWarn {
   margin: 10px 0; padding: 8px 10px; font-size: 12px; line-height: 1.45;

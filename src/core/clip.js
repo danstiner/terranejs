@@ -56,7 +56,7 @@ export function clipPolygon(gw, gh, gx0, gy0, ring) {
     A2 += a[0] * b[1] - b[0] * a[1];
   }
   if (A2 === 0) throw new Error("clipPolygon: zero-area ring");
-  if (A2 < 0) P.reverse(); // normalise winding so the half-plane test below is well defined
+  if (A2 < 0) P.reverse(); // normalize winding so the half-plane test below is well defined
   for (let i = 0; i < n; i++) {
     const a = P[i], b = P[(i + 1) % n], c = P[(i + 2) % n];
     if ((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]) < 0) {
@@ -225,7 +225,7 @@ export function clipPolygon(gw, gh, gx0, gy0, ring) {
  * lerp. That reduction is bit-exact for elevation data, but not unconditionally: b−a is exact
  * in float64 for float32 inputs and t is dyadic (the 1/256 snap lattice), so (b−a)·t is exact
  * too, leaving a + (b−a)·t to round only when a and b−a are far enough apart in exponent to
- * overflow the mantissa — which metres of terrain never are. Call after applyWaterRecess,
+ * overflow the mantissa — which meters of terrain never are. Call after applyWaterRecess,
  * never before — it mutates the grid.
  * @param {Clip} clip
  * @param {Float32Array} grid

@@ -7,7 +7,7 @@
 
 The golden `extents` are WGS84 *geodesic* ground-truth distances, computed by
 pyproj (Karney's algorithm) — an independent tool and method from the code
-under test. geo.test.mjs bounds bboxExtentMeters (a centre-latitude flat-rate
+under test. geo.test.mjs bounds bboxExtentMeters (a center-latitude flat-rate
 model) against them, confirming the model agrees with true geodesics to <1e-6.
 
 Run:  uv run test/reference/make_reference.py
@@ -31,8 +31,8 @@ BBOXES = {
 
 def geodesic_extent(s, w, n, e):
     clat, clon = (s + n) / 2, (w + e) / 2
-    _, _, real_w = GEOD.inv(w, clat, e, clat)  # E-W across the centre parallel
-    _, _, real_h = GEOD.inv(clon, s, clon, n)  # N-S across the centre meridian
+    _, _, real_w = GEOD.inv(w, clat, e, clat)  # E-W across the center parallel
+    _, _, real_h = GEOD.inv(clon, s, clon, n)  # N-S across the center meridian
     return real_w, real_h
 
 

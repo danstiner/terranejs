@@ -16,7 +16,7 @@ export const DETAIL_RADIUS = 4;
 /**
  * Per-cell mean deviation from the local linear fit, box-averaged over a (2r+1)² window.
  * A surface interpolated between distant samples is locally straight, so its deviation is ~0;
- * ground with real structure at the sampling scale deviates. Units are metres.
+ * ground with real structure at the sampling scale deviates. Units are meters.
  *
  * O(cells) regardless of radius — a curvature pass, then two separable running-sum blurs;
  * the naive O(cells·r²) form would noticeably block the bake at preview scale.
@@ -26,7 +26,7 @@ export const DETAIL_RADIUS = 4;
  * @param {number} gw
  * @param {number} gh
  * @param {number} [radius]
- * @returns {Float32Array} metres, gw×gh, aligned with the grid
+ * @returns {Float32Array} meters, gw×gh, aligned with the grid
  */
 export function detailMap(grid, gw, gh, radius = DETAIL_RADIUS) {
   const n = gw * gh;

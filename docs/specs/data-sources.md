@@ -82,12 +82,12 @@ https://terrain.reearth.land/mapterhorn-egm08/watermask/{z}/{x}/{y}.png
   - `maxzoomFor()` mirrors `get_smallest_overzoom()`, **including its floor**:
     `aggregation_covering.py` clamps every file with `max(maxzoom, macrotile_z)`
     where `macrotile_z = 12`, and writes the clamped value into the CSV the
-    merge sorts by. The key is an integer zoom over **Mercator** metres, so it
+    merge sorts by. The key is an integer zoom over **Mercator** meters, so it
     also scales by `1/cos(lat)` and collapses sources within a factor of 2.
     Consequences, both live:
     - Everything coarser than ~19 Mercator m/px lands on bucket 12 together and
       the id tiebreak decides. `glo30` vs `nosvalbard` at Svalbard resolves to
-      `glo30` — ranking by catalog metres names `nosvalbard`, which is wrong.
+      `glo30` — ranking by catalog meters names `nosvalbard`, which is wrong.
       At Reykjavik the same rule puts `glo30` (bucket 12) ahead of Iceland's
       10 m `is` (also 12, at 64 N a 10 m cell is 22.9 Mercator m) because
       `glo30` sorts first alphabetically. Surprising, but verified against the
@@ -95,7 +95,7 @@ https://terrain.reearth.land/mapterhorn-egm08/watermask/{z}/{x}/{y}.png
       exact GLO-30 COG it ingests to a 0.21 m median on flat ground (p90
       0.82 m, 1105 nodes) — at or below the same measurement's floor over Nuuk,
       where glo30 is the only candidate. That is same-source agreement; an
-      independent 10 m DEM would not track TanDEM-X to two decimetres. So
+      independent 10 m DEM would not track TanDEM-X to two decimeters. So
       Mapterhorn ships GLO-30 across Iceland outside glo30's voids — likely an
       upstream bug (the floor, not the id tiebreak, is what buries `is`), but
       the probe's job is to report the composite as built, and it does.
@@ -109,7 +109,7 @@ https://terrain.reearth.land/mapterhorn-egm08/watermask/{z}/{x}/{y}.png
     ranked source is the one the merge used.
   - `edgeDistance()` + `featherPx()` catch the blend zone:
     `aggregation_merge.py` Gaussian-blurs across every nodata edge over
-    `macrotile_buffer_3857 = 150` Mercator metres, so a cell that close to where
+    `macrotile_buffer_3857 = 150` Mercator meters, so a cell that close to where
     its source's data ends reads `us1cc 1 m ⇄ glo30 (blended)`. Both names,
     because there is genuinely no single answer there. Two details that matter:
     the reach is `4·sigma·res` at the winner's own bucket rather than a flat
@@ -122,7 +122,7 @@ https://terrain.reearth.land/mapterhorn-egm08/watermask/{z}/{x}/{y}.png
 
   Measured against the live rasters at the Larrabee seam, aligning 216 columns
   on the polygon edge per column (the edge slopes ~5%, and not aligning smears
-  the transition over hundreds of metres — which is what an earlier measurement
+  the transition over hundreds of meters — which is what an earlier measurement
   of mine did): the disturbance begins **at** the polygon edge and decays over
   **~120 m** into the finer source, against a predicted 99 m. Boundary placement
   and feather width both hold up. Note the join is not a smooth ramp — mean

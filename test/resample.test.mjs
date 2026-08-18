@@ -10,7 +10,7 @@ import { lonToGlobalX, latToGlobalY } from "../src/core/tilemath.js";
 // elev = A*gx + B*gy + C. Bilinear resampling is exact for linear fields, so the
 // resampled output must equal the analytic value at each sample — this pins the
 // pixel-center convention and the per-row/col index math. Origin/size are chosen
-// with a 2-px margin so every sample has its 4 bilinear neighbours in-bounds.
+// with a 2-px margin so every sample has its 4 bilinear neighbors in-bounds.
 /**
  * @param {number} z
  * @param {BBox} bbox
@@ -108,7 +108,7 @@ test("cropGrid: exact sample extraction by global pixel index", () => {
 test("resampleBilinear clamps to the edge (no halo) instead of blending inward", () => {
   // A mosaic that does NOT cover the bbox's NW corner (no halo): the west edge
   // samples at fractional x = -0.5. Edge-clamp must replicate the edge pixel, not
-  // blend the neighbour in. data = column index, so the west-edge value is 0;
+  // blend the neighbor in. data = column index, so the west-edge value is 0;
   // the pre-fix code blended columns 0 and 1 and returned 0.5.
   const width = 4, height = 4;
   const data = new Float32Array(width * height);

@@ -236,19 +236,19 @@ export function featherPx(pz, mz) {
 // Only `resolution` is kept: it is the ranking key, and it is all the probe reports.
 /** @typedef {Map<string, number>} Catalog */
 
-// Mapterhorn's precedence key. NOT the catalog's metres: get_smallest_overzoom() divides each
+// Mapterhorn's precedence key. NOT the catalog's meters: get_smallest_overzoom() divides each
 // file's EPSG:3857 bounds by its NATIVE pixel count, so the key is an integer zoom over Mercator
-// metres, and Mercator stretches by 1/cos(lat). Two effects the raw metres miss — an integer
+// meters, and Mercator stretches by 1/cos(lat). Two effects the raw meters miss — an integer
 // bucket collapses sources within a factor of 2, and the stretch grows toward the poles. Both
 // bite at Svalbard, where 20 m `nosvalbard` and 30 m `glo30` share bucket 10 and the merge takes
-// glo30 on the id tiebreak; ranking by metres alone names nosvalbard, which is simply wrong.
+// glo30 on the id tiebreak; ranking by meters alone names nosvalbard, which is simply wrong.
 // The floor is not ours: aggregation_covering.py clamps every file with
 // `maxzoom = max(maxzoom, macrotile_z)`, macrotile_z = 12, and writes the CLAMPED value into the
 // CSV the merge sorts by. So every source coarser than ~19 Mercator m/px collapses to bucket 12
 // and the id tiebreak decides between them. It also absorbs the geographic-CRS error: glo30's own
 // native maxzoom runs 9-12 by latitude band (the pipeline comments them), all at or below the
 // floor, so glo30 lands on 12 whichever way its resolution is scaled.
-/** @param {number} resolutionM catalog metres @param {number} lat degrees @returns {number} */
+/** @param {number} resolutionM catalog meters @param {number} lat degrees @returns {number} */
 export function maxzoomFor(resolutionM, lat) {
   const merc = resolutionM / Math.cos((lat * Math.PI) / 180);
   for (let z = 0; z < 33; z++) if (WORLD_M / (512 * 2 ** z) < merc) return Math.max(z, MACROTILE_Z);

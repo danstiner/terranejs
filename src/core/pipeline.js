@@ -10,7 +10,7 @@ import { trailToPrintMm, cordSolid, admissibleCells, cordLattice, distField,
   trenchWidthMm } from "./cord.js";
 import { trenchAdmissibleCells, featherField, trenchTop } from "./trench.js";
 import { clipPolygon, clipElevs, clipRange } from "./clip.js";
-import { applyWaterRecess, filterUnprintableWater, splitWaterByLine } from "./water.js";
+import { applyWaterRecess, filterUnprintableWater, splitWaterByLine, waterColorLine } from "./water.js";
 import { checkWatertight, signedVolume } from "./validate.js";
 import { ThreeMFWriter } from "./threemf.js";
 import { fetchMosaic } from "./terrain.js";
@@ -31,7 +31,7 @@ import { fetchMosaic } from "./terrain.js";
  *   center = [lat,lon] of the tile; scale = 1:N; tileWidthMm = print size of the tile
  *   edge; base = base-plate thickness (mm); exag = vertical exaggeration;
  *   waterMode = how water is treated: "none" leaves it at true elevation, "flat" pulls it all
- *   onto one waterline below the land, "lakes" sinks only the bodies above the colour line,
+ *   onto one waterline below the land, "lakes" sinks only the bodies above the color line,
  *   "all" sinks it all by recessMm (default "none");
  *   recessMm = water sink in print mm, ignored by "none" (default 0); layerMm = slicer
  *   layer height (default 0.15); shape = tile footprint (default "square"); tileWidthMm is
@@ -48,7 +48,7 @@ import { fetchMosaic } from "./terrain.js";
  * @typedef {{ z: number, bbox: BBox, window: Window, span: Span, gw: number, gh: number, dx: number, dy: number, mmPerM: number, shape: Shape, ring: Array<[number,number]> | null }} TilePlan
  *   z = source zoom; bbox = fetch bounds; window = exact Mercator pixel window;
  *   span = full-coverage cell span; gw/gh = window dims; dx/dy = print mm per
- *   pixel; mmPerM = print mm per metre of elevation (pre-exaggeration); shape =
+ *   pixel; mmPerM = print mm per meter of elevation (pre-exaggeration); shape =
  *   footprint kind; ring = footprint vertices in global px (null for square,
  *   which needs no clip).
  */
@@ -56,7 +56,7 @@ import { fetchMosaic } from "./terrain.js";
 /** @type {Cell[]} */
 const ORIGIN = [[0, 0]]; // single-tile layout: one cell at the origin
 
-/** Clearance between neighbouring objects on the plate. */
+/** Clearance between neighboring objects on the plate. */
 const PLATE_GAP_MM = 10;
 
 // Pure: settings (+ optional explicit zoom) → source zoom, fetch bbox, exact
@@ -134,7 +134,7 @@ export function planTile(settings, { z, maxTiles = 300 } = {}) {
 // rather than emit a mesh that isn't a positive-volume closed manifold.
 /**
  * `waterMask` (from the Re:Earth watermask tile) flattens/sinks masked water and anchors the
- * colour line — see water.applyWaterRecess. No mask → grid untouched, lineElev −Infinity (the
+ * color line — see water.applyWaterRecess. No mask → grid untouched, lineElev −Infinity (the
  * headless bakeTile path).
  * @param {Mosaic} mosaic
  * @param {TilePlan} plan
@@ -156,7 +156,7 @@ export function bakeTileSolid(mosaic, plan,
   // applyWaterRecess — or not at all. A second full grid, so it is taken only when asked for.
   // `flat` is excluded outright rather than left to the caller: its parts would fill from the
   // plane back to the original surface — for a sea, a very large block — duplicating what the
-  // colour band already paints. A fact about the mode, so it lives beside the geometry, not in
+  // color band already paints. A fact about the mode, so it lives beside the geometry, not in
   // the UI; the exclusion also spares every flat bake the snapshot's cost.
   const preWater = waterInlay && waterMode !== "flat" && waterMask ? grid.slice() : null;
   // Clip geometry first — applyWaterRecess mutates the grid, so crossing ELEVATIONS have
@@ -174,16 +174,21 @@ export function bakeTileSolid(mosaic, plan,
   const { mask: printedWaterMask, droppedPct: waterDroppedPct } = waterFilter
     ? filterUnprintableWater(waterMask, gw, gh, dx)
     : { mask: waterMask, droppedPct: 0 };
-  // The height the print CHANGES COLOUR at, one layer above the line: the export lifts the water
+  // The height the print CHANGES COLOR at, one layer above the line: the export lifts the water
   // pause that far (colors.colorChanges pauseLiftMm) so the water's top layer prints blue. A
-  // layer is metres of GROUND at map scale — 45 m at 1:300000, exag 1 — and water inside it
+  // layer is meters of GROUND at map scale — 45 m at 1:300000, exag 1 — and water inside it
   // cannot print as anything else, so grooving it buys nothing and costs a part. Judged at the
   // bare line instead, the DEM/watermask coastline disagreement grooves 100% of the water on
   // every real coastal tile; against this ceiling, 0-1.2% on Puget Sound, San Francisco Bay and
-  // Zeeland. `lakes` runs with flatten off, so the line it sits above is exactly Math.fround(0)
-  // — see applyWaterRecess's anchor. Deriving it from that instead would mean running the recess
-  // before the split, and the recess needs the mask the split produces.
-  const blueCeiling = layerMm / (mmPerM * exag);
+  // Zeeland. The line comes from waterColorLine — pure, so it can run BEFORE the split whose
+  // mask the recess needs — because it is no longer always 0: polder land lowers it below
+  // itself, and then this ceiling follows it down, which is what sends the sea to the grooves
+  // and turns it into a part on exactly the tiles where it would otherwise print as land.
+  const preLift = layerMm / (mmPerM * exag);
+  const preLine = waterColorLine(grid, printedWaterMask, {
+    waterMode, layerMm, K: mmPerM * exag, footprint,
+  }).lineElev;
+  const blueCeiling = (Number.isFinite(preLine) ? preLine : 0) + preLift;
   const { mask: recessMask, recessedPct } = waterMode === "lakes" && printedWaterMask
     ? splitWaterByLine(printedWaterMask, grid, gw, gh, blueCeiling)
     : { mask: printedWaterMask, recessedPct: 100 };
@@ -394,14 +399,14 @@ export async function tileTo3mf(name, solid, colorChanges, ribbon, inlays) {
   return writer.finish();
 }
 
-// Ground extent, not the 1:N ratio. Metres under 1 km so a small tile can't round to "0km",
+// Ground extent, not the 1:N ratio. Meters under 1 km so a small tile can't round to "0km",
 // and no decimals past 10 km where a tenth is noise. Mirrors the UI's "200 mm : ~50 km"
 // readout — one rounding rule for the two places a tile's size is named.
 /** @param {number} km @returns {string} */
 const groundLabel = (km) =>
   km >= 10 ? `${Math.round(km)}km` : km >= 1 ? `${km.toFixed(1)}km` : `${Math.round(km * 1000)}m`;
 
-// Default export name: the parameters that define the tile — hemisphere-tagged centre, print
+// Default export name: the parameters that define the tile — hemisphere-tagged center, print
 // width, and the ground extent that width covers — so the filename fully describes the tile
 // that produced it (e.g. "terrane_tile_47.6035N_122.3294W_200mm_50km"). Ground extent rather
 // than the scale ratio: "50 km" is how a person recognizes a tile in a downloads folder, and

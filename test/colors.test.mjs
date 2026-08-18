@@ -20,9 +20,9 @@ test("waterLineThresholds: sets the water line and clamps ecological bands above
 });
 
 test("waterLineThresholds + colorChanges: above-timberline lake bands blue → tundra/rock, never green", () => {
-  // Tropical alpine lake: timberline 3500 (bandThresholds plateau), water colour line at 3800 (above it).
+  // Tropical alpine lake: timberline 3500 (bandThresholds plateau), water color line at 3800 (above it).
   const thr = waterLineThresholds([0, 3500, 3900, 4500], 3800); // → [3800, 3800, 3900, 4500]
-  // Recessed lake floor 3700 m up to 4200 m; K = mmPerM·exag = 1 so print-Z ≈ metres above base.
+  // Recessed lake floor 3700 m up to 4200 m; K = mmPerM·exag = 1 so print-Z ≈ meters above base.
   const changes = colorChanges(thr, { emin: 3700, base: 6, mmPerM: 1, exag: 1, zmax: 6 + (4200 - 3700) });
   assert.ok(!changes.some((c) => c.band === 1), "no forest/green band emitted above the water line");
   assert.equal(changes[0].band, 2, "first change enters tundra (collapsed forest+tundra), not forest");
@@ -93,7 +93,7 @@ test("colorChanges: keeps a change exactly at the base, drops below-base and at/
   const thr = [0, 1000, 1400, 2000];
   const frame = { emin: 0, base: 6, mmPerM: 4, exag: 1, zmax: 6 + 1500 * 4 };
   const ch = colorChanges(thr, frame);
-  // t=0 sits exactly at the base — KEPT (ocean-floor tile: the shader colours land above it and
+  // t=0 sits exactly at the base — KEPT (ocean-floor tile: the shader colors land above it and
   // the export lifts it a layer); t=2000 is above the 1500 m top (dropped)
   assert.deepEqual(ch.map((c) => c.band), [1, 2, 3]);
   assert.equal(ch[0].z, 6);

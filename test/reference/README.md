@@ -39,11 +39,11 @@ The other `bad-*.gpx` files are checked in directly — small, and hand-written.
 ## `expected.json` — geodesic ground truth
 
 `expected.json` holds WGS84 **geodesic** ground-truth used by
-`test/geo.test.mjs` to bound `bboxExtentMeters` — a centre-latitude flat-rate
+`test/geo.test.mjs` to bound `bboxExtentMeters` — a center-latitude flat-rate
 model (parallel-arc E-W, meridian-arc N-S) — against true geodesics.
 
 - `extents[name] = { bbox: [s, w, n, e], realW, realH }` — the true E-W and N-S
-  ground distances (metres) across each bbox's centre lines.
+  ground distances (meters) across each bbox's center lines.
 
 The values come from a **different tool and algorithm** (`pyproj`, Karney's
 geodesic) than the code under test, so they check the *model* end-to-end: does

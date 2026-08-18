@@ -3,7 +3,7 @@
 
 /**
  * Where the four cardinal ground directions land, in SVG coordinates (y down) about the rose's
- * centre, for a camera at azimuth `az` and elevation `phi` over the tile's ground plane.
+ * center, for a camera at azimuth `az` and elevation `phi` over the tile's ground plane.
  *
  * A ground bearing b projects to (sin(az-b), -sin(phi)*cos(az-b)) in screen axes, so the whole
  * circle is an AXIS-ALIGNED ellipse squashed by sin(phi). Hence points and not a rotate/scale

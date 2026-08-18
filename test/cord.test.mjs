@@ -95,7 +95,7 @@ function components(s) {
   return roots.size;
 }
 
-/** A straight cord of half-length L about the grid centre, at `deg`, offset `off` mm sideways.
+/** A straight cord of half-length L about the grid center, at `deg`, offset `off` mm sideways.
  * @param {number} deg @param {number} widthMm @param {number} gw @param {number} pitch
  * @param {number} [off] @param {Float32Array} [grid] */
 function straight(deg, widthMm, gw, pitch, off = 0, grid = gridOf(gw, () => 0)) {
@@ -198,7 +198,7 @@ test("subElev lands on the terrain's own triangle plane, both sides of the diago
 });
 
 // Bilinear is a saddle, the printed surface is two planes; they part company by
-// (zB + zC - zA - zD)/4 at the cell centre. Sampling the wrong one is what makes a cord
+// (zB + zC - zA - zD)/4 at the cell center. Sampling the wrong one is what makes a cord
 // float or dig in, and nothing downstream would notice.
 test("subElev is the triangle plane, not bilinear", () => {
   const gw = 3;
@@ -264,7 +264,7 @@ test("admissibleCells excludes rim cells even when all four corners read inside"
   const clip = /** @type {any} */ ({ inside, bcells: new Set([1 * (gw - 1) + 2]) });
   const cells = admissibleCells(gw, gw, clip);
   assert.equal(cells[1 * (gw - 1) + 2], 0, "the boundary cell is refused");
-  assert.equal(cells[1 * (gw - 1) + 1], 1, "its neighbour is not");
+  assert.equal(cells[1 * (gw - 1) + 1], 1, "its neighbor is not");
 });
 
 // The point of the whole change. The old cell-snapped corridor could only be a whole number of
@@ -578,7 +578,7 @@ test("trench width is the cord plus one clearance per side, at any pitch", () =>
 // by construction, so the window is exactly 0.2 mm wide now instead of the 2(sqrt2*dx + FIT) the
 // carve left. Inside it the cord is two arms in one wide flat groove with no ridge between them, so
 // it can slide. The merging width IS the width the floor requires, so there is no cheap fix; this
-// records the behaviour and its boundary.
+// records the behavior and its boundary.
 //
 // Measured on the displacement trenchTop actually recorded, at k = 1 where every lattice vertex is
 // a grid vertex and the whole channel therefore lands in `drop`.
@@ -586,7 +586,7 @@ test("a switchback tighter than the channel width merges into one groove", () =>
   const gw = 40, pitch = 0.2, W = 1, depth = 0.6, T = trenchWidthMm(W); // a 0.2 mm window
   const plan = planOf(gw, pitch), yMid = ((gw - 1) / 2) * pitch;
   /** Grid rows between the two arms that were left standing at terrain.
-   *  @param {number} sep centreline separation in print mm */
+   *  @param {number} sep centerline separation in print mm */
   const ridgeRows = (sep) => {
     const polys = [Float64Array.from([2, yMid + sep / 2, gw * pitch - 2, yMid + sep / 2]),
       Float64Array.from([2, yMid - sep / 2, gw * pitch - 2, yMid - sep / 2])];

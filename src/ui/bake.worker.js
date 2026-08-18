@@ -45,7 +45,7 @@ async function handle({ gen, settings, maxTiles, format, name, color, coverage, 
     const coverageJob = coverage && format === "mesh"
       ? Promise.all([fetchCoverage(plan.bbox, plan.z, plan.window), catalogOnce()])
         // lat and z ride along because the probe cannot derive them: the maxzoom ranking key is
-        // Mercator metres (stretched by 1/cos(lat)) and the feather width is 150 of them. One
+        // Mercator meters (stretched by 1/cos(lat)) and the feather width is 150 of them. One
         // latitude for the whole tile — a print tile spans a few km, far below a zoom bucket.
         .then(([features, catalog]) => ({ features, catalog, lat: (plan.bbox[0] + plan.bbox[2]) / 2, z: plan.z }))
         .catch((err) => ({ error: err instanceof Error ? err.message : String(err) }))
@@ -111,7 +111,7 @@ async function handle({ gen, settings, maxTiles, format, name, color, coverage, 
     // Latitude-adjusted color changes for THIS bake's frame. Shared by the preview
     // (returned as `bands`) and, later, the export embed. K>0 since exag ∈ [0.5,4].
     const K = plan.mmPerM * settings.exag;
-    // threshold[0] = the tile's anchored water/land colour line; clamp the ecological bands up to
+    // threshold[0] = the tile's anchored water/land color line; clamp the ecological bands up to
     // it so the threshold array stays ascending (see colors.waterLineThresholds).
     const thresholds = waterLineThresholds(bandThresholds(settings.center[0]), lineElev);
     const frame = { emin, base: settings.base, mmPerM: plan.mmPerM, exag: settings.exag, zmax: settings.base + (emax - emin) * K };
@@ -141,7 +141,7 @@ async function handle({ gen, settings, maxTiles, format, name, color, coverage, 
         baseHex: baseColorHex(emin, thresholds),
         baseName: BAND_NAMES[bb],
       };
-      // emin + geom let the preview invert a surface point's print-Z back to metres for the
+      // emin + geom let the preview invert a surface point's print-Z back to meters for the
       // hover probe. The pre-recess elevations + water mask ride along too (a fresh crop —
       // bakeTileSolid mutated its own copy in place), so the probe can report a water
       // cell's ORIGINAL elevation, which the printed surface no longer encodes once water moves.

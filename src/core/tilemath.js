@@ -3,7 +3,7 @@
 /** @typedef {import("./types.js").BBox} BBox */
 
 const D2R = Math.PI / 180;
-const C = 156543.03392; // ground metres per pixel at z0, equator
+const C = 156543.03392; // ground meters per pixel at z0, equator
 
 /**
  * @param {number} latDeg
