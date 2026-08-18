@@ -75,7 +75,7 @@ export function wireControls(store) {
   el("waterMode").addEventListener("change", (e) => {
     const v = /** @type {HTMLSelectElement} */ (e.target).value;
     // Guard like #shape: the store must never hold a value the hash rejects.
-    if (v === "none" || v === "flat" || v === "all") store.set({ waterMode: v });
+    if (v === "none" || v === "flat" || v === "lakes" || v === "all") store.set({ waterMode: v });
   });
   el("waterInlay").addEventListener("change", (e) => {
     store.set({ waterInlay: /** @type {HTMLInputElement} */ (e.target).checked });

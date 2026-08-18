@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { applyWaterRecess, filterUnprintableWater } from "../src/core/water.js";
+import { applyWaterRecess, filterUnprintableWater, splitWaterByLine } from "../src/core/water.js";
 import { decodeWatermask } from "../src/core/terrain.js";
 import { clipPolygon, clipElevs, clipRange } from "../src/core/clip.js";
 import { bandOf, baseBand, colorChanges, bandThresholds, waterLineThresholds } from "../src/core/colors.js";
@@ -8,7 +8,7 @@ import { bandOf, baseBand, colorChanges, bandThresholds, waterLineThresholds } f
 /** @param {number[]} elev @param {number[]} water @returns {[Float32Array, Uint8Array]} */
 const tile = (elev, water) => [Float32Array.from(elev), Uint8Array.from(water)];
 const K = 0.02, LAYER = 0.15;
-/** @param {Partial<{waterMode: "none" | "flat" | "all", recessMm: number, layerMm: number, K: number}>} [o] */
+/** @param {Partial<{waterMode: "none" | "flat" | "all", recessMm: number, layerMm: number, K: number, filled: boolean}>} [o] */
 const opts = (o = {}) => ({ waterMode: /** @type {const} */ ("none"), recessMm: 0, layerMm: LAYER, K, ...o });
 
 // Kept from the old water.test.mjs — decodeWatermask lives in terrain.js but is tested nowhere
@@ -226,6 +226,21 @@ test("waterAsLandPct: default — ordinary coast, all water below the line, read
   assert.equal(r.waterAsLandPct, 0, "water AT the line is blue (strict >), matching bandOf");
 });
 
+/** waterAsLandPct at rest — no flat, no recess, so only the colour ceiling decides.
+ * @param {Float32Array} grid @param {Uint8Array} mask */
+const r0 = (grid, mask) => applyWaterRecess(grid, mask, opts()).waterAsLandPct;
+
+test("waterAsLandPct: water under the printed colour change is blue, so it is not named", () => {
+  // The export puts the water→land change one print layer ABOVE the line (colorChanges
+  // pauseLiftMm) so the water's top layer prints blue, and one layer is 7.5 m of ground at this
+  // K. Water inside that layer cannot print as anything but blue however far above 0 m the raw
+  // sample sits — which is most of the near-0 bathymetry noise on a real coastal tile.
+  const [grid, mask] = tile([3, 3, 10], [1, 1, 0]);
+  assert.equal(r0(grid, mask), 0, "3 m is a fifth of a layer above the line: it prints blue");
+  const [high, hmask] = tile([8, 8, 10], [1, 1, 0]);
+  assert.ok(Math.abs(r0(high, hmask) - 200 / 3) < 1e-9, "8 m clears the layer and does show as land");
+});
+
 test("waterAsLandPct: flat → structurally 0, even for water starting far above the line", () => {
   const [grid, mask] = tile([3812, 3812, 4000, 4200], [1, 1, 0, 0]); // Titicaca-style
   const r = applyWaterRecess(grid, mask, opts({ waterMode: "flat" }));
@@ -279,11 +294,53 @@ test("the flattened plane never lands above emin, so water keeps its own band", 
 });
 
 test("waterAsLandPct: a large recess sinks water below the line and clears the warning", () => {
-  const [grid, mask] = tile([200, 200, 300, 400], [1, 1, 0, 0]); // high lake, flatten OFF
+  const [grid, mask] = tile([200, 200, 300, 400], [1, 1, 0, 0]); // high lake, waterMode "all"
   const before = applyWaterRecess(Float32Array.from([200, 200, 300, 400]), mask, opts());
   assert.equal(before.waterAsLandPct, 50, "without a recess the lake shows as land");
   const r = applyWaterRecess(grid, mask, opts({ waterMode: "all", recessMm: 5 })); // 5 mm = 250 m at K
   assert.equal(r.waterAsLandPct, 0, "sunk below the 0 m line — §4's documented blue-pits escape hatch");
+});
+
+test("waterAsLandPct: any recess excludes the water it moved, reached the line or not — when a part is coming", () => {
+  // 800 m water, 0 m line, and a recess far too shallow to reach it. Before the split existed
+  // this reported the water as showing as land; now the recess is a mold and the part is what
+  // makes it blue, so the number a user reads must not name it — but only once `filled` says a
+  // part is actually coming (pipeline.js passes waterInlay).
+  const [grid, mask] = tile([800, 800, 10], [1, 1, 0]);
+  const r = applyWaterRecess(grid, mask, opts({ waterMode: "all", recessMm: 0.5, filled: true }));
+  assert.ok(grid[0] < 800, "the water did sink");
+  assert.ok(grid[0] > r.lineElev, "and is still far above the line");
+  assert.equal(r.waterAsLandPct, 0, "recessed water is blue by part, not showing as land");
+});
+
+test("waterAsLandPct: with no recess the count is unchanged — water above the line shows as land", () => {
+  const [grid, mask] = tile([800, 800, 10], [1, 1, 0]);
+  const r = applyWaterRecess(grid, mask, opts({ waterMode: "all", recessMm: 0 }));
+  assert.ok(Math.abs(r.waterAsLandPct - 200 / 3) < 1e-9, `2 of 3 cells, got ${r.waterAsLandPct}`);
+});
+
+test("waterAsLandPct: a recessMask splits the count — only the water left behind is named", () => {
+  const [grid, mask] = tile([800, 800, 10], [1, 1, 0]);
+  const recessMask = Uint8Array.from([1, 0, 0]); // only the first body is a mold
+  const r = applyWaterRecess(grid, mask, { ...opts({ waterMode: "all", recessMm: 0.5, filled: true }), recessMask });
+  assert.ok(grid[0] < 800, "the recessed cell sank");
+  assert.equal(grid[1], 800, "the untouched cell did not");
+  assert.ok(Math.abs(r.waterAsLandPct - 100 / 3) < 1e-9, `1 of 3 cells, got ${r.waterAsLandPct}`);
+});
+
+// The regression this commit fixes: applyWaterRecess used to excuse ANY moved water, so "Recess
+// all water" with inlays unticked reported 0% showing as land over a tile of open grooves. The
+// depth alone does not make water blue — the parts do, and a headless caller below the UI has to
+// say so explicitly via `filled`.
+test("waterAsLandPct: moved water excuses itself only when a part is coming (`filled`)", () => {
+  const [gridUnfilled, maskUnfilled] = tile([800, 800, 10], [1, 1, 0]); // stays above the line after sinking
+  const unfilled = applyWaterRecess(gridUnfilled, maskUnfilled, opts({ waterMode: "all", recessMm: 0.5, filled: false }));
+  assert.ok(gridUnfilled[0] > unfilled.lineElev, "still above the line after sinking");
+  assert.ok(unfilled.waterAsLandPct > 0, "no part filling it — an open groove still shows as land");
+
+  const [gridFilled, maskFilled] = tile([800, 800, 10], [1, 1, 0]);
+  const filled = applyWaterRecess(gridFilled, maskFilled, opts({ waterMode: "all", recessMm: 0.5, filled: true }));
+  assert.equal(filled.waterAsLandPct, 0, "same depth, but the insert makes it blue");
 });
 
 test("waterAsLandPct: water outside the footprint is in neither numerator nor denominator", () => {
@@ -444,4 +501,189 @@ test("applyWaterRecess: a negative depth throws instead of raising water", () =>
   const [grid, mask] = tile([-2, -2, -6, 20], [1, 1, 0, 0]);
   assert.throws(() => applyWaterRecess(grid, mask, opts({ waterMode: "all", recessMm: -2 })), /recessMm/);
   assert.throws(() => applyWaterRecess(grid, mask, opts({ waterMode: "all", recessMm: NaN })), /recessMm/);
+});
+
+/** A gw×gh grid at `land` metres with a rectangle of `water` metres, plus the matching mask.
+ * @param {number} gw @param {number} gh @param {number} land
+ * @param {Array<{r0:number,r1:number,c0:number,c1:number,elev:number}>} bodies
+ * @returns {[Float32Array, Uint8Array]} */
+const pond = (gw, gh, land, bodies) => {
+  const grid = new Float32Array(gw * gh).fill(land);
+  const mask = new Uint8Array(gw * gh);
+  for (const b of bodies) {
+    for (let r = b.r0; r <= b.r1; r++) for (let c = b.c0; c <= b.c1; c++) {
+      grid[r * gw + c] = b.elev; mask[r * gw + c] = 1;
+    }
+  }
+  return [grid, mask];
+};
+
+test("splitWaterByLine: an ocean at the line is left alone, a lake above it is not", () => {
+  // 10x10. Ocean rows 0-3 at 0 m (the line), lake rows 6-9 at 1500 m. Land at 800 m between.
+  const [grid, mask] = pond(10, 10, 800, [
+    { r0: 0, r1: 3, c0: 0, c1: 9, elev: 0 },
+    { r0: 6, r1: 9, c0: 0, c1: 9, elev: 1500 },
+  ]);
+  const { mask: out, recessedPct } = splitWaterByLine(mask, grid, 10, 10, 0);
+  for (let r = 0; r <= 3; r++) assert.equal(out[r * 10], 0, `ocean row ${r} must not be recessed`);
+  for (let r = 6; r <= 9; r++) assert.equal(out[r * 10], 1, `lake row ${r} must be recessed`);
+  assert.equal(recessedPct, 50, "40 of 80 water vertices");
+  assert.notEqual(out, mask, "a NEW mask, always");
+});
+
+test("splitWaterByLine: one vertex above the line recesses the WHOLE body", () => {
+  // Body is vertices (2,2)-(7,7); its interior cells' corners span (3,3)-(6,6) — (4,4) sits
+  // inside that, so this still pins the no-partial-body guarantee under the eroded rule.
+  const [grid, mask] = pond(10, 10, 800, [{ r0: 2, r1: 7, c0: 2, c1: 7, elev: 0 }]);
+  grid[4 * 10 + 4] = 0.5; // a single INTERIOR sample the DEM put above the line
+  const { mask: out, recessedPct } = splitWaterByLine(mask, grid, 10, 10, 0);
+  for (let r = 2; r <= 7; r++) for (let c = 2; c <= 7; c++) {
+    assert.equal(out[r * 10 + c], 1, `(${r},${c}) left behind — a half-recessed body cannot seat an insert`);
+  }
+  assert.equal(recessedPct, 100);
+});
+
+test("splitWaterByLine: a shoreline ring above the line does not groove the body", () => {
+  // The real-data case: DEM and watermask disagree by a pixel at the shore, so a body's outer
+  // ring sits a hair above the line even where the water is genuinely at it. Interior at 0 m (the
+  // line), ring at 0.5 m. Under the old any-vertex rule this grooved the whole block.
+  const [grid, mask] = pond(12, 12, 800, [{ r0: 2, r1: 6, c0: 2, c1: 6, elev: 0 }]);
+  for (let r = 2; r <= 6; r++) for (let c = 2; c <= 6; c++) {
+    if (r === 2 || r === 6 || c === 2 || c === 6) grid[r * 12 + c] = 0.5;
+  }
+  const { mask: out, recessedPct } = splitWaterByLine(mask, grid, 12, 12, 0);
+  assert.equal(recessedPct, 0, "interior sits at the line; the shore ring alone must not groove it");
+  assert.deepEqual([...out], [...new Uint8Array(144)]);
+});
+
+test("splitWaterByLine: a body with no interior cells falls back to maxAll", () => {
+  // One cell row thick — every cell is missing a vertical member neighbour, so interiorCount is
+  // always 0 and the decision has to come from the fallback, not maxInterior.
+  const [grid, mask] = pond(10, 10, 800, [{ r0: 4, r1: 5, c0: 2, c1: 7, elev: 0 }]);
+  grid[4 * 10 + 5] = 0.5; // a single sample the DEM put above the line
+  const { mask: out, recessedPct } = splitWaterByLine(mask, grid, 10, 10, 0);
+  assert.equal(recessedPct, 100, "the fallback still grooves — conservative, not silently left alone");
+  for (let c = 2; c <= 7; c++) {
+    assert.equal(out[4 * 10 + c], 1);
+    assert.equal(out[5 * 10 + c], 1);
+  }
+});
+
+test("splitWaterByLine: a body exactly AT the line is left alone (boundary inclusive)", () => {
+  const [grid, mask] = pond(8, 8, 500, [{ r0: 1, r1: 6, c0: 1, c1: 6, elev: 250 }]);
+  assert.equal(splitWaterByLine(mask, grid, 8, 8, 250).recessedPct, 0, "max === line prints blue");
+  assert.equal(splitWaterByLine(mask, grid, 8, 8, 249.9).recessedPct, 100, "max > line does not");
+});
+
+test("splitWaterByLine: 8-connectivity — a diagonal pinch makes two lobes one body", () => {
+  // Two 3x3 lobes meeting at a single cell corner. One lobe is above the line; both must move.
+  const grid = new Float32Array(10 * 10).fill(900);
+  const mask = new Uint8Array(10 * 10);
+  for (let r = 1; r <= 3; r++) for (let c = 1; c <= 3; c++) { mask[r * 10 + c] = 1; grid[r * 10 + c] = -5; }
+  for (let r = 3; r <= 5; r++) for (let c = 3; c <= 5; c++) { mask[r * 10 + c] = 1; grid[r * 10 + c] = 700; }
+  const { mask: out } = splitWaterByLine(mask, grid, 10, 10, 0);
+  assert.equal(out[1 * 10 + 1], 1, "the below-line lobe rides with the body it is joined to");
+  assert.equal(out[5 * 10 + 5], 1);
+});
+
+test("splitWaterByLine: separate bodies are judged separately", () => {
+  const [grid, mask] = pond(20, 20, 900, [
+    { r0: 1, r1: 5, c0: 1, c1: 5, elev: -3 },     // below the line, untouched
+    { r0: 12, r1: 16, c0: 12, c1: 16, elev: 700 }, // above it, recessed
+  ]);
+  const { mask: out } = splitWaterByLine(mask, grid, 20, 20, 0);
+  assert.equal(out[3 * 20 + 3], 0, "an isolated below-line body is not dragged along");
+  assert.equal(out[14 * 20 + 14], 1);
+});
+
+test("splitWaterByLine: an empty mask is a no-op, and the input is never mutated", () => {
+  const grid = new Float32Array(16).fill(100);
+  const empty = new Uint8Array(16);
+  assert.deepEqual([...splitWaterByLine(empty, grid, 4, 4, 0).mask], [...empty]);
+  assert.equal(splitWaterByLine(empty, grid, 4, 4, 0).recessedPct, 0);
+  const [g2, m2] = pond(6, 6, 900, [{ r0: 1, r1: 4, c0: 1, c1: 4, elev: 700 }]);
+  const before = Uint8Array.from(m2);
+  splitWaterByLine(m2, g2, 6, 6, 0);
+  assert.deepEqual([...m2], [...before], "the caller's mask survives untouched");
+});
+
+test("splitWaterByLine: sub-cell water contributes no cell, so it is never recessed", () => {
+  // A one-vertex-tall strip has no all-four-corners cell. filterUnprintableWater drops it before
+  // this runs; if it ever reaches here it must not become a groove with no part to fill it.
+  const grid = new Float32Array(10 * 10).fill(900);
+  const mask = new Uint8Array(10 * 10);
+  for (let c = 2; c < 8; c++) mask[5 * 10 + c] = 1;
+  const { mask: out, recessedPct } = splitWaterByLine(mask, grid, 10, 10, 0);
+  assert.equal(recessedPct, 0);
+  assert.deepEqual([...out], [...new Uint8Array(100)]);
+});
+
+// --- the vertex closure: a body's spur vertices carry no cell of their own, so they need the
+// closure BFS (not the cell stamp) to move with the body they are attached to ---
+
+test("splitWaterByLine: a diagonal spur chain is claimed by the body it hangs off", () => {
+  const GW = 8, GH = 8;
+  const grid = new Float32Array(GW * GH).fill(900);
+  const mask = new Uint8Array(GW * GH);
+  // A 4x4 water block, all above the line.
+  for (let r = 3; r <= 6; r++) for (let c = 3; c <= 6; c++) { mask[r * GW + c] = 1; grid[r * GW + c] = 500; }
+  // A 1-vertex-wide diagonal spur off the block's own corner (3,3): no 2x2 patch along it is
+  // all-water, so cellsFromVertexMask gives it no cell — only the closure can claim it.
+  mask[2 * GW + 2] = 1; grid[2 * GW + 2] = 500;
+  mask[1 * GW + 1] = 1; grid[1 * GW + 1] = 500;
+  mask[0 * GW + 0] = 1; grid[0 * GW + 0] = 500;
+  const { mask: out, recessedPct } = splitWaterByLine(mask, grid, GW, GH, 0);
+  assert.equal(recessedPct, 100, "every mask VERTEX counts, chain included — the coastal-tile-can't-reach-100 bug");
+  for (let i = 0; i < mask.length; i++) if (mask[i]) assert.equal(out[i], 1, `spur/body vertex ${i} left unclaimed`);
+});
+
+test("splitWaterByLine: a bridge between a grooved and an ungrooved body attaches only to the grooved one", () => {
+  const GW = 20, GH = 20;
+  const grid = new Float32Array(GW * GH).fill(900);
+  const mask = new Uint8Array(GW * GH);
+  const A = { r0: 3, r1: 6, c0: 3, c1: 6, elev: 500 };   // above the line: grooved
+  const B = { r0: 3, r1: 6, c0: 11, c1: 14, elev: -500 }; // below the line: left alone
+  for (const b of [A, B]) for (let r = b.r0; r <= b.r1; r++) for (let c = b.c0; c <= b.c1; c++) {
+    mask[r * GW + c] = 1; grid[r * GW + c] = b.elev;
+  }
+  // A 1-vertex-wide bridge two cells clear of both bodies, forming no cell of its own.
+  for (let c = 7; c <= 10; c++) { mask[4 * GW + c] = 1; grid[4 * GW + c] = 500; }
+  const { mask: out } = splitWaterByLine(mask, grid, GW, GH, 0);
+  for (let r = A.r0; r <= A.r1; r++) for (let c = A.c0; c <= A.c1; c++) {
+    assert.equal(out[r * GW + c], 1, "grooved body A claimed in full");
+  }
+  for (let r = B.r0; r <= B.r1; r++) for (let c = B.c0; c <= B.c1; c++) {
+    assert.equal(out[r * GW + c], 0, "ungrooved body B's own vertices must stay unclaimed — the attribution pin");
+  }
+  assert.equal(out[4 * GW + 7], 1, "the bridge attaches to the grooved body, whose closure reaches it first");
+  // The hard constraint bites right where B's own cell starts: cornerOfOtherBody refuses the
+  // corner of B's cell(4,10), so the closure gets no further than the bridge itself.
+  assert.equal(out[4 * GW + 11], 0, "the closure never crosses INTO B's own cell corners");
+});
+
+test("splitWaterByLine: a below-line body's own spur stays unstamped", () => {
+  const GW = 10, GH = 10;
+  const grid = new Float32Array(GW * GH).fill(900);
+  const mask = new Uint8Array(GW * GH);
+  for (let r = 3; r <= 6; r++) for (let c = 3; c <= 6; c++) { mask[r * GW + c] = 1; grid[r * GW + c] = -500; }
+  mask[2 * GW + 2] = 1; grid[2 * GW + 2] = -500; // diagonal spur off its own corner
+  mask[1 * GW + 1] = 1; grid[1 * GW + 1] = -500;
+  const { mask: out, recessedPct } = splitWaterByLine(mask, grid, GW, GH, 0);
+  assert.equal(recessedPct, 0, "an already-blue body contributes nothing, spur included");
+  for (let i = 0; i < mask.length; i++) if (mask[i]) assert.equal(out[i], 0, `vertex ${i} stamped despite the body being left alone`);
+});
+
+test("splitWaterByLine → applyWaterRecess: a spur sinks with its body under `lakes` — no spike at the groove lip", () => {
+  const GW = 8, GH = 8;
+  const grid = new Float32Array(GW * GH).fill(900);
+  const mask = new Uint8Array(GW * GH);
+  for (let r = 3; r <= 6; r++) for (let c = 3; c <= 6; c++) { mask[r * GW + c] = 1; grid[r * GW + c] = 500; }
+  mask[2 * GW + 2] = 1; grid[2 * GW + 2] = 500;
+  mask[1 * GW + 1] = 1; grid[1 * GW + 1] = 500;
+  const { mask: recessMask, recessedPct } = splitWaterByLine(mask, grid, GW, GH, 0);
+  assert.equal(recessedPct, 100, "precondition: the whole body, spur included, is above the line");
+  const recessMm = 3, K = 0.02, sink = recessMm / K; // 150 m
+  applyWaterRecess(grid, mask, { waterMode: "lakes", recessMm, layerMm: LAYER, K, recessMask });
+  assert.equal(grid[2 * GW + 2], 500 - sink, "the spur sank with the body it belongs to — no spike left standing");
+  assert.equal(grid[1 * GW + 1], 500 - sink);
 });

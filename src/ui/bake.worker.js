@@ -98,7 +98,7 @@ async function handle({ gen, settings, maxTiles, format, name, color, coverage, 
       cordDropped = true;
       baked = bakeTileSolid(mosaic, plan, opts, waterMask);
     }
-    const { solid, ribbon, inlays, emin, emax, lineElev, landBluePct, waterAsLandPct, printedWaterMask, waterDroppedPct } = baked;
+    const { solid, ribbon, inlays, emin, emax, lineElev, landBluePct, waterAsLandPct, printedWaterMask, waterDroppedPct, movedWaterMask, waterRecessedPct } = baked;
     // Latitude-adjusted color changes for THIS bake's frame. Shared by the preview
     // (returned as `bands`) and, later, the export embed. K>0 since exag ∈ [0.5,4].
     const K = plan.mmPerM * settings.exag;
@@ -140,27 +140,34 @@ async function handle({ gen, settings, maxTiles, format, name, color, coverage, 
       // Detail overlay, off the PRE-recess grid for the same reason as the probe: flattened
       // water would read as zero detail. Cheap (O(cells)), so it rides every bake.
       const detail = detailMap(probeGrid, plan.gw, plan.gh);
-      // 0 land, 1 water the bake printed as water, 2 water the size filter left at terrain level.
-      // The raw mask alone would report "water (recessed)" over a body sitting at terrain level;
-      // the filtered mask alone would call it land, which is the raster's answer to a question
-      // nobody asked. Three states is what lets the probe and the overlay say which happened.
+      // 0 land, 1 water printed at the waterline, 2 water the size filter left at terrain level,
+      // 3 water grooved for an insert. The raw mask alone would report every water cell as
+      // recessed; the filtered mask alone would call a dropped body land, which is the raster's
+      // answer to a question nobody asked. Four states is what lets the probe and the overlay say
+      // which happened — and 3 has to be per cell now that one tile can hold both kinds of water.
+      // `flat` is excluded on purpose: movedWaterMask is true for it too (it moves everything),
+      // but flat grooves nothing — every masked cell lands on one plane, which is exactly what
+      // state 1 already paints. Without the guard state 3's darkened hue would swallow state 1
+      // whole under `flat`, when the plane is the only water this mode has.
       //
-      // Annotated in place, so no third grid: the worker owns this array, the bake kept its own
-      // filtered copy, and with the filter off the two are the same object and the loop marks
-      // nothing. ?? is for the type only — this path always passes a mask.
+      // Annotated in place, so no third grid: the worker owns this array and the bake kept its own
+      // filtered copy. ?? is for the type only — this path always passes a mask.
       const printed = printedWaterMask ?? waterMask;
-      for (let i = 0; i < waterMask.length; i++) if (waterMask[i] && !printed[i]) waterMask[i] = 2;
+      for (let i = 0; i < waterMask.length; i++) {
+        if (!waterMask[i]) continue;
+        if (!printed[i]) waterMask[i] = 2;
+        else if (movedWaterMask?.[i] && settings.waterMode !== "flat") waterMask[i] = 3;
+      }
       const probeFrame = {
         emin, base: settings.base, mmPerM: plan.mmPerM, exag: settings.exag,
         orig: probeGrid, mask: waterMask, detail, gw: plan.gw, gh: plan.gh, dx: plan.dx, dy: plan.dy,
-        recessed: settings.waterMode === "flat" || ((settings.waterMode ?? "none") !== "none" && (settings.recessMm ?? 0) > 0),
       };
       // The cord rides the tile's own message rather than a later one like coverage: they are one
       // picture, and arriving apart would show a frame of terrain with the trail missing from it.
       const cord = ribbon
         ? { positions: ribbon.positions, indices: ribbon.indices, normals: vertexNormals(ribbon.positions, ribbon.indices) }
         : null;
-      post({ gen, positions: solid.positions, indices: solid.indices, normals, bands, frame: probeFrame, landBluePct, waterAsLandPct, waterDroppedPct, cord, cordDropped },
+      post({ gen, positions: solid.positions, indices: solid.indices, normals, bands, frame: probeFrame, lineElev, landBluePct, waterAsLandPct, waterDroppedPct, waterRecessedPct, cord, cordDropped },
         [solid.positions.buffer, solid.indices.buffer, normals.buffer, probeGrid.buffer, waterMask.buffer, detail.buffer,
           ...(cord ? [cord.positions.buffer, cord.indices.buffer, cord.normals.buffer] : [])]);
       // Deliberately not awaited — see above. Detached from the job's own catch, so it carries

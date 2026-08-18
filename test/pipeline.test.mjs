@@ -10,6 +10,7 @@ import { printPitchMm, PITCH_FLOOR_MM, sourceZoom, lonToGlobalX, latToGlobalY, M
 import { cellsBbox, tileSpanPx, MIN_SPAN_PX } from "../src/core/layout.js";
 
 /** @typedef {import("../src/core/pipeline.js").TileSettings} TileSettings */
+/** @typedef {import("../src/core/types.js").WaterMode} WaterMode */
 
 // Equator + prime meridian → integer global-pixel origin, so the window math is
 // exact and the assertions are clean. Elevations are synthetic; z is pinned so
@@ -440,4 +441,97 @@ test("bakeTileSolid: waterMode all reproduces the recess it replaced", () => {
   // water's own displacement from that base-plate side effect.
   assert.ok(a.emin < b.emin, "a 2 mm recess sinks water below the tile's untouched minimum");
   assert.equal(a.lineElev, b.lineElev, "the recess never moves the colour line");
+});
+
+/** Ocean at 0 m across the top rows, land ramping up, a lake at 1500 m near the bottom. The one
+ * fixture the whole mode distinction rests on: the ocean is already blue, the lake is not.
+ * @param {ReturnType<typeof planTile>} plan */
+function oceanAndLake(plan) {
+  const { gx0, gy0, gw, gh } = plan.window;
+  const data = new Float32Array(gw * gh);
+  for (let r = 0; r < gh; r++) for (let c = 0; c < gw; c++) data[r * gw + c] = 400 + 2 * r;
+  const mask = new Uint8Array(gw * gh);
+  const oceanR1 = Math.floor(gh / 4), lakeR0 = Math.floor(gh / 2), lakeR1 = lakeR0 + 6;
+  for (let r = 0; r <= oceanR1; r++) for (let c = 0; c < gw; c++) { data[r * gw + c] = 0; mask[r * gw + c] = 1; }
+  for (let r = lakeR0; r <= lakeR1; r++) for (let c = 4; c < gw - 4; c++) { data[r * gw + c] = 1500; mask[r * gw + c] = 1; }
+  return { mosaic: { data, width: gw, height: gh, originGx: gx0, originGy: gy0, z: plan.z }, mask, oceanR1, lakeR0 };
+}
+
+test("bakeTileSolid: lakes recesses the lake and leaves the ocean where it is", () => {
+  const plan = planTile(SETTINGS, { z: 10 });
+  const { mosaic, mask, oceanR1, lakeR0 } = oceanAndLake(plan);
+  const opts = { ...SETTINGS, recessMm: 2, waterInlay: true };
+  const lakes = bakeTileSolid(mosaic, plan, { ...opts, waterMode: "lakes" }, mask);
+  const none = bakeTileSolid(mosaic, plan, { ...opts, waterMode: "none" }, mask);
+  const all = bakeTileSolid(mosaic, plan, { ...opts, waterMode: "all" }, mask);
+  assert.equal(lakes.emin, none.emin, "the ocean is the tile's floor and lakes must not move it");
+  assert.ok(all.emin < none.emin, "`all` does move it — the two modes really differ");
+  assert.ok(lakes.movedWaterMask?.[lakeR0 * plan.gw + 10], "the lake was not recessed");
+  assert.equal(lakes.movedWaterMask?.[Math.floor(oceanR1 / 2) * plan.gw + 10], 0, "the ocean was recessed");
+  assert.ok(all.movedWaterMask?.[Math.floor(oceanR1 / 2) * plan.gw + 10], "`all` must recess the ocean");
+});
+
+test("bakeTileSolid: lakes meshes an inlay for the lake only", () => {
+  const plan = planTile(SETTINGS, { z: 10 });
+  const { mosaic, mask } = oceanAndLake(plan);
+  const opts = { ...SETTINGS, recessMm: 2, waterInlay: true };
+  const lakes = bakeTileSolid(mosaic, plan, { ...opts, waterMode: "lakes" }, mask);
+  const all = bakeTileSolid(mosaic, plan, { ...opts, waterMode: "all" }, mask);
+  assert.ok(lakes.inlays && all.inlays, "both modes make parts");
+  assert.ok(signedVolume(lakes.inlays) < signedVolume(all.inlays),
+    "the ocean-sized part is exactly what this mode exists to stop printing");
+  assert.ok(checkWatertight(lakes.inlays).closed, "the lake's part is still watertight");
+});
+
+test("bakeTileSolid: waterRecessedPct reports the share the mode moved", () => {
+  const plan = planTile(SETTINGS, { z: 10 });
+  const { mosaic, mask } = oceanAndLake(plan);
+  const at = (/** @type {WaterMode} */ waterMode, /** @type {number} */ recessMm) =>
+    bakeTileSolid(mosaic, plan, { ...SETTINGS, waterMode, recessMm }, mask).waterRecessedPct;
+  assert.equal(at("none", 2), 0, "`none` moves nothing whatever the slider says");
+  assert.equal(at("all", 2), 100);
+  assert.equal(at("all", 0), 0, "a zero depth moves nothing, so nothing was recessed");
+  const lakes = at("lakes", 2);
+  assert.ok(lakes > 0 && lakes < 100, `lakes moved a proper subset, got ${lakes}`);
+});
+
+/** A tile whose only water is one flat pond at `elev`, well clear of the tile edges so it has
+ * interior cells of its own. @param {ReturnType<typeof planTile>} plan @param {number} elev */
+function pondAt(plan, elev) {
+  const { gx0, gy0, gw, gh } = plan.window;
+  const data = new Float32Array(gw * gh);
+  for (let r = 0; r < gh; r++) for (let c = 0; c < gw; c++) data[r * gw + c] = 400 + 2 * r;
+  const mask = new Uint8Array(gw * gh);
+  for (let r = 10; r <= 20; r++) for (let c = 10; c <= 20; c++) { data[r * gw + c] = elev; mask[r * gw + c] = 1; }
+  return { mosaic: { data, width: gw, height: gh, originGx: gx0, originGy: gy0, z: plan.z }, mask };
+}
+
+test("bakeTileSolid: lakes leaves water under the printed colour change alone", () => {
+  const plan = planTile(SETTINGS, { z: 10 });
+  // The export puts the water→land change one print LAYER above the line (colorChanges
+  // pauseLiftMm), and a layer is metres of ground at map scale — 4.59 m here, 45 m on a
+  // 1:300000 tile. Water inside that layer prints blue, so grooving it and moulding a part
+  // for it buys nothing; judged at the bare line instead, the DEM/watermask coastline
+  // disagreement grooves every coastal body on a real tile.
+  const ceilM = 0.15 / (plan.mmPerM * SETTINGS.exag);
+  const at = (/** @type {number} */ elev, /** @type {number} */ layerMm = 0.15) => {
+    const { mosaic, mask } = pondAt(plan, elev);
+    return bakeTileSolid(mosaic, plan, { ...SETTINGS, waterMode: "lakes", recessMm: 2, layerMm }, mask)
+      .waterRecessedPct;
+  };
+  assert.equal(at(ceilM - 1), 0, "a metre under the change: already blue, no groove and no part");
+  assert.equal(at(ceilM + 1), 100, "a metre over it: grooved, which is what the mode is for");
+  // The ceiling is the PRINT's, not a constant — a coarser layer swallows the same pond.
+  assert.equal(at(ceilM + 1, 0.3), 0, "at 0.3 mm the change sits twice as high above the line");
+});
+
+test("bakeTileSolid: lakes on an ocean-only tile recesses nothing, and says so with 0", () => {
+  const plan = planTile(SETTINGS, { z: 10 });
+  const { mosaic } = oceanAndLake(plan);
+  const ocean = new Uint8Array(plan.gw * plan.gh);
+  for (let r = 0; r <= Math.floor(plan.gh / 4); r++) for (let c = 0; c < plan.gw; c++) ocean[r * plan.gw + c] = 1;
+  const r = bakeTileSolid(mosaic, plan, { ...SETTINGS, waterMode: "lakes", recessMm: 2, waterInlay: true }, ocean);
+  assert.equal(r.waterRecessedPct, 0, "the hint that says the mode applies to nothing reads this");
+  assert.equal(r.inlays, null, "and there is no part to print");
+  assert.notEqual(r.lineElev, -Infinity, "the tile does have water — the hint must not fire on a dry tile");
 });

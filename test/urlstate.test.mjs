@@ -56,7 +56,7 @@ test("decodeState rejects out-of-range geography", () => {
 });
 
 test("waterMode round-trips every mode, and an unknown mode is rejected not defaulted", () => {
-  for (const waterMode of /** @type {const} */ (["none", "flat", "all"])) {
+  for (const waterMode of /** @type {const} */ (["none", "flat", "lakes", "all"])) {
     const s = { ...FULL, waterMode };
     assert.deepEqual(decodeState(encodeState(s)), s, `${waterMode} survives`);
     assert.ok(encodeState(s).includes(`mode=${waterMode}`), `${waterMode} is spelled in the hash`);
@@ -65,7 +65,7 @@ test("waterMode round-trips every mode, and an unknown mode is rejected not defa
   const bend = (/** @type {string} */ v) => encodeState(FULL).replace(/mode=[^&]*/, `mode=${v}`);
   assert.equal(decodeState(bend("")), null, "empty mode rejected");
   assert.equal(decodeState(bend("T")), null, "the old flag form is not silently accepted");
-  assert.equal(decodeState(bend("lakes")), null, "a mode this version cannot bake is rejected");
+  assert.equal(decodeState(bend("lakez")), null, "an unrecognised mode is rejected, not defaulted");
   assert.equal(decodeState(encodeState(FULL).replace(/&mode=[^&]*/, "")), null, "absent mode rejected");
 });
 

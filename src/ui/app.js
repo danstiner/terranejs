@@ -161,11 +161,14 @@ function detailSummary(settings) {
 // The mask and the color line can disagree in both directions, and both disagreements have the
 // same one-click remedy — so they compose into one sentence rather than two banners. Land below
 // the line prints blue (polders); masked water above it shows as terrain (a high lake, or noisy
-// near-0 bathymetry fragmenting a bay). Says "show", not "print": the exported M600 pause sits a
-// layer above the line, so water within one layer of it still prints blue — tens of metres of
-// elevation at map scale. Percentages are differently based on purpose — see WATER_AS_LAND_WARN_PCT.
+// near-0 bathymetry fragmenting a bay). The water clause counts against the height the print
+// changes color at rather than the line — the M600 pause sits a layer above it, tens of metres of
+// elevation at map scale — so water that reads above the line but still prints blue is not named
+// here. The land clause keeps the true line: flattening cannot recover land inside that layer.
+// Percentages are differently based on purpose — see WATER_AS_LAND_WARN_PCT.
 // The quoted label must match index.html: the sentence is only actionable if it names the control.
-/** @param {{ landBluePct: number, waterAsLandPct: number, waterDroppedPct: number }} data */
+/** @param {{ landBluePct: number, waterAsLandPct: number, waterDroppedPct: number,
+ *   lineElev: number, waterRecessedPct: number, waterMode: string, recessMm: number }} data */
 function updateWaterWarning(data) {
   const clauses = [];
   if (data.landBluePct > LAND_BLUE_WARN_PCT) clauses.push(`${Math.round(data.landBluePct)}% of the land will print blue`);
@@ -177,6 +180,22 @@ function updateWaterWarning(data) {
   // of the mask, so flattening does nothing to it; only a tighter scale prints it wide enough.
   if (data.waterDroppedPct > WATER_DROPPED_WARN_PCT) {
     sentences.push(`${data.waterDroppedPct.toFixed(1)}% of this tile's water is too narrow to print and stays at terrain level — raise "Map scale" to print it wider.`);
+  }
+  // Its own sentence for the same reason as the dropped-water one: the remedy above cannot reach
+  // it. Every body already prints blue, so there is nothing for a groove to improve — the mode is
+  // simply not the one this tile needs. Gated on the tile HAVING water: lineElev is −Infinity on a
+  // dry tile, where "no water sits above the waterline" would be true and useless.
+  if (data.waterMode === "lakes" && data.recessMm > 0 && data.lineElev !== -Infinity &&
+      data.waterRecessedPct === 0) {
+    sentences.push('No water on this tile sits above the waterline, so "Recess water above the waterline" grooves nothing — every body already prints blue.');
+  }
+  // Mirror case, and the one users actually hit on a real coastal tile: every body grooved, an
+  // inlay covering most of the tile. waterAsLandPct is silent here by design (the recess moved
+  // everything and the parts fill it; with inlays off the warning itself now speaks), so this is
+  // the only place that says so.
+  if (data.waterMode === "lakes" && data.recessMm > 0 && data.lineElev !== -Infinity &&
+      data.waterRecessedPct === 100) {
+    sentences.push('Every body of water on this tile sits above the waterline, so "Recess water above the waterline" grooves all of it — the same as "Recess all water".');
   }
   const warn = $("waterWarn");
   warn.hidden = sentences.length === 0;
@@ -332,7 +351,11 @@ worker.onmessage = ({ data }) => {
     // Crisp pass only. The one-tile fast bake resolves the shoreline too coarsely to judge a
     // 1%-of-tile threshold, and letting it drive the banner makes it flash and vanish a second
     // later; the previous banner stays up until the sharp numbers land.
-    updateWaterWarning(data);
+    // previewSettings, not the live store: this reply is matched by gen to the bake it snapshots,
+    // and the store may already have moved on to a mode this data was never baked for.
+    if (previewSettings) {
+      updateWaterWarning({ ...data, waterMode: previewSettings.waterMode, recessMm: previewSettings.recessMm });
+    }
     previewPhase = "idle";
     setProgress(previewSettings ? detailSummary(previewSettings) : "");
   }
@@ -487,9 +510,16 @@ store.subscribe((s) => {
   // mode past `none` always displaces something. pipeline.js keeps the full predicate because
   // headless callers are not bound by that floor.
   const displaces = s.waterMode !== "none";
-  const idle = s.waterInlay && !displaces;
-  $("inlayHint").hidden = !idle;
-  if (idle) $("inlayHint").textContent = "No water is displaced yet — pick a water mode, or the export adds nothing.";
+  const hint = $("inlayHint");
+  // Not a disabled checkbox in either direction: a disabled box that is already ticked reads as
+  // "off" while the state says on, so both of these say the words instead.
+  const text = s.waterInlay && !displaces
+    ? "No water is displaced yet — pick a water mode, or the export adds nothing."
+    : !s.waterInlay && (s.waterMode === "lakes" || s.waterMode === "all")
+      ? 'Without the parts this mode leaves open grooves — tick "Also export water inlays" and print them in blue.'
+      : "";
+  hint.hidden = !text;
+  if (text) hint.textContent = text;
   const km = (s.tileWidthMm * s.scale) / 1e6; // print mm × 1:N scale → real km the tile spans
   // tileWidthMm is the bounding-square side, so only the hex prints shorter than it is wide.
   const tile = s.shape === "hex"
