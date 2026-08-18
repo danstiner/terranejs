@@ -27,7 +27,7 @@ import { fetchMosaic } from "./terrain.js";
 /**
  * @typedef {{ center: LatLon, scale: number, tileWidthMm: number, base: number, exag: number,
  *   waterMode?: WaterMode, recessMm?: number, layerMm?: number, shape?: Shape,
- *   waterInlay?: boolean, waterFilter?: boolean }} TileSettings
+ *   waterInlay?: boolean, waterFilter?: boolean, inlaySeated?: boolean }} TileSettings
  *   center = [lat,lon] of the tile; scale = 1:N; tileWidthMm = print size of the tile
  *   edge; base = base-plate thickness (mm); exag = vertical exaggeration;
  *   waterMode = how water is treated: "none" leaves it at true elevation, "flat" pulls it all
@@ -37,7 +37,9 @@ import { fetchMosaic } from "./terrain.js";
  *   layer height (default 0.15); shape = tile footprint (default "square"); tileWidthMm is
  *   the bounding-square side in every shape; waterInlay = also export the displaced water
  *   as drop-in parts (default false); waterFilter = skip water too narrow to print a part
- *   for (default true — see water.filterUnprintableWater).
+ *   for (default true — see water.filterUnprintableWater); inlaySeated = build the water
+ *   inlays in the tile's own frame instead of dropped to the plate, for a preview that draws
+ *   them seated (default false — the export plates them).
  */
 /**
  * @typedef {{ z: number, bbox: BBox, window: Window, span: Span, gw: number, gh: number, dx: number, dy: number, mmPerM: number, shape: Shape, ring: Array<[number,number]> | null }} TilePlan
@@ -134,14 +136,15 @@ export function planTile(settings, { z, maxTiles = 300 } = {}) {
  * @param {Mosaic} mosaic
  * @param {TilePlan} plan
  * @param {{ base: number, exag: number, waterMode?: WaterMode, recessMm?: number, layerMm?: number,
- *   waterInlay?: boolean, waterFilter?: boolean }} settings
+ *   waterInlay?: boolean, waterFilter?: boolean, inlaySeated?: boolean }} settings
  * @param {Uint8Array} [waterMask]
  * @param {{ segments: LatLon[][], widthMm: number, heightMm: number,
  *   trenchDepthMm?: number }} [trail]
  * @returns {{ solid: Solid, ribbon: Solid | null, inlays: Solid | null, emin: number, emax: number, lineElev: number, landBluePct: number, waterAsLandPct: number, printedWaterMask: Uint8Array | undefined, waterDroppedPct: number, movedWaterMask: Uint8Array | undefined, waterRecessedPct: number }}
  */
 export function bakeTileSolid(mosaic, plan,
-  { base, exag, waterMode = "none", recessMm = 0, layerMm = 0.15, waterInlay = false, waterFilter = true },
+  { base, exag, waterMode = "none", recessMm = 0, layerMm = 0.15, waterInlay = false, waterFilter = true,
+    inlaySeated = false },
   waterMask, trail) {
   const { window, span, gw, gh, dx, dy, mmPerM, ring } = plan;
   const grid = cropGrid(mosaic, window);
@@ -325,7 +328,11 @@ export function bakeTileSolid(mosaic, plan,
     const { cells, count } = cellsFromVertexMask(
       /** @type {Uint8Array} */ (movedWaterMask), gw, gh, footprint);
     if (count) {
-      inlays = buildDrape(grid, gw, gh, span, cells, { dx, dy, mmPerM, emin, exag }, preWater);
+      // Seated for the preview, bed-dropped for the export — see buildDrape. The base plate is the
+      // whole difference: the tile's own surface carries it, so a part meant to mate with that
+      // surface has to as well.
+      inlays = buildDrape(grid, gw, gh, span, cells,
+        { dx, dy, mmPerM, emin, exag, ...(inlaySeated ? { seatBase: base } : {}) }, preWater);
       const iwt = checkWatertight(/** @type {Solid} */ (inlays));
       if (!iwt.closed) throw new Error(`pipeline: non-watertight water inlay (${iwt.unmatched} unmatched edges)`);
       // Zero volume is reachable without being a bug: `flat` on a tile whose water is already the

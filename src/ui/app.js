@@ -341,7 +341,7 @@ worker.onmessage = ({ data }) => {
         : "it will still export at full size.")
     : "";
   updateTrailWarning(store.get());
-  preview.setTiles([{ positions: data.positions, indices: data.indices, normals: data.normals, bands: data.bands }], data.frame, data.cord);
+  preview.setTiles([{ positions: data.positions, indices: data.indices, normals: data.normals, bands: data.bands }], data.frame, data.cord, data.parts);
   renderLegend(data.bands);
   if (previewPhase === "fast") {
     previewPhase = "pending"; // relief is up; the sharp pass waits for the settle timer
@@ -416,7 +416,11 @@ function pump() {
     crispDue = false;
     previewPhase = "crisp";
     setProgress("Detailed preview…");
-    worker.postMessage({ gen: previewGen, settings: previewSettings, maxTiles: CRISP_MAX_TILES, format: "mesh", coverage: true, trail: previewTrail });
+    // Inlays ride the crisp pass only, like coverage: they cost a second full-grid snapshot and
+    // their own mesh, worth paying once the user has stopped moving and not on every frame of a
+    // slider drag. An ask, not a tell — the worker still gates on the checkbox, so render policy
+    // here needs to know nothing about export intent.
+    worker.postMessage({ gen: previewGen, settings: previewSettings, maxTiles: CRISP_MAX_TILES, format: "mesh", coverage: true, inlays: true, trail: previewTrail });
   }
 }
 
@@ -504,8 +508,8 @@ store.subscribe((s) => {
   // user find a .3mf with one object in it.
   //
   // This covers the settings only. A tile with no water at all also exports nothing and says
-  // nothing here — whether the tile HAS water is a bake result, and the preview never bakes
-  // inlays.
+  // nothing here — whether the tile HAS water is a bake result, and the crisp preview now draws
+  // the parts it made, so an empty tile shows no blue and needs no sentence for it.
   // The UI may reduce this where core may not: no control can produce a depth below 0.5, so a
   // mode past `none` always displaces something. pipeline.js keeps the full predicate because
   // headless callers are not bound by that floor.
