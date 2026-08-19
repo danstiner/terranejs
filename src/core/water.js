@@ -37,6 +37,14 @@ export const MIN_WATER_BODY_WIDTH_MM = 0.8;
  * remedy is one click, this one's is a scale change, so a false alarm costs more. */
 export const WATER_DROPPED_WARN_PCT = 20;
 
+/** Share of the land that may sit under the color line before the line drops to clear it.
+ * A coastal DEM puts a few samples a hair under sea level — one at −0.05 m on Sognefjord,
+ * one on Haleakalā — and dropping the line for those puts it below emin, where baseBand folds
+ * the water band away and the tile prints with no blue at all. Measured across the presets the
+ * two cases sit three decades apart: noise reaches 0.074% of the land (Alexander), the shallowest
+ * real polder is 20.9% (Dead Sea). */
+const LAND_BELOW_LINE_TOL = 0.005;
+
 /**
  * The water/land color line for one bake — pure, no mutation. Split out of applyWaterRecess
  * because the pipeline needs the line BEFORE the recess runs (splitWaterByLine classifies
@@ -55,13 +63,15 @@ export const WATER_DROPPED_WARN_PCT = 20;
  * valleys — tried, reverted), and a line below 0 greens the sea, because ocean samples are only
  * clamped NEAR 0 and real masks carry below-0 bathymetry noise (a Puget Sound sample reads
  * −227 m).
- * The line never sits above land, in ANY mode: land at or below the candidate line (polders,
- * deltas) lowers it to landMin − 2·lift instead — rather sea-as-land than land-as-sea. The sea
- * above the lowered line prints as land and the waterAsLand warning names an inserts card, which
- * genuinely fixes it: the lowered line also lowers the lakes-mode ceiling, so the sea itself
- * becomes a groove and a part. landBluePct is ≈0 because of this — only land sitting exactly AT
- * the line still counts (boundary-blue, matching bandOf) — so it survives as a returned
- * invariant (a real percentage means the anchor broke), not as a warning.
+ * The line never sits above an EXPANSE of land, in ANY mode: land at or below the candidate line
+ * (polders, deltas) lowers it to landMin − 2·lift instead — rather sea-as-land than land-as-sea.
+ * The sea above the lowered line prints as land and the waterAsLand warning names an inserts card,
+ * which genuinely fixes it: the lowered line also lowers the lakes-mode ceiling, so the sea itself
+ * becomes a groove and a part. An expanse, not a sample: see LAND_BELOW_LINE_TOL — a lone noisy
+ * shore pixel must not cost the tile its water band. landBluePct is therefore small rather than
+ * ≈0 — the land left under the line prints blue, alongside the land sitting exactly AT it that
+ * always did (boundary-blue, matching bandOf) — and survives as a returned invariant, not as a
+ * warning.
  * "all" carries no line at all (−Infinity, the waterless sentinel): every printable body becomes
  * a part, so the pause that would paint sub-line layers blue is never worth its filament swap —
  * grooves, walls and polders print as land, and every drop of blue on the tile is an insert.
@@ -100,7 +110,15 @@ export function waterColorLine(grid, mask, { waterMode, layerMm, K, footprint })
   if (waterMode === "flat") anchor = landCount > 0 ? Math.min(waterMin, landMin - 2 * lift) : waterMin;
   else {
     anchor = waterMode === "none" && waterMin > 0 && waterMin <= landMin - 2 * lift ? waterMin : 0;
-    if (landMin < anchor) anchor = landMin - 2 * lift; // never above land — see the doc block
+    if (landMin < anchor) {
+      // Second pass, and only here: how MUCH land is under the line decides whether it moves.
+      let sunk = 0;
+      for (let i = 0; i < grid.length; i++) {
+        if (footprint && !footprint[i]) continue;
+        if (!mask[i] && grid[i] < anchor) sunk++;
+      }
+      if (sunk > LAND_BELOW_LINE_TOL * landCount) anchor = landMin - 2 * lift;
+    }
   }
   const lineElev = waterMode === "all" ? -Infinity : Math.fround(anchor);
   return { lineElev, waterMin, landCount };

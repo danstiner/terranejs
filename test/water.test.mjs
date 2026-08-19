@@ -102,6 +102,37 @@ test("applyWaterRecess: default — below-0 water alone never drags the line und
   assert.equal(bandOf(-30, [r.lineElev]), 0, "the sea prints blue");
 });
 
+// A shore sample a few centimeters under sea level is DEM noise, not a polder, and lowering the
+// line to clear it puts it under emin — where baseBand folds the water band away and the tile
+// prints with no blue at all. Measured live: Sognefjord lost its band to ONE sample at −0.05 m of
+// 559,448, Haleakalā to one at −0.07 m. Only an expanse moves the line (LAND_BELOW_LINE_TOL).
+/** water sample + `land` land samples at 20 m, `sunk` of them at `depth`
+ * @param {number} sunk @param {number} depth @param {number} [land] */
+const shoreTile = (sunk, depth, land = 1000) => {
+  const elev = new Float32Array(land + 1), mask = new Uint8Array(land + 1);
+  mask[0] = 1; // the sea, clamped at 0
+  for (let i = 1; i <= land; i++) elev[i] = i <= sunk ? depth : 20;
+  return /** @type {[Float32Array, Uint8Array]} */ ([elev, mask]);
+};
+
+test("applyWaterRecess: a lone sub-sea-level shore sample is noise — the line holds and water keeps its band", () => {
+  const [grid, mask] = shoreTile(1, -0.05); // 0.1% of the land, under the 0.5% tolerance
+  const r = applyWaterRecess(grid, mask, opts());
+  assert.equal(r.lineElev, 0, "one noisy pixel does not move the line");
+  const emin = Math.min(...grid);
+  const th = waterLineThresholds(bandThresholds(61), r.lineElev);
+  assert.equal(baseBand(emin, th), 0, "base stays water — the band the regression folded away");
+  const changes = colorChanges(th, { emin, base: 6, mmPerM: K, exag: 1, zmax: 6 + (20 - emin) * K });
+  assert.ok(changes.some((c) => c.band >= 1), "and the water pause still fires");
+});
+
+test("applyWaterRecess: an expanse of land under the line still lowers it — polders are not noise", () => {
+  const [grid, mask] = shoreTile(100, -0.05); // 10% of the land, well over the tolerance
+  const r = applyWaterRecess(grid, mask, opts());
+  assert.equal(r.lineElev, Math.fround(-0.05 - 2 * (LAYER / K)), "line = landMin − 2·lift, as before");
+  assert.equal(r.landBluePct, 0, "no land prints blue once the line clears it");
+});
+
 test("applyWaterRecess: lakes on a polder tile — the lowered line reaches the grooving mode too", () => {
   const [grid, mask] = tile([-2, -6, 20], [1, 0, 0]);
   const r = applyWaterRecess(grid, mask, opts({ waterMode: "lakes", recessMm: 2, filled: true }));
