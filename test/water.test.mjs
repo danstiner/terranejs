@@ -313,8 +313,8 @@ test("waterAsLandPct: default — ordinary coast, all water below the line, read
 const r0 = (grid, mask) => applyWaterRecess(grid, mask, opts()).waterAsLandPct;
 
 test("waterAsLandPct: water under the printed color change is blue, so it is not named", () => {
-  // The export puts the water→land change one print layer ABOVE the line (colorChanges
-  // pauseLiftMm) so the water's top layer prints blue, and one layer is 7.5 m of ground at this
+  // The ceiling is one print layer ABOVE the line — the conservative reading of where the
+  // print changes color (slicing.waterPause) — and one layer is 7.5 m of ground at this
   // K. Water inside that layer cannot print as anything but blue however far above 0 m the raw
   // sample sits — which is most of the near-0 bathymetry noise on a real coastal tile.
   // A 0 m sea sample holds the auto anchor at 0, so the noisy samples sit above the LINE either way.

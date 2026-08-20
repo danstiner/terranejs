@@ -27,6 +27,7 @@ export function syncControls(s) {
   set("base", s.base);
   set("recess", s.recessMm);
   set("layerMm", s.layerMm);
+  set("firstLayerMm", s.firstLayerMm);
   /** @type {HTMLSelectElement} */ (el("shape")).value = s.shape;
   // Uniform loop, no `flat` case: decodeState maps the retired mode to `none` before the store
   // ever holds it, so the store can never carry a value this loop doesn't have a card for.
@@ -88,6 +89,12 @@ export function wireControls(store) {
   el("layerMm").addEventListener("input", (e) => {
     const v = num(e);
     if (Number.isFinite(v) && v >= 0.05 && v <= 0.6) store.set({ layerMm: v });
+  });
+  // Same range as the layer height: the two are the same kind of quantity, and the export only
+  // needs their grid, not a judgement about which of them is thicker.
+  el("firstLayerMm").addEventListener("input", (e) => {
+    const v = num(e);
+    if (Number.isFinite(v) && v >= 0.05 && v <= 0.6) store.set({ firstLayerMm: v });
   });
 
   // Same guard shape as tileW/layerMm: a cleared number input reads "" -> Number("") -> 0, and

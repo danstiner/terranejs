@@ -7,8 +7,9 @@
 // geometry untouched; the sinking modes groove the water by `recessMm`
 // without moving the line. They are exclusive by construction: a plane is never sunk further, which
 // is what stops the depth meaning two different things. The line is the TRUE waterline at any map
-// scale; only the exported M600 pause is lifted one layer above it (colors.colorChanges
-// pauseLiftMm) so the water's top layer prints blue.
+// scale; only the exported M600 pause sits above it, on the layer boundary the slicer will
+// swap filament at (slicing.waterPause). The ceilings below still approximate that offset as one
+// full layer, which over-states it by up to half a layer — see docs/specs/slicing.md.
 // See docs/specs/data-pipeline.md §4 (Water) and
 // docs/superpowers/specs/2026-08-01-water-plane-simplification-design.md.
 
@@ -51,9 +52,9 @@ const LAND_BELOW_LINE_TOL = 0.005;
  * against it, and the recess needs the mask the split produces — a cycle otherwise), and
  * applyWaterRecess calls this same function, so the two can never disagree.
  *
- * Anchor rules, by mode: flatten targets a plane 2 lifts below the lowest land — the exported
- * pause sits one layer above the line, so the first lift is consumed by that offset and the
- * second is the land's real clearance (see the flatten-margin pin in colors.test).
+ * Anchor rules, by mode: flatten targets a plane 2 lifts below the lowest land — the print
+ * changes color up to a layer above the line (slicing.waterPause), so the first lift is consumed
+ * by that offset and the second is the land's real clearance (flatten-margin pin, colors.test).
  * "none" rises to the lowest in-footprint water — but ONLY when all land clears it by that same
  * 2-lift margin, and never from below 0 m. The DEM hydro-flattens LAKES (each a constant), so on
  * a tile whose water is all perched above all land (Tahoe) waterMin IS the lake's surface and
@@ -180,14 +181,14 @@ export function applyWaterRecess(grid, mask, { waterMode, recessMm, layerMm, K, 
       // the bottom, so it still counts. The sink > 0 term matters independently of `filled`: a
       // full recessMask with a zero depth moves nothing and must still count, which is what keeps
       // the default tile's warning exactly as strict as it was.
-      // What counts as "above" is the line plus one LIFT — the height the print actually changes
-      // color at, since the export raises the water pause that far so the water's top layer
-      // prints blue. Water inside that layer prints blue whatever its sample reads, so naming it
-      // would be a false alarm; at map scale a layer is tens of meters of ground, which is most
-      // of a coastal tile's near-0 bathymetry noise. Measured share of tile: 5.06% → 0.13% on
-      // Puget Sound, 4.50% → 0.50% on San Francisco Bay, both from over the 1% threshold to under
-      // it, while Titicaca (58%) and Crater Lake (13%) are untouched — that water really does
-      // print as rock. Same ceiling splitWaterByLine classifies against, so the two agree.
+      // What counts as "above" is the line plus one LIFT — a conservative stand-in for the height the
+      // print changes color at, which slicing.waterPause puts between half a layer and a full one
+      // above the line depending on the slicer's grid. Water inside that layer prints blue whatever
+      // its sample reads, so naming it would be a false alarm; at map scale a layer is tens of meters
+      // of ground, which is most of a coastal tile's near-0 bathymetry noise. Measured share of tile:
+      // 5.06% → 0.13% on Puget Sound, 4.50% → 0.50% on San Francisco Bay, both from over the 1%
+      // threshold to under it, while Titicaca (58%) and Crater Lake (13%) are untouched — that water
+      // really does print as rock. Same ceiling splitWaterByLine classifies against, so the two agree.
       const moved = sink > 0 && (!recessMask || recessMask[i] !== 0);
       grid[i] = flat ? lineElev : grid[i] - (moved ? sink : 0); // flat: the line IS the plane
       if (inPrint && !(moved && filled) && grid[i] > lineElev + lift) waterAsLand++;
@@ -367,8 +368,9 @@ function cornerOfOtherBody(cells, cw, ch, r, c) {
  * @param {Float32Array} grid elevations at true elevation — call before applyWaterRecess moves them
  * @param {number} gw
  * @param {number} gh
- * @param {number} blueCeiling meters; the height the print changes color at — the water/land
- *   line plus the layer the export lifts the pause by. At or below it, a body already prints blue.
+ * @param {number} blueCeiling meters; the height the print changes color at — the water/land line
+ *   plus one layer, the conservative reading of slicing.waterPause. At or below it, a body already
+ *   prints blue.
  * @returns {{ mask: Uint8Array, recessedPct: number }} a NEW mask, always
  */
 export function splitWaterByLine(mask, grid, gw, gh, blueCeiling) {

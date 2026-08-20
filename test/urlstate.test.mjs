@@ -7,7 +7,8 @@ const FULL = {
   scale: 150000, tileWidthMm: 200, base: 6, exag: 1,
   // 1, not 0: the depth is floored at 0.5 now, so a zero here would clamp on decode and every
   // deepEqual round-trip below would fail against its own input.
-  waterMode: /** @type {const} */ ("none"), recessMm: 1, layerMm: 0.15, shape: /** @type {const} */ ("square"),
+  waterMode: /** @type {const} */ ("none"), recessMm: 1, layerMm: 0.15, firstLayerMm: 0.2,
+  shape: /** @type {const} */ ("square"),
 };
 
 test("encodeState → decodeState round-trips every field", () => {
@@ -124,6 +125,20 @@ test("decodeState: a zero recess from an older link clamps up to the floor", () 
 
 test("encodeState omits a null center (nothing to share yet)", () => {
   assert.equal(encodeState({ ...FULL, center: null }), "");
+});
+
+test("firstLayerMm is optional: absent decodes to the default, and the default is not written", () => {
+  // The field arrived after links were already in the wild, and every one of them was sliced on
+  // some grid this app then assumed was 0.2 — so absent means the default, not a broken payload.
+  const hash = encodeState(FULL);
+  assert.ok(!hash.includes("firstLayer"), "the default costs a shared link nothing");
+  assert.equal(decodeState(hash)?.firstLayerMm, 0.2, "and comes back as the default");
+  const custom = encodeState({ ...FULL, firstLayerMm: 0.25 });
+  assert.ok(custom.includes("firstLayer=0.25"), "a non-default value is carried");
+  assert.equal(decodeState(custom)?.firstLayerMm, 0.25, "and round-trips");
+  // Out of range clamps like every other print preference, rather than voiding the payload.
+  assert.equal(decodeState(encodeState({ ...FULL, firstLayerMm: 9 }))?.firstLayerMm, 0.6, "clamped high");
+  assert.equal(decodeState(encodeState({ ...FULL, firstLayerMm: 0.01 }))?.firstLayerMm, 0.05, "clamped low");
 });
 
 test("encoded payload stays short enough to paste anywhere", () => {

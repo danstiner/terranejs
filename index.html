@@ -203,9 +203,16 @@
           <div class="labelrow">
             <label for="layerMm">Layer height (mm)</label>
             <button type="button" class="help" aria-label="About layer height"
-              data-help="Match your slicer. Color changes clear the surface below them by one layer, so this sets how precisely a band boundary lands in the print.">?</button>
+              data-help="Match your slicer. A filament change can only fire between layers, so this sets how precisely a band boundary lands in the print — half a layer of relief either way, which is meters of ground at map scale.">?</button>
           </div>
-          <input id="layerMm" type="number" min="0.05" max="0.6" step="0.05" value="0.15" class="num">
+          <input id="layerMm" type="number" min="0.05" max="0.6" step="0.05" value="0.1" class="num">
+
+          <div class="labelrow">
+            <label for="firstLayerMm">First layer height (mm)</label>
+            <button type="button" class="help" aria-label="About first layer height"
+              data-help="Match your slicer. The first layer offsets every layer above it, so it decides which layer boundary the water pause lands on just as much as the layer height does. PrusaSlicer's default is 0.2.">?</button>
+          </div>
+          <input id="firstLayerMm" type="number" min="0.05" max="0.6" step="0.05" value="0.2" class="num">
           <p class="hint" id="bandHint">Embed filament change pauses at the following Z-heights:</p>
           <div id="bandLegend" class="hint"></div>
         </details>

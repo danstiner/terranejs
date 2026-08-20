@@ -10,6 +10,7 @@ import { fetchCoverage, fetchCatalog } from "../core/coverage.js";
 import { cropGrid } from "../core/resample.js";
 import { detailMap } from "../core/detail.js";
 import { BAND_COLORS, BAND_NAMES, BOUNDARY_NAMES, bandThresholds, baseBand, colorChanges, baseColorHex, waterLineThresholds } from "../core/colors.js";
+import { DEFAULT_LAYER_MM, waterPause } from "../core/slicing.js";
 
 /** @typedef {import("../core/pipeline.js").TileSettings} TileSettings */
 
@@ -115,18 +116,22 @@ async function handle({ gen, settings, maxTiles, format, name, color, coverage, 
     // it so the threshold array stays ascending (see colors.waterLineThresholds).
     const thresholds = waterLineThresholds(bandThresholds(settings.center[0]), lineElev);
     const frame = { emin, base: settings.base, mmPerM: plan.mmPerM, exag: settings.exag, zmax: settings.base + (emax - emin) * K };
-    // Enrich each change with its boundary line + elevation for the preview legend
-    // (the shader and export use only z + color, so the extra fields are harmless there).
-    const changes = colorChanges(thresholds, frame).map((c) => ({
+    // The water change is the one the slicer's layer grid decides, not the line's own height:
+    // the export names the layer top the swap fires on, the preview draws the slice plane that
+    // layer is sampled at, and they differ by half a layer. docs/specs/slicing.md derives both.
+    const pause = waterPause(settings.base + (thresholds[0] - emin) * K,
+      { layerMm: settings.layerMm ?? DEFAULT_LAYER_MM, firstLayerMm: settings.firstLayerMm });
+    // Enrich each change with its boundary line + elevation for the preview legend (the shader
+    // and export use only z + color, so the extra fields are harmless there). `elev` stays the
+    // THRESHOLD: the line really is at that elevation, only the swap is a layer boundary above it.
+    /** @param {import("../core/colors.js").ColorChange[]} cs */
+    const enrich = (cs) => cs.map((c) => ({
       ...c, elev: Math.round(thresholds[c.band - 1]), boundary: BOUNDARY_NAMES[c.band - 1],
     }));
+    const changes = enrich(colorChanges(thresholds, frame, { waterZ: pause.boundaryZ }));
     if (format === "3mf") {
-      // Export lifts the water pause one print layer above the line so the water's top layer
-      // prints blue before the swap; preview/warning keep the true line (a sub-layer print
-      // quantization, not a model difference). Base divisible by layer height → the pause lands
-      // exactly on the first land layer of an ocean-floor tile.
       const exportChanges = color
-        ? colorChanges(thresholds, frame, { pauseLiftMm: settings.layerMm ?? 0.15 })
+        ? enrich(colorChanges(thresholds, frame, { waterZ: pause.pauseZ }))
         : undefined;
       const bytes = await tileTo3mf(name ?? "tile", solid, exportChanges, ribbon, inlays);
       post({ gen, bytes }, [bytes.buffer]);

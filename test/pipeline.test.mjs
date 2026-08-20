@@ -357,7 +357,9 @@ test("bakeTileSolid: a dropped body anchors the flatten plane from the land side
   for (let r = 5; r <= 15; r++) for (let c = 5; c <= 15; c++) lakeOnly[r * plan.gw + c] = 1;
   const withPond = Uint8Array.from(lakeOnly);
   withPond[0] = 1; // the tile's LOWEST sample: kept, it would anchor the plane as water
-  const opts = { ...SETTINGS, waterMode: /** @type {const} */ ("flat") };
+  // layerMm explicit: the plane is anchored in LIFTS, so the assertion below must not ride on
+  // whatever the pipeline's default happens to be.
+  const opts = { ...SETTINGS, waterMode: /** @type {const} */ ("flat"), layerMm: 0.15 };
   const a = bakeTileSolid(mosaicFor(plan), plan, opts, withPond);
   const b = bakeTileSolid(mosaicFor(plan), plan, opts, lakeOnly);
   assert.equal(a.lineElev, b.lineElev, "the filter did not make the two masks equivalent");
@@ -365,7 +367,7 @@ test("bakeTileSolid: a dropped body anchors the flatten plane from the land side
   // 500 − 2·lift can only be reached by counting the dropped vertex as LAND: as water it would
   // anchor at 500 itself. This is the same land-loop membership that shifts landBluePct on a
   // coastal tile, so pinning it here pins that too.
-  const lift = 0.15 / (plan.mmPerM * SETTINGS.exag); // layerMm default
+  const lift = opts.layerMm / (plan.mmPerM * SETTINGS.exag);
   assert.ok(Math.abs(a.lineElev - (500 - 2 * lift)) < 1e-3,
     `plane at ${a.lineElev}; a dropped body must hold it down from the LAND side (500 − 2·lift)`);
 });
@@ -509,8 +511,8 @@ function pondAt(plan, elev) {
 
 test("bakeTileSolid: lakes leaves water under the printed color change alone", () => {
   const plan = planTile(SETTINGS, { z: 10 });
-  // The export puts the water→land change one print LAYER above the line (colorChanges
-  // pauseLiftMm), and a layer is meters of ground at map scale — 4.59 m here, 45 m on a
+  // The ceiling sits one print LAYER above the line (the safe end of slicing.waterPause),
+  // and a layer is meters of ground at map scale — 4.59 m here, 45 m on a
   // 1:300000 tile. Water inside that layer prints blue, so grooving it and moulding a part
   // for it buys nothing; judged at the bare line instead, the DEM/watermask coastline
   // disagreement grooves every coastal body on a real tile.
