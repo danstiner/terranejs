@@ -1,10 +1,5 @@
 #!/usr/bin/env node
-// Builds the color-change probe described in docs/specs/slicing.md, and
-// prints what each slicer grid should do with it. Thirteen pillars stand on the bed:
-// pillar 0 tops out at exactly the color line, each next one a sixth of a layer higher,
-// so one slice shows which layer the pause lands on AND which pillar is the first to
-// clear the slice plane and print in the second filament.
-//
+// Builds the probe described in docs/specs/slicing.md § Verifying.
 //   node scripts/pause-probe.mjs /tmp/probe.3mf [lineZ] [pauseZ]
 import { ThreeMFWriter } from "../src/core/threemf.js";
 import { writeFileSync } from "node:fs";
