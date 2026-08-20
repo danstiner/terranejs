@@ -4,13 +4,15 @@
 // payload carries a version and anything unreadable decodes to null, letting the app fall back
 // to its default region rather than boot into a broken state.
 import { MAX_MERCATOR_LAT } from "./tilemath.js";
+import { DEFAULT_FIRST_LAYER_MM } from "./slicing.js";
 
 /** @typedef {import("./types.js").LatLon} LatLon */
 /** @typedef {import("./types.js").Shape} Shape */
 /** @typedef {import("./types.js").WaterMode} WaterMode */
 /**
  * @typedef {{ center: LatLon | null, scale: number, tileWidthMm: number, base: number,
- *   exag: number, waterMode: WaterMode, recessMm: number, layerMm: number, shape: Shape }} ShareableState
+ *   exag: number, waterMode: WaterMode, recessMm: number, layerMm: number,
+ *   firstLayerMm: number, shape: Shape }} ShareableState
  */
 
 /** Payload version. Bump only for a breaking key/meaning change; old links then decode to null. */
@@ -52,6 +54,7 @@ const LIMITS = {
   exag: { min: 0.5, max: 4 },      // ×
   recess: { min: 0.5, max: 5 },    // mm — floored: a zero depth cancels the mode that reads it
   layer: { min: 0.05, max: 0.6 },  // mm
+  firstLayer: { min: 0.05, max: 0.6 }, // mm — same range as `layer`, same kind of quantity
 };
 
 /** @param {number} v @param {{min: number, max: number}} lim @returns {number} */
@@ -70,7 +73,7 @@ const trim = (v, places) => String(Number(v.toFixed(places)));
  * @param {ShareableState} state
  * @returns {string}
  */
-export function encodeState({ center, scale, tileWidthMm, base, exag, waterMode, recessMm, layerMm, shape }) {
+export function encodeState({ center, scale, tileWidthMm, base, exag, waterMode, recessMm, layerMm, firstLayerMm, shape }) {
   if (!center) return "";
   return [
     `v=${STATE_VERSION}`,
@@ -83,6 +86,9 @@ export function encodeState({ center, scale, tileWidthMm, base, exag, waterMode,
     `mode=${waterMode}`,
     `recess=${trim(recessMm, 2)}`,
     `layer=${trim(layerMm, 3)}`,
+    // Written only when it differs from the default: every link predating the field decodes to
+    // exactly that value, so spending 15 characters to say so would be pure noise on most links.
+    ...(firstLayerMm === DEFAULT_FIRST_LAYER_MM ? [] : [`firstLayer=${trim(firstLayerMm, 3)}`]),
     `shape=${shape}`,
   ].join("&");
 }
@@ -104,6 +110,9 @@ export function decodeState(hash) {
   const lat = num("lat"), lon = num("lon"), scale = num("scale");
   const tileWidthMm = num("width"), base = num("base"), exag = num("exag");
   const recessMm = num("recess"), layerMm = num("layer");
+  // Optional, like `shape` before it: a link predating the setting is not broken, it just did not
+  // know the grid it was sliced on, and the default is the one every such link assumed anyway.
+  const firstLayerMm = num("firstLayer");
   if (lat === null || lon === null || scale === null || tileWidthMm === null || base === null ||
       exag === null || recessMm === null || layerMm === null) return null;
   const shapeRaw = p.get("shape");
@@ -127,6 +136,7 @@ export function decodeState(hash) {
     waterMode: /** @type {WaterMode} */ (mode === "flat" ? "none" : mode),
     recessMm: clamp(recessMm, LIMITS.recess),
     layerMm: clamp(layerMm, LIMITS.layer),
+    firstLayerMm: firstLayerMm === null ? DEFAULT_FIRST_LAYER_MM : clamp(firstLayerMm, LIMITS.firstLayer),
     shape: /** @type {Shape} */ (shape),
   };
 }

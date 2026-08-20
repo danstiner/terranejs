@@ -11,6 +11,7 @@ import { trailToPrintMm, cordSolid, admissibleCells, cordLattice, distField,
 import { trenchAdmissibleCells, featherField, trenchTop } from "./trench.js";
 import { clipPolygon, clipElevs, clipRange } from "./clip.js";
 import { applyWaterRecess, filterUnprintableWater, splitWaterByLine, waterColorLine } from "./water.js";
+import { DEFAULT_LAYER_MM } from "./slicing.js";
 import { checkWatertight, signedVolume } from "./validate.js";
 import { ThreeMFWriter } from "./threemf.js";
 import { fetchMosaic } from "./terrain.js";
@@ -26,15 +27,19 @@ import { fetchMosaic } from "./terrain.js";
 /** @typedef {import("./types.js").Solid} Solid */
 /**
  * @typedef {{ center: LatLon, scale: number, tileWidthMm: number, base: number, exag: number,
- *   waterMode?: WaterMode, recessMm?: number, layerMm?: number, shape?: Shape,
- *   waterInlay?: boolean, waterFilter?: boolean, inlaySeated?: boolean }} TileSettings
+ *   waterMode?: WaterMode, recessMm?: number, layerMm?: number, firstLayerMm?: number,
+ *   shape?: Shape, waterInlay?: boolean, waterFilter?: boolean, inlaySeated?: boolean }} TileSettings
  *   center = [lat,lon] of the tile; scale = 1:N; tileWidthMm = print size of the tile
  *   edge; base = base-plate thickness (mm); exag = vertical exaggeration;
  *   waterMode = how water is treated: "none" leaves it at true elevation, "flat" pulls it all
  *   onto one waterline below the land, "lakes" sinks only the bodies above the color line,
  *   "all" sinks it all by recessMm (default "none");
  *   recessMm = water sink in print mm, ignored by "none" (default 0); layerMm = slicer
- *   layer height (default 0.15); shape = tile footprint (default "square"); tileWidthMm is
+ *   layer height (default 0.1); firstLayerMm = the slicer's FIRST layer height, which
+ *   offsets the whole layer grid and so decides where the water pause lands
+ *   (slicing.waterPause, default 0.2 — PrusaSlicer's). The pair is chosen so a whole-mm
+ *   base lands on a layer TOP: the printed color boundary then sits half a layer above
+ *   the line, as far from the slice-plane jump as it can get (docs/specs/slicing.md); shape = tile footprint (default "square"); tileWidthMm is
  *   the bounding-square side in every shape;
  *   waterInlay = build the insert solids (a second full-grid snapshot plus their own mesh, so a
  *   grooving caller that only needs geometry may decline); the UI always asks in the grooving
@@ -146,7 +151,7 @@ export function planTile(settings, { z, maxTiles = 300 } = {}) {
  * @returns {{ solid: Solid, ribbon: Solid | null, inlays: Solid | null, emin: number, emax: number, lineElev: number, landBluePct: number, waterAsLandPct: number, printedWaterMask: Uint8Array | undefined, waterDroppedPct: number, movedWaterMask: Uint8Array | undefined, waterRecessedPct: number }}
  */
 export function bakeTileSolid(mosaic, plan,
-  { base, exag, waterMode = "none", recessMm = 0, layerMm = 0.15, waterInlay = false, waterFilter = true,
+  { base, exag, waterMode = "none", recessMm = 0, layerMm = DEFAULT_LAYER_MM, waterInlay = false, waterFilter = true,
     inlaySeated = false },
   waterMask, trail) {
   const { window, span, gw, gh, dx, dy, mmPerM, ring } = plan;
@@ -174,8 +179,8 @@ export function bakeTileSolid(mosaic, plan,
   const { mask: printedWaterMask, droppedPct: waterDroppedPct } = waterFilter
     ? filterUnprintableWater(waterMask, gw, gh, dx)
     : { mask: waterMask, droppedPct: 0 };
-  // The height the print CHANGES COLOR at, one layer above the line: the export lifts the water
-  // pause that far (colors.colorChanges pauseLiftMm) so the water's top layer prints blue. A
+  // The height the print CHANGES COLOR at, taken as one layer above the line: the real boundary is
+  // slicing.waterPause's, between half a layer and a full one up, and this is the safe end. A
   // layer is meters of GROUND at map scale — 45 m at 1:300000, exag 1 — and water inside it
   // cannot print as anything else, so grooving it buys nothing and costs a part. Judged at the
   // bare line instead, the DEM/watermask coastline disagreement grooves 100% of the water on

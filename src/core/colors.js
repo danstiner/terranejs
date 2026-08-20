@@ -166,26 +166,28 @@ const EPS = 0.05; // mm; merge sub-layer-coincident changes
  * Color changes to fire, ascending — thresholds whose print-Z lands in [base, zmax).
  * z = base + (t − emin)·mmPerM·exag; crossing threshold i enters band i+1. exag ∈
  * [0.5,4] from the slider, so K > 0. A change exactly AT the base is kept: the waterline
- * sits at emin on an ocean-floor tile, the shader colors land above it, and the export
- * lifts it clear of the base. Coincident changes (within EPS — e.g. near-polar ties where
+ * sits at emin on an ocean-floor tile, the shader colors land above it, and the export's
+ * pause (see `waterZ`) clears it. Coincident changes (within EPS — e.g. near-polar ties where
  * treeline and snowline collapse together) merge into one, keeping the HIGHER band.
- * `pauseLiftMm` (export only) raises the WATER pause — thresholds[0] — that much print-Z
- * above the line, so the water's top layer prints blue before the swap; the model, preview,
- * and warning all keep the true line. The final sort covers the sub-layer case where the
- * lifted pause crosses a colliding ecological change.
+ * `waterZ` overrides the print-Z of the WATER change — thresholds[0] — with an absolute
+ * height, because that one is not free: it has to land on a layer boundary of the grid the
+ * tile will be sliced on, which the line's own elevation knows nothing about. slicing.js
+ * computes it (`pauseZ` to export, `boundaryZ` to preview); the model and the line itself
+ * are untouched. The final sort covers the sub-layer case where that height crosses a
+ * colliding ecological change.
  * @param {number[]} thresholds
  * @param {Frame} frame
- * @param {{ pauseLiftMm?: number }} [opts]
+ * @param {{ waterZ?: number }} [opts]
  * @returns {ColorChange[]}
  */
-export function colorChanges(thresholds, frame, { pauseLiftMm = 0 } = {}) {
+export function colorChanges(thresholds, frame, { waterZ } = {}) {
   const { emin, base, mmPerM, exag, zmax } = frame;
   const K = mmPerM * exag;
   /** @type {ColorChange[]} */
   const out = [];
   thresholds.forEach((t, i) => {
     const band = i + 1; // crossing threshold i enters band i+1
-    const z = base + (t - emin) * K + (i === 0 ? pauseLiftMm : 0);
+    const z = i === 0 && waterZ !== undefined ? waterZ : base + (t - emin) * K;
     if (z < base || z >= zmax) return; // below the base, or above the print
     const prev = out[out.length - 1];
     if (prev && z - prev.z < EPS) { // collapsed onto the previous change:

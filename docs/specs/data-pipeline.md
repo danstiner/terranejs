@@ -194,9 +194,9 @@ rise and keeps 0 m, because a line land does not clear floods that land blue —
 flooded valleys read as a defect. Both bounds of the rise are load-bearing: it never starts
 below 0 m (ocean samples are only clamped near 0, and real masks carry below-0 bathymetry noise —
 a Puget Sound sounding reads −227 m — that would sink the line under the sea), and it never comes
-within two lifts of land (the export pause prints one layer above the line; see the flatten
-margin). Water the line cannot reach still shows as terrain and the warning routes to an inserts
-card.
+within two lifts of land (the print changes color up to a layer above the line; see the flatten
+margin, and `slicing.md` for where that layer boundary actually falls). Water the line cannot
+reach still shows as terrain and the warning routes to an inserts card.
 
 The line never sits above land, full stop — rather sea-as-land than land-as-sea. Land at or below
 the candidate line (polders, deltas) pushes it to `landMin − 2·lift` instead, flatten's own
@@ -231,8 +231,9 @@ can be ironed or printed in one glossy blue, where in place it is paint on terra
 terrain, and leaves the rest at true elevation.
 
 "Would print as terrain" is a claim about the print, so the test is against the height the print
-**changes color at**, not the waterline. The export lifts the water pause one layer above the line
-so the water's top layer prints blue, and one layer is meters of *ground* at map scale — 45 m at
+**changes color at**, not the waterline. That height is the slicer's, not the model's — see
+`slicing.md`; this test takes the safe end of it, one layer above the line, and one layer is
+meters of *ground* at map scale — 45 m at
 1:300,000 and exaggeration 1, since a layer buys `layerMm × scale ÷ (1000 × exag)` meters. Water
 inside that layer cannot print as anything but blue however far above 0 m its sample reads, so
 grooving it would buy nothing and cost a part. Both the layer-height control and the exaggeration
@@ -335,19 +336,18 @@ water, on purpose: a bay speckled by noisy near-0 bathymetry is only ~3% of its 
 of its tile, while a tile whose 0.3% water is alpine tarns is 100% of its water — measured
 against the water, the warning would shout at the quiet case and stay silent on the real one.
 The other direction — land printing blue — no longer exists to warn about: the line never sits
-above land. The count says water will "show" as land, not print: the export pause sits a layer
-above the line, so water within one layer of it
-still prints blue — a sub-mm offset that is tens to hundreds of meters of *elevation* at map
-scale. See
+above land. The count says water will "show" as land, not print: the swap sits a layer
+boundary above the line, so water within a layer of it still prints blue — a sub-mm offset that is
+tens to hundreds of meters of *elevation* at map scale. See
 `docs/superpowers/specs/2026-08-04-water-as-land-warning-design.md`.
 
 The color line becomes `thresholds[0]` in the Color bands array below (the ecological lines clamp up to it,
 staying ascending), so it drives the same per-print-Z filament changes as any other band
-boundary — no separate color path. The **exported** water pause alone is lifted one print layer
-(Advanced layer-height setting, default 0.15 mm) above the line, so the water's top layer prints
-blue before the swap — a sub-layer offset the preview and warning do not carry, since they show
-the true line. With the base thickness divisible by the layer height, that pause lands exactly
-on the first land layer of an ocean-floor tile. See
+boundary — no separate color path. The water pause alone is not free to sit on the line: it has to
+name a layer boundary of the grid the tile will be sliced on, which depends on the slicer's FIRST
+layer height as much as its layer height. `slicing.waterPause` derives it — the export takes the
+layer top the swap fires on, the preview the slice plane that layer is sampled at, half a layer
+lower. Both are in `docs/specs/slicing.md`, measured against PrusaSlicer. See also
 `docs/superpowers/specs/2026-08-01-water-plane-simplification-design.md`.
 
 ## 5. Mesh
@@ -598,7 +598,8 @@ color change / `M600`) at its print-Z; the operator swaps filament at those
 heights to get an altitude-banded print with no multi-material hardware. So the
 changes actually load, the colored `.3mf` is written as a minimal PrusaSlicer
 *project* (a settings-free config stub) — PrusaSlicer only reads color changes
-from a file it recognizes as a project, not a bare geometry import. The band
+from a file it recognizes as a project, not a bare geometry import. The stub stays
+EMPTY on purpose, and OrcaSlicer/Bambu read a different part entirely: `slicing.md`. The band
 model lives in `src/core/colors.js` and is deliberately approximate — a
 good-enough hypsometric look, not a climate dataset.
 

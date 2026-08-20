@@ -5,6 +5,7 @@ import {
   bandThresholds, bandOf, baseBand, colorChanges, prusaColorChangeXML, baseColorHex,
   waterLineThresholds,
 } from "../src/core/colors.js";
+import { waterPause } from "../src/core/slicing.js";
 
 test("waterLineThresholds: −Infinity line (no water on the tile) → below-sea land keeps its land band", () => {
   const t = waterLineThresholds(bandThresholds(36.5), -Infinity); // Death Valley latitude
@@ -74,8 +75,8 @@ test("baseBand: thresholds strictly below emin fold into the base band; AT emin 
   const thr = [0, 1000, 1400, 2000];
   assert.equal(baseBand(-50, thr), 0);
   assert.equal(baseBand(1200, thr), 2);
-  // Ocean-floor tile: the waterline sits AT emin, and its export pause is lifted a layer above
-  // the base, so it fires — the base filament must stay the water band, not fold past it.
+  // Ocean-floor tile: the waterline sits AT emin, and its export pause is the next layer
+  // boundary above the base, so it fires — the base filament must stay the water band.
   assert.equal(baseBand(0, thr), 0);
 });
 
@@ -94,31 +95,36 @@ test("colorChanges: keeps a change exactly at the base, drops below-base and at/
   const frame = { emin: 0, base: 6, mmPerM: 4, exag: 1, zmax: 6 + 1500 * 4 };
   const ch = colorChanges(thr, frame);
   // t=0 sits exactly at the base — KEPT (ocean-floor tile: the shader colors land above it and
-  // the export lifts it a layer); t=2000 is above the 1500 m top (dropped)
+  // the export's pause clears it); t=2000 is above the 1500 m top (dropped)
   assert.deepEqual(ch.map((c) => c.band), [1, 2, 3]);
   assert.equal(ch[0].z, 6);
 });
 
-test("colorChanges: pauseLiftMm lifts only the water pause, one layer in print-Z", () => {
+test("colorChanges: waterZ places the water pause outright, leaving the ecological changes alone", () => {
   const thr = [0, 1000, 1400, 2000];
   const frame = { emin: 0, base: 6, mmPerM: 4, exag: 1, zmax: 6 + 2500 * 4 };
   const plain = colorChanges(thr, frame);
-  const lifted = colorChanges(thr, frame, { pauseLiftMm: 0.15 });
-  assert.equal(lifted[0].z, plain[0].z + 0.15, "water pause one layer up");
-  assert.equal(lifted[0].z, 6.15, "base-aligned ocean tile: pause lands one layer above the base");
-  assert.deepEqual(lifted.slice(1), plain.slice(1), "ecological changes untouched");
+  const paused = colorChanges(thr, frame, { waterZ: 6.2 });
+  assert.equal(plain[0].z, 6, "without it the water change sits on the line, at the base");
+  assert.equal(paused[0].z, 6.2, "with it, wherever the layer grid says (slicing.waterPause)");
+  assert.deepEqual(paused.slice(1), plain.slice(1), "ecological changes untouched");
 });
 
-test("colorChanges: flatten margin pin — 2-lift plane keeps the lifted pause a full layer under the land", () => {
+test("colorChanges: flatten margin pin — the 2-lift plane keeps the lowest land above the printed boundary", () => {
   // Flatten polder (K = 0.5 print-mm/m, layer 0.5 mm → lift 1 m): plane = landMin − 2·lift = −8,
-  // line = plane, landMin −6. The export pause = z(line) + layer must clear the first land by a
-  // full layer; a 1-lift plane (−7) lands the pause exactly ON the first land — the
-  // boundary-equality bug — so 2 lifts is the minimum with real margin.
-  const layer = 0.5, base = 6;
-  const two = colorChanges([-8, 1000, 1400, 2000], { emin: -8, base, mmPerM: 0.5, exag: 1, zmax: 1e9 }, { pauseLiftMm: layer })[0].z;
-  assert.equal((base + (-6 - -8) * 0.5) - two, layer, "one full layer between pause and lowest land");
-  const one = colorChanges([-7, 1000, 1400, 2000], { emin: -7, base, mmPerM: 0.5, exag: 1, zmax: 1e9 }, { pauseLiftMm: layer })[0].z;
-  assert.equal((base + (-6 - -7) * 0.5) - one, 0, "1-lift plane: pause exactly on the first land — blue land");
+  // line = plane, landMin −6. What has to hold is that the lowest land still prints as land,
+  // i.e. sits above the boundary the print turns color at — half a layer over the pause's
+  // layer bottom, not at the pause itself. A 1-lift plane (−7) leaves almost nothing.
+  const layer = 0.5, firstLayerMm = 0.2, base = 6, K = 0.5;
+  const margin = (/** @type {number} */ line, /** @type {number} */ landMin) => {
+    // The plane IS the line here, so the line sits at the base.
+    const { pauseZ, boundaryZ } = waterPause(base, { layerMm: layer, firstLayerMm });
+    const ch = colorChanges([line, 1000, 1400, 2000], { emin: line, base, mmPerM: K, exag: 1, zmax: 1e9 }, { waterZ: pauseZ });
+    assert.equal(ch[0].z, pauseZ, "the export's change is the grid's layer top");
+    return base + (landMin - line) * K - boundaryZ;
+  };
+  assert.ok(margin(-8, -6) > layer, "2-lift plane: over a full layer of land above the boundary");
+  assert.ok(margin(-7, -6) < layer / 2, "1-lift plane: less than half a layer — the margin the plane exists to buy");
 });
 
 test("colorChanges: sub-0.05mm coincident changes merge, keeping the higher band", () => {

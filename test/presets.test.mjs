@@ -43,7 +43,7 @@ test("a preset's waterMode, when it has one, survives the hash unchanged", () =>
     declared++;
     const state = {
       center: p.center, scale: p.scale, tileWidthMm: 200, base: 6, exag: 1,
-      waterMode, recessMm: 1, layerMm: 0.15, shape: /** @type {const} */ ("square"),
+      waterMode, recessMm: 1, layerMm: 0.15, firstLayerMm: 0.2, shape: /** @type {const} */ ("square"),
     };
     assert.equal(decodeState(encodeState(state))?.waterMode, waterMode,
       `${p.name}: ${waterMode} does not round-trip`);

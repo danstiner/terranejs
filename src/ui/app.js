@@ -7,6 +7,7 @@ import { initMap } from "./map.js";
 import { initPreview } from "./preview.js";
 import { wireControls, syncControls, wireHelp, cordHint, trenchHint } from "./controls.js";
 import { defaultTileName, planTile } from "../core/pipeline.js";
+import { DEFAULT_FIRST_LAYER_MM, DEFAULT_LAYER_MM } from "../core/slicing.js";
 import { encodeState, decodeState } from "../core/urlstate.js";
 import { PRESETS, DEFAULT_PRESET } from "./presets.js";
 import { BAND_NAMES } from "../core/colors.js";
@@ -46,7 +47,8 @@ const restored = decodeState(location.hash);
 const store = createStore(/** @type {AppState} */ ({
   ...(restored ?? {
     center: DEFAULT_PRESET.center, scale: DEFAULT_PRESET.scale, tileWidthMm: 200, base: 6, exag: 1,
-    waterMode: /** @type {const} */ ("none"), recessMm: 1, layerMm: 0.15, // sea-level tint by default
+    waterMode: /** @type {const} */ ("none"), recessMm: 1, layerMm: DEFAULT_LAYER_MM,
+    firstLayerMm: DEFAULT_FIRST_LAYER_MM, // sea-level tint by default
     shape: "square",
   }),
   trail: null, // a restored link never carries one — see the AppState note above
